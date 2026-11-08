@@ -57,6 +57,29 @@ export function sourceStoreContract():ContractCase<SourceContractSubject>[] {ret
   assertNotOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId,claim:{...claim,attempts:claim.attempts+1}}));
   assertOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId}));const rows=await store.listSourceHandoffs(fileId);assertOk(rows);assertEqual(rows.handoffs[0]?.tempKey,tempKey);
   const ready=await store.readSourceAttempt(tempKey);assertOk(ready);assertEqual(ready.binding?.open,true);assertEqual(ready.binding?.fileId,fileId);
+ })),contractCase('source Carry classification is versioned and fenced',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'carry',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
+  const entry={id:entryId,remoteId:'binary',name:'binary',path:'',mimeType:'application/octet-stream',remoteVersion:'v1',sizeBytes:3};assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry,claim}));
+  const check={sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',extractorVersion:'doc/new',claim};assertNotOk(await store.markSourceCarryCheck({...check,claim:{...claim,claimedBy:'wrong'}}));
+  assertOk(await store.markSourceCarryCheck(check));const found=await store.readSourceCarryCheck(check);assertOk(found);assertEqual(found.checked,true);
+  const later=await store.readSourceCarryCheck({...check,extractorVersion:'doc/later'});assertOk(later);assertEqual(later.checked,false);
+  assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry:{...entry,remoteVersion:'v2'},claim}));assertNotOk(await store.markSourceCarryCheck(check));
+  assertOk(await store.disconnectSource({id:sourceId,now:claim.now}));assertNotOk(await store.markSourceCarryCheck({...check,remoteVersion:'v2'}));
+})),contractCase('native Sheets unsupported is not a Carry scan candidate',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'native-excluded',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
+  assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,claim,entry:{id:entryId,remoteId:'sheet',name:'sheet',path:'',mimeType:'application/vnd.google-apps.spreadsheet',remoteVersion:'v1',sizeBytes:null}}));assertOk(await store.markSourceEntry({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',status:'unsupported',claim}));
+  const reserved=await store.reserveSourceCarry({sourceId,generation:1,extractorVersion:'doc/current',workId:'019a0000-0000-7000-8000-000000000064',now:claim.now});assertOk(reserved);assertEqual(reserved.reserved,false);
+})),contractCase('source Carry joins same version and keeps old version pending',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'carry-join',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
+  const other='019a0000-0000-7000-8000-000000000060',fileId='019a0000-0000-7000-8000-000000000061',workId='019a0000-0000-7000-8000-000000000062',next='019a0000-0000-7000-8000-000000000063';
+  for(const id of [entryId,other])assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,claim,entry:{id,remoteId:id,name:id,path:'',mimeType:'application/octet-stream',remoteVersion:'v1',sizeBytes:3}}));
+  const base={sourceId,generation:1,remoteVersion:'v1',fileId,contentHash:'sha256:'+'d'.repeat(64),sizeBytes:3,claim};
+  const first=await store.handoffSourceFile({...base,sourceFileId:entryId,workId,carryExtractorVersion:'new'});assertOk(first);
+  assertNotOk(await store.handoffSourceFile({...base,sourceFileId:other,workId:next,carryExtractorVersion:'old'}));
+  const pending=await store.readSourceCarryCheck({sourceFileId:other,remoteVersion:'v1',extractorVersion:'old'});assertOk(pending);assertEqual(pending.checked,false);
+  const joined=await store.handoffSourceFile({...base,sourceFileId:other,workId:next,carryExtractorVersion:'new'});assertOk(joined);assertEqual(joined.workId,first.workId);
+  assertOk(await store.disconnectSource({id:sourceId,now:claim.now}));assertOk(await store.connectSource({id:sourceId}));
+  const afterReconnect=await store.readSourceCarryCheck({sourceFileId:other,remoteVersion:'v1',extractorVersion:'new'});assertOk(afterReconnect);assertEqual(afterReconnect.checked,false);
 })),contractCase('disconnect and reconnect fence generations without replacing identity',factory=>withSubject(factory,async ({store,claim})=>{
   assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'transition',rootId:'root'}));
   const disconnected=await store.disconnectSource({id:sourceId,now:claim.now});assertOk(disconnected);assertEqual(disconnected.source.connected,false);assertEqual(disconnected.source.generation,2);

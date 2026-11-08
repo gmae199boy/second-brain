@@ -128,7 +128,7 @@ export function claimCandidateQuery(query: DueWorkQuery, scope?:{sourceId:string
        and next_attempt_at <= ${now}
        and (claim_expires_at is null or claim_expires_at <= ${now})
        and kind = any(${[...query.kinds]}::text[])
-       and ${scope ? sql<boolean>`((kind='source_sync' and id::text=${scope.syncWorkId} and target_kind='source' and target_id=${scope.sourceId}) or (kind='document_extract' and target_kind='file' and exists (select 1 from brain.source_handoffs h join brain.source_files sf on sf.id=h.source_file_id join brain.sources s on s.id=sf.source_id join brain.files f on f.id=h.file_id where f.redacted_at is null and sf.source_id::text=${scope.sourceId} and h.work_id=brain.work_items.id and h.file_id::text=brain.work_items.target_id and h.source_generation=s.generation and h.remote_version=sf.remote_version and not sf.unreachable)))` : sql<boolean>`true`}
+       and ${scope ? sql<boolean>`((kind='source_sync' and target_kind='source' and target_id=${scope.sourceId} and (id::text=${scope.syncWorkId} or (exists(select 1 from brain.work_items root where root.id::text=${scope.syncWorkId} and root.kind='source_sync' and root.target_kind='source' and root.target_id=${scope.sourceId}) and exists(select 1 from brain.source_carry_runs r join brain.sources s on s.id=r.source_id where r.work_id=brain.work_items.id and r.source_id::text=${scope.sourceId} and r.generation=s.generation and not r.completed)))) or (kind='document_extract' and target_kind='file' and exists (select 1 from brain.source_handoffs h join brain.source_files sf on sf.id=h.source_file_id join brain.sources s on s.id=sf.source_id join brain.files f on f.id=h.file_id where f.redacted_at is null and sf.source_id::text=${scope.sourceId} and h.work_id=brain.work_items.id and h.file_id::text=brain.work_items.target_id and h.source_generation=s.generation and h.remote_version=sf.remote_version and not sf.unreachable)))` : sql<boolean>`true`}
   order by ${scope ? sql`case when kind='source_sync' then 0 else 1 end,` : sql``} attempts asc, id asc
      limit 1
   `;
@@ -525,7 +525,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
           where id = ${input.id} and current_attempt_token = ${input.attemptToken}`.execute(held);
         if (changesOf(changed) === 0) return 0;
         if (input.outcome === 'succeeded') {
-          await settleScheduledSuccess(held, input.id, now);
+        await settleScheduledSuccess(held, input.id, now);
           if (item.kind === 'channel_send') await sql`update brain.failures set resolved_at=${now} where target_kind=${item.target_kind} and target_id=${item.target_id} and stage='channel_send' and resolved_at is null`.execute(held);
         }
         if (input.outcome !== 'succeeded') await transitionOccurrences(held, input.id, failure !== undefined || item.cancel_requested_at !== null ? 'failed' : 'pending');
@@ -564,6 +564,10 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       return finish(connect, async (held) => {
         await sql`select pg_advisory_xact_lock(hashtextextended('schedule-fire-settle', 0))`.execute(held);
         const now = instant(input.now, 'work_items.completed_at');
+        // Source-first ordering matches scan/disconnect and closes the race with a
+        // carry request arriving after this scan passed its starting boundary.
+        const preview=(await sql<{kind:string;target_kind:string;target_id:string}>`select kind,target_kind,target_id from brain.work_items where id=${input.id}`.execute(held)).rows[0];
+        if(preview?.kind==='source_sync'&&preview.target_kind==='source')await sql`select id from brain.sources where id::text=${preview.target_id} for update`.execute(held);
         const completed = await sql<{ kind: string; target_kind: string; target_id: string }>`
           update brain.work_items
              set completed_at = ${now}, outcome = 'succeeded',
@@ -573,6 +577,10 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         `.execute(held);
         const row = completed.rows[0];
         if (row === undefined) return 0;
+        if(row.kind==='source_sync'&&row.target_kind==='source') {
+          const pending=await sql<{source_id:string;generation:number;extractor_version:string}>`select r.source_id,r.generation,r.extractor_version from brain.source_carry_runs r join brain.sources s on s.id=r.source_id where r.work_id=${input.id}::uuid and not r.completed and not r.started and s.connected and s.generation=r.generation for update of r`.execute(held);
+          if(pending.rows.length){const next=await ensureWork(held,{id:crypto.randomUUID(),kind:'source_sync',targetKind:'source',targetId:row.target_id,createdAt:input.now,nextAttemptAt:input.now});await sql`update brain.source_carry_runs set work_id=${next.row.id}::uuid where work_id=${input.id}::uuid and not completed and not started`.execute(held);}
+        }
         await settleScheduledSuccess(held, input.id, now);
         if (row.kind === TABLE_CLEANUP_KIND && row.target_kind === TABLE_TARGET_KIND) {
           // Only the winning claim can settle failures, in the same transaction

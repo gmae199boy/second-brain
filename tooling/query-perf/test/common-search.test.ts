@@ -34,7 +34,7 @@ const appRole={current_user:'brain_app',session_user:'brain_app'};
 const appSettings=appNames.map(name=>({name,setting:name==='TimeZone'?'UTC':name.endsWith('timeout')?'0':name==='work_mem'?'4096':'1',unit:null})),appLocale={provider:'i',locale:'tr-TR',version:'153.1',collate:'C',ctype:'C'};
 const stats=()=>({stage:'complete',definitions:[],distributions:[],bytesKind:'catalog logical tuple bytes; not physical index size'});
 const diagnostics=(version:number)=>({startedAt:tc.startedAt,finishedAt:plus(tc.startedAt,260),resources:[{label:'cost',database:'qp_'+ '1'.repeat(20),startedAt:plus(tc.startedAt,50),finishedAt:plus(tc.startedAt,250),created:true,deleted:true}],cost:{setup:{preparation:prep(plus(tc.startedAt,100)),migration:{to:version},schema:expectedSchema(version)},statisticsBefore:stats(),statisticsAfter:stats(),write:{...costMetric(120),sqlCount:5,rowsPerTable:1000,triggerMode:'origin',before:{chunks:100000,messages:100000,tool_notes:100000},after:{chunks:100000,messages:100000,tool_notes:100000},hash:digest('1'),afterHash:digest('1')},analyze:{...costMetric(170),targets:[...targets],sqlCount:4,pre:snapshotState(plus(tc.startedAt,160)),post:snapshotState(plus(tc.startedAt,210))}}});
-const fixture = (n=100, version:39|40|41|42=39) => { tick=1; return ({
+const fixture = (n=100, version:39|40|41|42|43=39) => { tick=1; return ({
  scenario:'common-search',status:'ok',migration:{...t0,value:{to:version},schema:expectedSchema(version)},preparation:prep(),statistics:stats(),diagnostic:diagnostics(version),fixture:{rows:100000,bodyBytes:1024,chunkSessions:20,toolSessions:1,limit:5,recipeVersion:2,fields:{sessions:['id']},sha256:digest('a')},
  checkoutRevision:{sha:'d6a0b4b614daa1c321c735a2ca09aab27d78e193',dirty:false,diffSha256:digest('b')},
  artifacts:{sha256:digest('c'),lockSha256:digest('d'),runner:{sha256:digest('e')}},
@@ -44,7 +44,7 @@ const fixture = (n=100, version:39|40|41|42=39) => { tick=1; return ({
  auxiliary:['chunks','tools'].map(kind=>({kind,resultHash:digest('5'),oracleHash:digest('6'),fixedHash:digest('6'),truncated:true,masked:true,hasMore:true,omitted:4,nextVerified:true,metadataVerified:true,jsonSize:4500})),
  runs:['chunks','tools'].flatMap(kind=>['common','a','missing'].map(condition=>({kind,condition,resultHash:digest('1'),storeHash:digest('2'),oracleHash:digest('3'),fixedHash:digest('3'),oracleMatch:true,fixedMatch:true,wall:metric(n),storeWall:metric(n),sqlSamples:Array.from({length:3},()=>({count:1,totalMs:1,spansMs:[1],searchMs:1,spans:[{ms:1,sqlSha256:digest('8'),search:true}]})),explain:plan(),timings:{warmup:time(),wall:[time(),time(),time()],diagnostics:[time(),time(),time()],store:[time(),time(),time()],explain:time()}})))
 }); };
-const currentFixture = () => fixture(100,42);
+const currentFixture = () => fixture(100,43);
 const shifted=(r:ReturnType<typeof fixture>)=>JSON.parse(JSON.stringify(structuredClone(r),(_key,value)=>typeof value==='string' && /^2026-01-01T/.test(value)?new Date(Date.parse(value)+300000).toISOString():value));
 const compare=(base:ReturnType<typeof fixture>,change:ReturnType<typeof fixture>)=>rawCompare(base,shifted(change));
 const setMetric=(r:ReturnType<typeof fixture>, key:string, n:number)=>{r.runs.find(x=>`${x.kind}/${x.condition}`===key)!.wall=metric(n);};
@@ -332,22 +332,23 @@ describe('preparation failure evidence',()=>{
 
 describe('protocol 2 evidence acceptance',()=>{
  const passing=()=>{const b=fixture(), c=currentFixture();setMetric(c,'chunks/common',50);setMetric(c,'tools/common',50);return {b,c:shifted(c)};};
- it('accepts baseline 39 and connection 42 and rejects historical current schemas and invalid evidence',()=>{
+ it('accepts baseline 39 and current 43 and rejects historical current schemas and invalid evidence',()=>{
   const {b,c}=passing();expect(rawCompare(b,c).pass).toBe(true);
   expect(()=>rawCompare(b,shifted(fixture()))).toThrow('schema');
   expect(()=>rawCompare(b,shifted(fixture(100,40)))).toThrow('schema');
   expect(()=>rawCompare(b,shifted(fixture(100,41)))).toThrow('schema');
-  for(const side of ['b','c'] as const) for(const where of ['main','cost'] as const) for(const mutation of ['to','wrongSide','api','manifest','missing','hash','stats','old41','future43'] as const) {
+  expect(()=>rawCompare(b,shifted(fixture(100,42)))).toThrow('schema');
+  for(const side of ['b','c'] as const) for(const where of ['main','cost'] as const) for(const mutation of ['to','wrongSide','api','manifest','missing','hash','stats','old41','future44'] as const) {
    const pair=passing(), target=pair[side]; const location=where==='main'?target.migration:target.diagnostic.cost.setup;
-   if(mutation==='to') (where==='main'?target.migration.value:target.diagnostic.cost.setup.migration).to=43;
+   if(mutation==='to') (where==='main'?target.migration.value:target.diagnostic.cost.setup.migration).to=44;
    if(mutation==='wrongSide') (where==='main'?target.migration.value:target.diagnostic.cost.setup.migration).to=side==='b'?40:39;
-   if(mutation==='api') location.schema.apiVersion=43;
+   if(mutation==='api') location.schema.apiVersion=44;
    if(mutation==='manifest') location.schema.manifest.pop();
    if(mutation==='missing') delete (location as any).schema;
    if(mutation==='hash') location.schema.manifest[0].sha256='0'.repeat(64);
    if(mutation==='stats') location.schema.manifest[location.schema.manifest.length-1].name='0040_recall_expression_statistics.sql';
    if(mutation==='old41') location.schema=expectedSchema(41);
-   if(mutation==='future43') location.schema.version=43;
+   if(mutation==='future44') location.schema.version=44;
    expect(()=>rawCompare(pair.b,pair.c)).toThrow('schema');
   }
   const disguised=passing(); disguised.b.migration.schema=expectedSchema(40); expect(()=>rawCompare(disguised.b,disguised.c)).toThrow('schema');
@@ -454,6 +455,9 @@ describe('fixed migration manifest',()=>{
   const source=resolve(import.meta.dirname,'../../../packages/postgres/migrations');
   try {
    for(const name of await readdir(source)) if(name.endsWith('.sql')) await copyFile(join(source,name),join(dir,name));
+   expect(inspectMigrationDirectory(dir,43)).toEqual(expectedSchema(43));
+   expect(()=>inspectMigrationDirectory(dir,44)).toThrow();
+   await unlink(join(dir,'0043_document_carry.sql')); expect(()=>inspectMigrationDirectory(dir,43)).toThrow();
    expect(inspectMigrationDirectory(dir,42)).toEqual(expectedSchema(42));
    const file='0042_drive_connection.sql', original=await readFile(join(dir,file));
    await unlink(join(dir,file)); expect(()=>inspectMigrationDirectory(dir,42)).toThrow();

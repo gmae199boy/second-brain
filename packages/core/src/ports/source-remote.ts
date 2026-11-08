@@ -11,7 +11,7 @@ export interface SourceRemote {
 export interface SourceTemp {
   /** Caller reserves the key under a source or extraction claim before writing bytes. */
   write(key:string,bytes:Uint8Array):Promise<{ok:true}|{ok:false;message:string}>;
-  read(key:string,maxBytes:number):Promise<{ok:true;bytes:Uint8Array}|{ok:false;message:string}>;
+  read(key:string,maxBytes:number):Promise<{ok:true;bytes:Uint8Array}|{ok:false;message:string;code?:'TOO_LARGE'}>;
   remove(key:string):Promise<void>;
   /** Unknown or open DB bindings are preserved. */
   cleanup(inspect:(key:string)=>Promise<'open'|'closed'|'unknown'|'preparing'>):Promise<void>;

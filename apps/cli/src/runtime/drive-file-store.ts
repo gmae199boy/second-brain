@@ -32,7 +32,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('invalid Drive timeout');
   // Keep the deadline alive through body consumption, including non-cooperative
   // injected transports and header providers. Abort also closes native fetch I/O.
-  const request = async <T>(path: string, init: RequestInit, consume: (response: Response, readBody: () => Promise<Uint8Array>) => Promise<T>): Promise<T> => {
+  const request = async <T>(path: string, init: RequestInit, consume: (response: Response, readBody: (maxBytes?: number) => Promise<Uint8Array>) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
     const parent = options.signal;
     const abort = () => controller.abort();
@@ -49,7 +49,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
       });
       return await Promise.race([cancelled, (async () => {
         const response = await driveRequest({url:base+path,init:{...init,signal:controller.signal},fetch:fetcher,headers:options.headers,auth:options.auth,clock:options.clock});
-        const readBody = async (): Promise<Uint8Array> => {
+        const readBody = async (maxBytes = Number.MAX_SAFE_INTEGER): Promise<Uint8Array> => {
           if (!response.body) return new Uint8Array();
           const reader = response.body.getReader();
           const stop = () => { void reader.cancel().catch(() => undefined); };
@@ -60,6 +60,7 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
             for (;;) {
               const part = await reader.read();
               if (part.done) break;
+              if (part.value.length > maxBytes - size) { await reader.cancel(); throw new RangeError('TOO_LARGE'); }
               chunks.push(part.value); size += part.value.length;
             }
             const bytes = new Uint8Array(size); let offset = 0;
@@ -167,6 +168,13 @@ export function driveFileStore(options: DriveFileStoreOptions): DriveFileStore {
     async get(l) {
       const m = await metadata(l); if (!m.ok) return m;
       try { return await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}?alt=media`, {}, async (response, readBody) => { if (response.status === 404) return missing(); if (!response.ok) return unavailable(); return {ok:true as const,bytes:await readBody()}; }); } catch (error) { return unavailable(error); }
+    },
+    async getBounded(l,maxBytes) {
+      const m = await metadata(l); if (!m.ok) return m;
+      try { return await request(`/drive/v3/files/${encodeURIComponent(m.metadata.id)}?alt=media`, {}, async (response, readBody) => {
+        if (response.status === 404) return missing(); if (!response.ok) return unavailable();
+        return {ok:true as const,bytes:await readBody(maxBytes)};
+      }); } catch (error) { return error instanceof RangeError && error.message === 'TOO_LARGE' ? {ok:false,code:'TOO_LARGE',message:'파일 크기 상한 초과'} : unavailable(error); }
     },
     async exists(l) { const m = await metadata(l); return m.ok ? {ok:true,exists:true} : m.code === 'FILE_NOT_FOUND' ? {ok:true,exists:false} : m; },
     async url(l) { const m = await metadata(l); return m.ok ? {ok:true,url:`https://drive.google.com/file/d/${encodeURIComponent(m.metadata.id)}/view`} : m.code === 'FILE_NOT_FOUND' ? unavailable() : m; },

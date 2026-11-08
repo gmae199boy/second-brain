@@ -1106,12 +1106,17 @@ export interface AttachmentStore {
  * open generation it finds belongs to a claim that has expired. A late write
  * from that expired worker is stopped by the generation being closed
  * (`EXTRACTION_CLOSED`) rather than by a second claim check (Design Notes).
+ * A pinned Carry work may open only with the claimed-at instant and
+ * attempt count as well, so a reclaimed work cannot reuse an older identity.
  */
 export interface ExtractionClaim {
   /** The `work_items` row this reading is being done for. */
   workItemId: string;
   /** The `claimedBy` of the drain run that holds it. */
   claimedBy: string;
+  /** Full attempt identity is required for pinned Carry work. */
+  claimedAt?: Date;
+  attempts?: number;
 }
 
 /** What opening one reading of one file needs (AD-24). */
@@ -1348,7 +1353,16 @@ export type ListExtractionChunksResult =
  * raising the redaction marker is not this capability's business and never
  * happens here (AD-11).
  */
+export interface CarryFileInput {
+  fileId: string; extractorVersion: string; contentHash: string; home: FileLocation;
+  supported: boolean; workId: string; now: Date;
+}
 export interface ExtractionStore {
+  /** Unsupported candidates with a readable Brain home, ordered after an optional cursor. */
+  listUnsupportedCarry(input:{extractorVersion:string;limit:number;after?:string}):Promise<ListFilesAwaitingExtractionResult>;
+  /** Recheck the candidate and atomically record classification and, if supported, enqueue. */
+  commitUnsupportedCarry(input:CarryFileInput):Promise<{ok:true;committed:boolean;created:boolean}|{ok:false;code:'DB_UNAVAILABLE'|'DB_LOCKED';message:string}>;
+
   /**
    * Open a reading of one file, closing the leftovers of an expired claim first.
    *

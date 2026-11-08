@@ -27,6 +27,7 @@ import { sql, type Kysely } from 'kysely';
 import { databaseFailure, describe, type PgConnect, type PgSchema } from './connect.js';
 import { withWrite } from './write.js';
 import { pgText } from './text.js';
+import { ensureWork } from './work.js';
 
 /** A `document_extractions` row as PostgreSQL hands it back: text instants. */
 interface ExtractionRow {
@@ -236,13 +237,16 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
         // The claim, as the four columns it is made of: still open, this file's,
         // this caller's, and not yet expired at the moment this reading begins.
         const claim = (
-          await sql<{ id: string }>`
-            select id from brain.work_items
+          await sql<{ id: string; claimed_at: string; attempts:number }>`
+            select id,claimed_at,attempts from brain.work_items
              where id = ${input.claim.workItemId}
+               and kind = 'document_extract'
                and completed_at is null
                and target_kind = 'file'
                and target_id = ${input.fileId}
                and claimed_by = ${input.claim.claimedBy}
+               and (${input.claim.claimedAt?.toISOString() ?? null}::timestamptz is null or claimed_at=${input.claim.claimedAt?.toISOString() ?? null}::timestamptz)
+               and (${input.claim.attempts ?? null}::integer is null or attempts=${input.claim.attempts ?? null}::integer)
                and claim_expires_at is not null
                and claim_expires_at > ${startedAt}
              for share
@@ -255,6 +259,14 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
             message: '추출 청구가 더 이상 이 호출자의 것이 아닙니다',
           };
         }
+
+        const priorVersion=(await sql<{extractor_version:string;pinned:boolean}>`select extractor_version,pinned from brain.document_carry_work_versions where work_id=${input.claim.workItemId}::uuid for update`.execute(db)).rows[0];
+        if(priorVersion?.pinned && (input.claim.claimedAt===undefined || input.claim.attempts===undefined))return {ok:false as const,code:'CLAIM_LOST' as const,message:'Carry 청구에는 완전한 청구 식별자가 필요합니다'};
+
+        // Only the live work owner may adopt an older queued version.  The file
+        // lock and claim lock also serialize this with closing its stale attempt;
+        // classification markers remain immutable and are not promoted.
+        await sql`insert into brain.document_carry_work_versions(work_id,extractor_version,pinned) values (${input.claim.workItemId}::uuid,${input.extractorVersion},false) on conflict(work_id) do update set extractor_version=excluded.extractor_version`.execute(db);
 
         let closedStale: DocumentExtraction | null = null;
         const stale = (
@@ -482,6 +494,38 @@ export function postgresExtractionStore(connect: PgConnect): ExtractionStore {
           ...databaseFailure(error), message: `파일의 추출 상태를 읽을 수 없습니다: ${describe(error)}`,
         };
       }
+    },
+
+    async listUnsupportedCarry({extractorVersion,limit,after}) {
+      const opened=connect(); if(!opened.ok)return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
+      try {const rows=await sql<{id:string}>`
+        select f.id from brain.files f
+        where f.home_location_id is not null and f.redacted_at is null and f.source_unreachable_at is null
+          and f.current_extraction_id is null and (${after ?? null}::uuid is null or f.id > ${after ?? null}::uuid)
+          and exists(select 1 from brain.document_extractions e where e.file_id=f.id and e.status='unsupported' and e.extractor_version <> ${extractorVersion})
+          and not exists(select 1 from brain.document_extractions e where e.file_id=f.id and e.extractor_version=${extractorVersion})
+          and not exists(select 1 from brain.document_carry_checks c where c.file_id=f.id and c.extractor_version=${extractorVersion})
+        order by f.id limit ${limit}`.execute(opened.connection.db);return {ok:true,fileIds:rows.rows.map(x=>x.id)};
+      }catch(e){return databaseFailure(e);}
+    },
+    async commitUnsupportedCarry(input) {
+      const opened=connect();if(!opened.ok)return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
+      const result=await withWrite(opened.connection,async db=>{
+        const locked=await sql<{id:string}>`select id from brain.files where id=${input.fileId} for no key update`.execute(db);
+        if(!locked.rows.length)return {committed:false,created:false};
+        const eligible=await sql<{id:string}>`select f.id from brain.files f where f.id=${input.fileId} and f.content_hash=${input.contentHash}
+          and f.redacted_at is null and f.source_unreachable_at is null and f.current_extraction_id is null
+          and exists(select 1 from brain.file_locations l where l.id=f.home_location_id and l.store_kind=${input.home.storeKind} and l.locator=${input.home.locator} and l.ownership=${input.home.ownership} and l.deleted_at is null)
+          and exists(select 1 from brain.document_extractions e where e.file_id=f.id and e.status='unsupported' and e.extractor_version <> ${input.extractorVersion})
+          and not exists(select 1 from brain.document_extractions e where e.file_id=f.id and e.extractor_version=${input.extractorVersion})
+          and not exists(select 1 from brain.document_carry_checks c where c.file_id=f.id and c.extractor_version=${input.extractorVersion})
+          `.execute(db);
+        if(!eligible.rows.length)return {committed:false,created:false};
+        let created=false;
+        if(input.supported){const added=await ensureWork(db,{id:input.workId,kind:'document_extract',targetKind:'file',targetId:input.fileId,createdAt:input.now,nextAttemptAt:input.now});if(!added.created){const version=await sql`select 1 from brain.document_carry_work_versions where work_id=${added.row.id}::uuid and extractor_version=${input.extractorVersion}`.execute(db);if(!version.rows.length)return {committed:false,created:false};await sql`update brain.document_carry_work_versions set pinned=true where work_id=${added.row.id}::uuid and extractor_version=${input.extractorVersion}`.execute(db);}else{await sql`insert into brain.document_carry_work_versions(work_id,extractor_version,pinned) values (${added.row.id}::uuid,${input.extractorVersion},true)`.execute(db);created=true;}}
+        await sql`insert into brain.document_carry_checks(file_id,extractor_version) values (${input.fileId},${input.extractorVersion})`.execute(db);
+        return {committed:true,created};
+      });return result.ok?{ok:true,...result.value}:result;
     },
 
     async listFilesAwaitingExtraction({

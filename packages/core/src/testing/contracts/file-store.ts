@@ -21,6 +21,12 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
       assertOk(got, '다시 저장한 원본 읽기');
       assertEqual(Array.from(got.bytes), Array.from(bytes), '다시 저장한 바이트');
     }
+    const exact=await store.getBounded(put.location,bytes.length);
+    assertOk(exact,'정확한 한도 읽기');assertEqual(Array.from(exact.bytes),Array.from(bytes),'정확한 한도의 전체 바이트');
+    const over=await store.getBounded(put.location,bytes.length-1);
+    assertTrue(!over.ok && over.code==='TOO_LARGE','상한을 넘는 파일은 부분 바이트 없이 거부');
+    const larger=await store.getBounded(put.location,bytes.length+1);
+    assertOk(larger,'여유 한도 읽기');assertEqual(Array.from(larger.bytes),Array.from(bytes),'여유 한도 전체 바이트');
     const got = await store.get(put.location);
     assertOk(got, '원본 읽기');
     assertEqual(Array.from(got.bytes), Array.from(bytes), '원본 바이트');
@@ -34,6 +40,7 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
     assertEqual(await store.exists(put.location), { ok: true, exists: false }, '없는 파일');
     const missing = await store.get(put.location);
     assertTrue(!missing.ok && missing.code === 'FILE_NOT_FOUND', '없는 원본');
+    const boundedMissing=await store.getBounded(put.location,bytes.length);assertTrue(!boundedMissing.ok&&boundedMissing.code==='FILE_NOT_FOUND','없는 제한 원본');
   })), contractCase('저장소 밖 위치는 모든 읽기와 삭제에서 거부한다', async make => withSubject(make, async store => {
     const put = await store.put(Uint8Array.of(1));
     assertOk(put, '저장');
@@ -46,6 +53,7 @@ export function fileStoreContract(): ContractCase<FileStore>[] {
       { ...put.location, locator: external! },
       { ...put.location, locator: '/tmp/outside' },
     ];
+    for (const l of invalid) {const bounded=await store.getBounded(l,1);assertTrue(!bounded.ok&&bounded.code==='LOCATION_REFUSED','제한 읽기 위치 거부');}
     for (const l of invalid) for (const op of [store.get, store.delete, store.exists, store.url]) {
       const result = await op(l);
       assertTrue(!result.ok && result.code === 'LOCATION_REFUSED', '위치 거부');

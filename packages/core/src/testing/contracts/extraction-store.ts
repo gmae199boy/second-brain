@@ -190,6 +190,46 @@ function textChunk(
 export function extractionStoreContract(): ContractCase<ExtractionStoreSubject>[] {
   return [
     contractCase(
+      'unsupported Carry의 marker와 일감은 버전별 한 번이고 CAS를 공유한다',
+      async make => withSubject(make, async store => {
+        const ids=sequenceIdGen({start:4900,timestampMs:1770000000000});
+        const files=await storedFiles(store,ids,[Uint8Array.of(7,8,9),Uint8Array.of(8,9,10)]);
+        for(const f of files){
+          const claim=await takeClaim(store,{fileId:f.fileId,workItemId:ids.next(),now:T0,claimedBy:'carry-old'});
+          const begun=await store.beginExtraction({id:ids.next(),fileId:f.fileId,extractorVersion:'doc/old',startedAt:at(1),claim});assertOk(begun,'옛 세대');
+          assertOk(await store.finishExtraction({extractionId:begun.extraction.id,finishedAt:at(2),outcome:{status:'unsupported',error:'unsupported',mediaType:null}}),'unsupported');
+          assertOk(await store.completeWork({id:claim.workItemId,claimedBy:claim.claimedBy,now:at(3)}),'옛 일감 완료');
+        }
+        const first=files[0]!,second=files[1]!;
+        const before=await store.listUnsupportedCarry({extractorVersion:'doc/new',limit:10});assertOk(before,'후보');assertEqual(before.fileIds,[first.fileId,second.fileId],'후보 순서');
+        const common={fileId:first.fileId,extractorVersion:'doc/new',contentHash:first.contentHash,home:first.home,supported:true,now:at(4)};
+        const busy=await takeClaim(store,{fileId:first.fileId,workItemId:ids.next(),now:at(4),claimedBy:'old-worker'});
+        const deferred=await store.commitUnsupportedCarry({...common,workId:ids.next()});assertOk(deferred,'열린 일감');assertEqual(deferred.committed,false,'이미 열린 일감은 새 버전 검사 완료가 아니다');
+        assertOk(await store.completeWork({id:busy.workItemId,claimedBy:busy.claimedBy,now:at(5)}),'열린 일감 종료');
+        const results=await Promise.all([store.commitUnsupportedCarry({...common,workId:ids.next()}),store.commitUnsupportedCarry({...common,workId:ids.next()})]);
+        for(const result of results)assertOk(result,'동시 판정');
+        assertEqual(results.filter(r=>r.ok&&r.committed).length,1,'한 번 확정');
+        const other=await store.commitUnsupportedCarry({fileId:second.fileId,extractorVersion:'doc/new',contentHash:second.contentHash,home:second.home,supported:false,workId:ids.next(),now:at(4)});assertOk(other,'비대상');
+        const after=await store.listUnsupportedCarry({extractorVersion:'doc/new',limit:10});assertOk(after,'완료 후보');assertEqual(after.fileIds,[],'동일 버전 검사하지 않음');
+        const open=await store.listOpenWorkTargets({kind:EXTRACT_KIND});assertOk(open,'열린 일감');assertEqual(open.targets.filter(x=>x.targetId===first.fileId).length,1,'일감 하나');assertEqual(open.targets.filter(x=>x.targetId===second.fileId).length,0,'비대상 일감 없음');
+        const newer=await store.listUnsupportedCarry({extractorVersion:'doc/later',limit:10});assertOk(newer,'다른 버전');assertEqual(newer.fileIds,[first.fileId,second.fileId],'새 버전에서 다시 판정');
+      }),
+    ),
+    contractCase('Carry work는 만료된 A 청구 뒤 B 소유자가 승계하고 늦은 A 쓰기를 거절한다',async make=>withSubject(make,async store=>{
+      const ids=sequenceIdGen({start:4950,timestampMs:1770000000000}),[file]=await storedFiles(store,ids,[Uint8Array.of(7,8,9)]);if(!file)fail('파일 없음');
+      const initial=await takeClaim(store,{fileId:file.fileId,workItemId:ids.next(),now:T0,claimedBy:'initial'});const old=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'old',startedAt:at(1),claim:initial});assertOk(old,'기존 unsupported');assertOk(await store.finishExtraction({extractionId:old.extraction.id,finishedAt:at(2),outcome:{status:'unsupported',error:'unsupported',mediaType:null}}),'기존 종료');assertOk(await store.completeWork({id:initial.workItemId,claimedBy:initial.claimedBy,now:at(3)}),'기존 work 종료');
+      const work=ids.next(),marked=await store.commitUnsupportedCarry({fileId:file.fileId,extractorVersion:'A',contentHash:file.contentHash,home:file.home,supported:true,workId:work,now:at(4)});assertOk(marked,'A 예약');assertEqual(marked.created,true,'A 새 work');
+      const a=await store.claimWork({now:at(4),kinds:[EXTRACT_KIND],claimedBy:'owner-A'});assertOk(a,'A 청구');if(!a.item||!a.item.claimedAt)fail('A 청구 없음');const claimA={workItemId:a.item.id,claimedBy:'owner-A',claimedAt:a.item.claimedAt,attempts:a.item.attempts};
+      const opened=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'A',startedAt:at(5),claim:claimA});assertOk(opened,'A 시작');assertOk(await store.appendExtractionChunks({extractionId:opened.extraction.id,chunks:[textChunk(ids,0,'old-owner')]}),'A 조각');
+      const early=await store.claimWork({now:at(6),kinds:[EXTRACT_KIND],claimedBy:'owner-B'});assertOk(early,'B 조기 청구');assertEqual(early.item,null,'A lease 동안 승계 금지');const stolen=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'B',startedAt:at(6),claim:{workItemId:work,claimedBy:'owner-B'}});assertNotOk(stolen,'남의 청구로 버전 변경 금지');assertEqual(stolen.code,'CLAIM_LOST','유효 청구 필요');
+      const later=new Date(at(4).getTime()+CLAIM_FOR_MS+1),b=await store.claimWork({now:later,kinds:[EXTRACT_KIND],claimedBy:'owner-A'});assertOk(b,'B 청구');if(!b.item||!b.item.claimedAt)fail('B 청구 없음');assertEqual(b.item.id,work,'같은 work 승계');
+      const incomplete=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'B',startedAt:later,claim:{workItemId:work,claimedBy:'owner-A'}});assertNotOk(incomplete,'승계에는 전체 청구 필요');assertEqual(incomplete.code,'CLAIM_LOST','attempt 없는 승계 금지');
+      const wrongAttempt=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'B',startedAt:later,claim:{workItemId:work,claimedBy:'owner-A',claimedAt:b.item.claimedAt,attempts:a.item.attempts}});assertNotOk(wrongAttempt,'이전 attempt 승계 금지');assertEqual(wrongAttempt.code,'CLAIM_LOST','attempt fence');
+      const next=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'B',startedAt:later,claim:{workItemId:work,claimedBy:'owner-A',claimedAt:b.item.claimedAt,attempts:b.item.attempts}});assertOk(next,'B 시작');assertEqual(next.closedStale?.id,opened.extraction.id,'A 세대 닫기');
+      const late=await store.beginExtraction({id:ids.next(),fileId:file.fileId,extractorVersion:'A',startedAt:later,claim:claimA});assertNotOk(late,'늦은 A 청구');assertEqual(late.code,'CLAIM_LOST','옛 소유자 차단');assertNotOk(await store.appendExtractionChunks({extractionId:opened.extraction.id,chunks:[textChunk(ids,1)]}),'닫힌 A 쓰기');assertNotOk(await store.finishExtraction({extractionId:opened.extraction.id,finishedAt:later,outcome:{status:'ok',mediaType:'text/plain',indexConfigId:null}}),'닫힌 A 게시');
+      const repeat=await store.commitUnsupportedCarry({fileId:file.fileId,extractorVersion:'A',contentHash:file.contentHash,home:file.home,supported:true,workId:ids.next(),now:later});assertOk(repeat,'A marker');assertEqual(repeat.committed,false,'기존 marker 불변');
+    })),
+    contractCase(
       '첫 세대는 attempt 1로 열리고 살아 있는 청구만 열 수 있다',
       async (make) =>
         withSubject(make, async (store) => {
