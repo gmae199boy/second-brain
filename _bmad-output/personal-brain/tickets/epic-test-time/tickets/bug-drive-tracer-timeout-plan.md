@@ -174,3 +174,9 @@ operator_actions: 중앙은 정확 최종 SHA와 바이트 영향 보고를 감�
 제품·공통 fixture·runner/config·migration·plugin·lock은 원래 baseline 대비 불변이다. hook snapshot이 변경된 시험·문서를 복사하므로 간접 측정 바이트 영향은 있으며 시간 영향은 미측정이다. 공식 통합과 성능 gate 처분은 중앙/19.5 소유다. 추가 측정·전체 반복은 배정하지 않았다. deferred는 빈 단일 목록이며 워크트리·브랜치·세션·비공개 원시는 보존한다.
 
 로컬 .brain-automation/tickets/19.13의 독립 보고는 review-followup1-report.md, final-evidence-review-report.md, final-impact-review-report.md, po-target-report.md, po-target-followup-report.md, po-target-final-report.md다. 최종 commit blob을 실행된 tracer 해시와 대조하고 정확 원격 SHA·clean 증거를 final-report.md에 남긴다.
+
+## 최신 main 통합 경계
+
+중앙 msg_e87928434fd1/msg_7358bd66ee8d에 따라 최초 최종 commit `e0c9a9d0611b70ac1159b9ff78b49fe3ac4198fe`와 첫 최종 보고 이력을 보존하고, `origin/main`의 `1897c866d1084b7a4bf871db8abb87701229cbac`를 자기 티켓 브랜치에 정상 merge한다. 부모 epic의 추가 Decision 문서 충돌은 19.13 AC1 보완과 19.14 분리/인계/AC3 보완을 모두 보존해 해결했다. entry14·next_id15 및 중앙의 follow-ups 기록은 incoming 그대로 수용하며 그 소유 내용을 임의 수정하지 않는다.
+
+incoming 실행 변경은 `packages/postgres/test/redaction.test.ts` 한 파일이며 중앙 수락 main blob과 동일하다(SHA-256 `600e9c02a5fad5d9c39fb32ed0972c7b904bec0860930eb869833b3f402a12b8`). 두 tracer는 실행·최초 최종 commit 해시와 동일하고 제품·공통 fixture·test-db·runner/config·lock 변경은 없다. 통합 후 build·typecheck·diff 컴파일 확인과 독립 통합 영향 검토를 수행하며, 중앙 지시대로 불필요한 전체·성능·추가 진단은 실행하지 않는다. 원래 19.13 전체 회귀는 통합 전 source의 증거이고 별도 19.14 회귀가 이를 대체하지 않는다. 최종 merge commit·독립 검토·원격 SHA는 로컬 갱신 보고에 보존한다. hook snapshot 간접 바이트 영향은 통합 후에도 유지되며 중앙/19.5가 공식 인계·새 동결/gate 처리를 판단한다.
