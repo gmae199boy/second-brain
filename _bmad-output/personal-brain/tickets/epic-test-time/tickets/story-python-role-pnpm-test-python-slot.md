@@ -75,3 +75,5 @@ risk: high
 - Decision(2026-11-05, 부모): 18.10 대신 20.6 정리 뒤 현행 시험 집합에서 다시 정제한다. 원문에 남은 health-perf·옛 normalize·body-digest·review-boundaries 인계를 부활시키지 않는다.
 - Risk: high — 잘못된 격리는 회귀를 숨긴다. 추가 검사는 파일 실패·timeout 주입과 기본/Python Vitest 병행의 소유권 대조다.
 - Waits on 20.6 because: 정리된 계약·시험 집합이 비교 기준이며 baseline에 해당 산출물이 포함되어 있다. built/done 전이는 하지 않는다.
+
+- Handoff(2026-11-08, 중앙): 19.12의 수락 source와 fixture/시험/workload/measurement 의미 변경 범위를 인계받고 성능 gate는 유지한다.
