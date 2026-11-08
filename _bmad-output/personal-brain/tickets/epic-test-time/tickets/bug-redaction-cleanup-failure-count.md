@@ -41,7 +41,7 @@ severity: P2
 3. **결정적 입력으로 잘못된 동작을 검출한다**
    **Given** 정적으로 확인한 원인 후보와 독립 합성 입력
    **When** 마지막 개발·리뷰 수정 뒤 회귀를 실행한다
-   **Then** 수정 전 시험 전제 또는 제품 결함과 수정 후 동작을 구별하는 결정적 회귀가 실제 물리 cleanup 경로를 통과한다. 별도 방해 입력의 대상·실패 기대값은 그 입력과 계약으로 정하며 역사2행에 맞춰 역산하지 않는다. 합성 입력이 증명하는 경로와 87f7b3e 실제 두 행의 귀속 미확정을 구별한다. 전체 안전 work/failure 투영은 reporter가 접지 않는 진단으로 남긴다. 타이밍 운·통과까지 반복·timeout 증가·무한 retry·skip·기대1→2로 대체하지 않는다.
+   **Then** 시험 전제 격리 교정은 구 공유 factory와 신 전용 factory의 정적 호출 경로 원문 diff, 실제 권한 사례가 자기 전용 cluster를 썼다는 정확 소유 ID와 실제 연결 매핑의 결정적 실행 증거·단언(공유 경로 복귀 시 검출), AC1~2와 명시적 같은 DB snapshot 방해·해제 복구의 실제 통과를 모두 갖춘다. 동일 cleanup 입력의 구 source 실패/신 source 통과 또는 역사 원인 재현은 별도 필수조건이 아니며 입증했다고 쓰지 않는다. 별도 방해 입력의 대상·실패 기대값은 그 입력과 계약으로 정하며 역사2행에 맞춰 역산하지 않는다. 합성 입력이 증명하는 경로와 87f7b3e 실제 두 행의 귀속 미확정을 구별한다. 전체 안전 work/failure 투영은 reporter가 접지 않는 진단으로 남긴다. 타이밍 운·통과까지 반복·timeout 증가·무한 retry·skip·기대1→2로 대체하지 않는다.
 4. **격리와 검증 이력을 보존한다**
    **Given** 마지막 구현 및 독립 후속 리뷰 수정 완료
    **When** 자기 전용 PG/HOME/TMP/venv에서 VITEST_MAX_WORKERS=2 pnpm test → pnpm test:python을 각1회 순차 실행한다
@@ -73,3 +73,5 @@ severity: P2
 - 조사·편집 소유: packages/postgres/test/redaction.test.ts 및 필요한 자기 전용 helper. 공통 fixture/tooling/test-db/core/PG 제품 수정은 중앙 질문 대상이다. 19.5 runner/slot/hook/측정/config 및19.13 Drive 두 시험은 편집 금지다.
 - Fact: 원관측 failure 두 행의13필드가 접혀 target/code/fingerprint/occurrences와 실제 work 상관 정보는 복원할 수 없다. 합성 입력이 증명하는 경로를 역사 원인으로 소급 확정하지 않는다.
 - Decision: 독립 PO F1~F5를 반영하고 S1의 안전 JSON 진단과 S2의 기존 stale-claim 회귀 보존을 채택한다. A1은 중앙 인계로 해결, A2는 공통영역 편집이 실제 필요할 때만 질문한다.
+
+- Decision(2026-11-09, 중앙 msg_262f3e0c3fe7): AC3의 이전 문구 “수정 전 시험 전제 또는 제품 결함과 수정 후 동작을 구별하는 결정적 회귀가 실제 물리 cleanup 경로를 통과한다”는 역사 원행 식별 유실로 입증할 수 없는 동일 입력의 구source실패/신source통과까지 넓게 읽힐 수 있었다. 시험 전제 격리·회귀 보강 범위로 보완해 정적 factory diff·실제 전용 cluster 소유/연결 매핑 증거·정확 물리 계약과 같은DB 음성/복구의 실제 통과를 모두 요구한다. 제품 동작 개선·역사2행원인 해결을 주장하지 않는다. 다른AC·최종순차회귀는 완화하지 않으며 추가crossDB/구source 실행을 배정하지 않는다.
