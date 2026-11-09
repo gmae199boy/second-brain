@@ -3,7 +3,7 @@ title: '단독 시험의 Python 전체 선택 좁히기 (19.9)'
 type: 'feature'
 ticket: '9'
 created: '2026-11-09'
-status: 'in-review'
+status: 'built'
 baseline_revision: '7b09aead25094304f8aee9359899a69fc477a932'
 route: 'full'
 route_source: 'pinned'
@@ -62,7 +62,7 @@ operator_actions: []
 - [x] 1 `rules.mjs`, `test-changed.test.ts`, `README.md` -- 네 정확 후보 제한·양성/인접음성 및 matrix 분류 회귀·파일별 정적 역의존 증거 작성. 임의 새 후보 추가 금지.
 - [x] 2 새 `test-changed-selection.test.ts`와 전용 fixtures -- baseline 고정 rules와 최근19.6/19.8/8.5 fullSHA 부모diff를 동일 모의자식 v1 전후 비교. 대표 정확후보/인접/혼합/migration/direct/missing/삭제rename/4종Git입력·기록장애/가림을 검증한다. 비교결과를 선택 범위로 해석하며 실제선택/성능실측이라고 쓰지 않는다.
 - [x] 2a `tooling/bootstrap/test/hook.test.ts` 및 필요한 전용 helper/합성회귀 -- 중앙 msg_4d4013010f49 승인 test-only 실패교정. spawned daemon PID와 raw daemon.pid fullcommit/installed/snapshot·생존을 정확검증, CLI commit은 공개codec 기대와 정확검증. phone형/일반 고정합성SHA 독립기대·원본불변으로 가림계약을검증.
-- [ ] 3 지휘자 -- 전체diff와 matrix 정적 감사·4렌즈 독립/필요후속·환경 preflight·최종 TS→Python순차 각1회·실패처분/관련재검증·정확자원회수·built/범위commit/일반branchpush/정확원격SHA·clean/중앙보고.
+- [x] 3 지휘자 -- 전체diff와 matrix 정적 감사·4렌즈 독립/필요후속·환경 preflight·최종 TS→Python순차 각1회·실패처분/관련재검증·정확자원회수·built/범위commit/일반branchpush/정확원격SHA·clean/중앙보고.
 
 **Acceptance Criteria:**
 - Given 네 후보 단독/조합만 입력, when 기본 changed runner가 분류/실행, then 관련 기본 시험은 그대로 선택되고 Python 전체/list/run이 빠진다.
@@ -144,3 +144,40 @@ operator_actions: []
 ### 수락 source 통합 예정
 
 - 진행명령 정상종료후 중앙수락19.8 source def615ae783c14b67dd6832a0f879c372272e431와 main a5d40c60614b764f2530f5ec69a12c866c583469를확인했다. incoming4파일은record helper/기록회귀/19.8계획/중앙followups뿐이고 rules·명령·exit·v1형식은불변이다. 원baseline·최초전체/관련결과를보존하며 자기branch에정상통합/독립영향확인·필요관련검증으로마무리한다.
+
+### 수락 source 통합 결과
+
+- 구현/hook교정 source `d69d90bde50f6045e6254c46643ba40842b5cd1c`, 중앙수락19.8source `def615ae783c14b67dd6832a0f879c372272e431`와 main `a5d40c60614b764f2530f5ec69a12c866c583469`를 정상merge한 검증HEAD는 `41127235a44a7b5759824ab86dcd39151531e6e3`다. 원baseline은변경하지않았다.
+- incoming4파일의19.8가림후속·계획/중앙기록만통합됐다. rules는바이트동일, 실제classifyChanges 전후17행(고유16집합)은선택동일이다. Vitest list/실행완료manifest가아닌분류함수대조이며계수오기18은17로정정했다. incoming전체는record helper 때문에Python전체유지, 정확후보는생략, 혼합/fixture/config/migration/direct는기존선택이다.
+- 독립Sol incoming확인새finding0. 새 SECRET_PATTERNS import는시험→제품의외향의존이며Python→후보시험의역의존을만들지않음을확인했다. v1/명령/exit·기록실패비간섭·제품/phone가림/daemon·query-perf 역사guard/SQL/임계와schema44/migration44바이트불변이다.
+- 통합HEAD에서 UTC03:07:56.756598~03:07:58.213581 build/typecheck/diff-check exit0, 03:07:58.213806~03:08:47.607840 관련3파일108pass/exit0(분류9·기록38·선택비교61). 전체/hook추가반복없이교차계약을확인했다. 원시/정확명령/UTC/exit·지문은 .brain-automation/tickets/19.9/verify-incoming/에보존했다.
+- 이관련3파일은mock/list만필요하므로실PG는만들지않고합성unused127.0.0.1:1 URL로공유DB자동기동을차단했다. 새외부전용환경/실Dockercontext/Compose·genuineorb단일위임preflight, 전후내용지문/migration44동일, 새Docker자원0·fixture/hook로그0·전용TMP비어있음을감사했다. 최초전체와교정후검증의소유자원을다시생성하거나peer를변경하지않았다.
+
+## 선택 범위 비교 결과
+
+모의자식 v1 비교61case가 최초전체 및 교정후·통합관련검증에서모두pass했다. 아래는동일고정입력·동일mock list의범위비교이며실제Vitest관련파일명실측/완료manifest나절감량보장이아니다.
+
+| 동일 입력 | 고정원baseline 규칙 | 19.9 후보 규칙 |
+|---|---|---|
+| 정확4후보 각각·합집합/중복·네Git출처 단독·후보간rename | Python all | Python none, 기본changed명령/선택동일 |
+| 후보+fixture/globalsetup/config/제품/자식/미지시험 | Python all | Python all, 해당넓은이유유지 |
+| SQL migration·후보혼합 | Python/Postgres all | Python/Postgres all |
+| 후보+직접Python시험 | Python all | 존재파일만files, 누락은missing |
+| 고정19.6 source `0dc360911a02b4f17b4514919c1ce724e8e7c19a` 부모diff | Python all | Python all |
+| 고정19.8 source `f361d8d40a8170c0e1fd470d665428440d7d782a` 부모diff | Python all | Python all |
+| 고정8.5 source `ed915a226b26f7e14dda67003c0a94b8706399c8` 부모diff | Python/Postgres all | Python/Postgres all |
+
+고정각부모/fullhead/경로NULhash는전용diffs.json·회귀상수/정적Git감사로보존했다. 입력가림(.gitignore 포함)은원경로분류뒤적용하며 `[redacted]`를복원/동일시하지않는다. 기본/전체/직접명령인수·단계상태/이유/exit/signal·기록가능/불가·Git4출처/빈/중복/삭제표현/rename/문자형태를대조했다. tracer시간은공유단계/null이며독립비용으로합산하지않는다.
+
+## Operator Actions
+
+- 추가운영입력/계정조치없음. 중앙의결과수락·main병합/push와사용자인수는별도다. 보존한전용환경/합성원시/장부/세션/워크트리/브랜치는자동정리하지않는다.
+
+## Auto Run Result
+
+- 상태 **built**(사용자인수전). 공식 full렌더·정적조사/계획·Terra분할구현·Sol4렌즈와r2/hook/incoming독립후속·최초전체TS→Python순차각1회·실패교정/관련재검증을완료했다. 최초ready/depth1·최상위parent없음/자기Run·Task/Dispatch·체크포인트/일반branchpush/정확원격SHA·clean증거는 .brain-automation/tickets/19.9/final-report.md와 worker.json에보존한다. 중앙main/state는편집하지않았다.
+- 변경: rules.mjs는입증한정확4파일만두넓은prefix에서제외한다. 기존기본changed·migration전체·directPython/혼합선택을보존한다. 분류회귀와고정baseline/최근diff·v1모의선택회귀, README역의존/관측경계를추가했다. 중앙승인hook test-only교정은rawfullcommit/PID/생존과공개가림을분리하고고정합성SHA/음성회귀로기존8기능case/timeout을보존한다. record후속은19.8수락source그대로통합했으며19.9가중복편집하지않았다.
+- 리뷰: r1 12행(medium6/low2/false4)을개별triage했다. BH1~7/ECH1의8채택행은명령/단계/고정diff/분기실패/제한진단/출처/case분리/가림단언으로수정하고r2독립확인했다. IA-A는별도정적장부존재/README추적성보강, IA-B/C는명세상모의선택/문자열API허용, IA-D는in-review중최종gate미실행을결함으로보지않는근거로기각했다. 초기edge절차실패를숨기지않고source-only재검사0finding으로보완했다. hook/incoming각0finding. deferred는단일빈목록, operator_actions빈목록, 후속리뷰권고false다.
+- 검증: 최초전체TS240파일5259pass/exit0·767.149초→Python16파일75pass1fail/exit1·228.021초를원형보존한다. 원phone가림을우회하지않고실패한hook시험전제를교정한뒤관련109pass/exit0와hook8pass/exit0를확보했다. 수락19.8통합뒤compile/실제분류동일/관련108pass/exit0로교차영향을확인했다. 최초Python을전체pass로소급하거나통합HEAD전체pass라고쓰지않는다.
+- 자원: 최초exactcontainer262전부부재/unknown0·hook부재/포트반환, 교정후새base/hook정확소유부재/포트반환·process gone, incoming새Docker자원0을감사했다. 운영/peer자원은변경하지않았다. 부모외부TMP와runner내ignored scratch를구별한다.
+- 한계: 후보독립성은현소비자/설치·빌드경계의정적근거이며변경시재조사한다. hook은후보바이트도포괄복사하므로파일읽기0이아니다. 모의list는실제완료manifest/성능표본이아니며기록v1의가림/미완료/공유tracer/null·임의불투명비밀완전판별불가를유지한다. BH5진단은error name/길이/상태/출처로제한돼stderr상세원인을보존하지않는다. 최종built기록은문서만바꾸며마지막실행source와구별한다.
