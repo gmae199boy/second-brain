@@ -7,6 +7,51 @@ import { fileURLToPath } from 'node:url';
 import { classifyChanges } from '../../test-changed/rules.mjs';
 
 describe('changed test path rules', () => {
+  it('exempts only proven independent test files from the broad Python rules', () => {
+    const independent = [
+      'tooling/test-db/test/test-changed.test.ts',
+      'tooling/test-db/test/test-changed-record.test.ts',
+      'packages/postgres/test/schedule-occurrences.test.ts',
+      'packages/postgres/test/user-keys.test.ts',
+    ];
+    for (const path of independent) {
+      expect(classifyChanges([path]), path).toEqual({pythonAll:false,pythonFiles:[],postgresAll:false,reasons:[]});
+    }
+    expect(classifyChanges([...independent, independent[0]!])).toEqual({pythonAll:false,pythonFiles:[],postgresAll:false,reasons:[]});
+    expect(classifyChanges([])).toEqual({pythonAll:false,pythonFiles:[],postgresAll:false,reasons:[]});
+
+    const adjacent = [
+      'tooling/test-db/src/index.ts', 'tooling/test-db/test/global-setup.test.ts',
+      'tooling/test-db/test/fixtures/test-changed/run-baseline.mjs',
+      'tooling/test-db/test/fixtures/test-changed/preload.cjs',
+      'tooling/test-db/test/unknown.test.ts',
+      'packages/postgres/test/fixture.ts', 'packages/postgres/test/global-setup.ts',
+      'packages/postgres/test/fixtures/drive-delete-barrier-child.mjs',
+      'packages/postgres/src/store.ts', 'packages/postgres/tsconfig.json',
+      'packages/postgres/test/unknown.test.ts',
+      ...independent.map(path => path + '.bak'),
+    ];
+    for (const path of adjacent) {
+      const expectedPrefix = path.startsWith('tooling/test-db/') ? 'tooling/test-db/' : 'packages/postgres/';
+      const result = classifyChanges([path]);
+      expect(result.pythonAll, path).toBe(true);
+      expect(result.reasons.map(reason => reason.prefix), path).toContain(expectedPrefix);
+      expect(classifyChanges([independent[0]!, path]).pythonAll, path).toBe(true);
+    }
+    // The API compares literal strings: deletion and untracked status do not
+    // alter classification; a rename supplies old and new paths independently.
+    expect(classifyChanges([independent[2]!, 'packages/postgres/test/renamed.test.ts']).pythonAll).toBe(true);
+    expect(classifyChanges([independent[2]!, independent[3]!]).pythonAll).toBe(false);
+    expect(classifyChanges([independent[2]!.replace('schedule', 'Schedule')]).pythonAll).toBe(true);
+    expect(classifyChanges([independent[2]!.replaceAll('/', '\\')]).pythonAll).toBe(false);
+    expect(classifyChanges([independent[2]!, 'packages/postgres/migrations/0044_drive_resume.sql']))
+      .toMatchObject({pythonAll:true,postgresAll:true});
+    const direct = 'apps/cli/python-test/missing.test.ts';
+    expect(classifyChanges([independent[0]!, direct, direct]))
+      .toMatchObject({pythonAll:false,pythonFiles:[direct],postgresAll:false});
+    expect(classifyChanges([independent[0]!, direct, 'tooling/test-db/src/index.ts']))
+      .toMatchObject({pythonAll:true,pythonFiles:[direct],postgresAll:false});
+  });
   it('keeps the complete hook file exclusively in the Python config', () => {
     const root = fileURLToPath(new URL('../../../', import.meta.url));
     const hook = 'tooling/bootstrap/test/hook.test.ts';

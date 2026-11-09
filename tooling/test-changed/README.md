@@ -9,3 +9,18 @@
 `stages`는 실제 진행 순서의 `name`, `status`, `startedAt`, `endedAt`, `elapsedMs`, 자식 `exitCode`, `signal`, `error`를 담는다. 실행 중은 `running`, 정상 종료는 `completed`, 자식 실패는 `failed`, 실행하지 않은 단계는 `skipped`다. 시작 실패의 `error`는 `spawn-error`, 캡처 출력 한도 초과는 `output-limit`, 그 밖의 프로세스 API 오류는 `process-error`이며 상세 메시지는 없다. 오류와 함께 반환된 `signal`은 자식 종료 신호를 원인으로 단정하지 않고 단계 관측값으로만 둔다. `reason`은 생략 사유(`no-selected-files`, `no-migration-change`, `direct-files`, `no-existing-files`, `no-matching-rule`, `prior-failure`)다. list 명령의 성공과 그 결과 JSON 처리 성공은 별개이며 이후 runner 실패를 함께 확인해야 한다. `exitCode`와 `signal`은 자식 관측치이며 runner 종료 코드와 혼동하면 안 된다.
 
 단계 이름은 `build`, `verify-ref`, `git-committed`, `git-staged`, `git-unstaged`, `git-untracked`, `default-list`, `default-run`, `postgres-list`, `postgres-run`, `python-list`, `python-run`이다. Python 직접 파일 경로에서는 list를 실행하지 않는다. `tracer.files`는 기본 목록 중 이름에 tracer가 들어간 파일이고 `tracer.stage`는 `default-run`이다. tracer는 별도 실행이 아니므로 `timing: shared-stage`, `elapsedMs: null`로 표시하며 기본 단계 시간을 독립 tracer 비용으로 해석하지 않는다.
+
+## 독립 시험 파일의 Python 선택 경계
+
+다음 네 정확 경로만 `tooling/test-db/`와 `packages/postgres/`의 넓은 Python 전체 규칙에서 제외한다. 기본 Vitest `--changed`는 그대로이며 파일 존재 여부와 무관하게 분류한다. 다른 변경과 섞이면 각 경로를 따로 판정하므로 runtime이나 fixture가 있으면 Python 전체를 유지한다. 이름이 비슷한 파일이나 새 시험 파일은 자동으로 제외하지 않는다.
+
+- `tooling/test-db/test/test-changed.test.ts`: 시험이 분류 규칙을 가져오고 config를 읽으며 runner와 list 자식을 호출한다. Python 진입점에서 이 시험 본문을 호출하는 역참조는 정적 조사에서 발견하지 못했다.
+- `tooling/test-db/test/test-changed-record.test.ts`: 시험 자체가 runner·기록·규칙과 baseline fixture를 복사해 모의 자식을 실행한다. Python 진입점에서 이 시험 본문을 호출하는 역참조는 발견하지 못했다. 옆의 baseline 및 preload fixture는 제외하지 않는다.
+- `packages/postgres/test/schedule-occurrences.test.ts`: 시험이 공통 fixture와 제품 소스를 가져오고 migration SQL을 임시 복사한다. Python이 시험 본문을 가져오거나 실행하는 역참조는 발견하지 못했다.
+- `packages/postgres/test/user-keys.test.ts`: 시험이 공통 fixture와 제품 소스를 가져오고 과거 migration SQL을 임시 복사한다. Python이 시험 본문을 가져오거나 실행하는 역참조는 발견하지 못했다.
+
+정적 경계는 Python config의 `apps/cli/python-test/**/*.test.ts`와 hook, global setup의 test-db cluster/lease 및 CLI `pg-home.ts`의 제품 postgres·동적 shim 연결을 포함해 확인했다. 기본 `vitest.config.ts`는 각 프로젝트의 시험과 source alias를 등록하며 두 패키지의 build tsconfig는 `src`만 포함한다. 공통 fixture·global setup·source alias·제품·설정·migration·자식 파일은 넓은 규칙을 유지한다. 반면 hook의 `snapshot`은 Git이 보는 tracked 및 비무시 untracked 파일을 포괄 복사하고 clone/install/build하므로 위 시험 파일 바이트도 간접적으로 읽힌다. 여기서 구별한 것은 복사 여부가 아니라 현재 설치·제품 빌드와 Python runtime이 독립 시험 본문을 의미 입력으로 실행하거나 소비하는지다. hook, 빌드 설정 또는 소비자가 바뀌면 이 판단을 다시 확인해야 한다.
+
+기록 v1의 선택 비교는 같은 입력과 같은 모의 list 응답을 기준·후보에 공급해 해석할 수 있다. 후보만 바뀐 경우 Python 전체 선택의 차이와 이유를 확인하고, 인접 파일·혼합 입력은 기존 전체 선택이 유지되는지 살핀다. 모의 list 결과는 실제 실행 완료 목록이나 성능 측정이 아니며 위의 가림·공유 tracer 시간·미완료·기록 실패 제한이 그대로 적용된다.
+
+추적할 코드 위치는 `apps/cli/python-test/vitest.config.ts`와 `apps/cli/python-test/global-setup.ts`, `apps/cli/test/pg-home.ts`, `packages/postgres/tsconfig.json`, `tooling/test-db/tsconfig.json`, `tooling/test-changed/vitest.config.aliases.mjs`다. 포괄 복사 및 snapshot commit은 `tooling/bootstrap/test/hook.test.ts`의 `snapshot`과 setup에 있다. 후보별 시험 본문의 import·파일 읽기·자식 호출 방향과 이 진입점의 역참조를 함께 보아야 하며, 공유 코드와 설정은 계속 전체 선택 대상이다.

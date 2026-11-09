@@ -65,9 +65,18 @@ const exact = [
   'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','vitest.config.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';
+// These independent Vitest files are not Python runtime inputs. Keep this
+// exemption scoped to the two broad rules, not to other matching rules.
+const independentTests = new Set([
+  'tooling/test-db/test/test-changed.test.ts',
+  'tooling/test-db/test/test-changed-record.test.ts',
+  'packages/postgres/test/schedule-occurrences.test.ts',
+  'packages/postgres/test/user-keys.test.ts',
+]);
 
 export function classifyChanges(paths) {
-  const matched = rules.filter(rule => paths.some(path => path.startsWith(rule.prefix)));
+  const matched = rules.filter(rule => paths.some(path => path.startsWith(rule.prefix) &&
+    !((rule.prefix === 'tooling/test-db/' || rule.prefix === 'packages/postgres/') && independentTests.has(path))));
   const exactMatches = paths.filter(path => exact.includes(path));
   // The full bootstrap rule takes precedence even when its hook test changed.
   const bootstrapChanged = paths.some(path => path.startsWith('tooling/bootstrap/'));
