@@ -25,6 +25,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hookResourcesAvailable, recordHookResources, selectHookRoot } from './hook-resources.js';
+import { assertDaemonIdentity } from './hook-daemon-assertions.js';
 import { acquireLock, type Lock } from '../../test-db/src/slots/lock.js';
 import { lookupProcess } from '../../test-db/src/slots/ledger.js';
 import { withoutHarnessFolders } from '../../../apps/cli/test/environment.js';
@@ -374,7 +375,7 @@ describe('the plugin SessionStart hook', () => {
     const closed = new Promise<void>((resolve, reject) => { daemon.on('close', () => resolve()); daemon.on('error', reject); });
     try {
       const deadline = Date.now() + 20_000;
-      let status: { alive: boolean; commit: string | null } = { alive: false, commit: null };
+      let status: { alive: boolean; commit: string | null; pid: number | null } = { alive: false, commit: null, pid: null };
       do {
         const checked = spawnSync(join(home, 'bin', 'brain'), ['daemon', 'status', '--json'], { env, encoding: 'utf8' });
         expect(checked.status).toBe(0);
@@ -382,7 +383,11 @@ describe('the plugin SessionStart hook', () => {
         if (status.alive) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       } while (Date.now() < deadline);
-      expect(status.alive).toBe(true); expect(status.commit).toBe(installed().commit);
+      expect(daemon.pid).toBeDefined();
+      const raw = JSON.parse(readFileSync(join(home, 'run', 'daemon.pid'), 'utf8')) as {pid:number;commit:string|null};
+      let processAlive = false;
+      try { process.kill(daemon.pid!, 0); processAlive = daemon.exitCode === null && daemon.signalCode === null; } catch { /* The identity assertion reports a dead process. */ }
+      assertDaemonIdentity(raw, status, daemon.pid!, installed().commit ?? null, snapshotCommit, processAlive);
     } finally { daemon.kill('SIGTERM'); await closed; }
   }, SLOW);
 
