@@ -205,7 +205,8 @@ it('memoryStore 실제 추출의 현재 세대, 출처, 가림과 순위를 지�
   const requests=[{fileId:first,source:'older',reportDate:'2025-01-01',createdAt:'2025-01-01',id:'a'},
     {fileId:first,source:'latest',reportDate:'2025-01-02',createdAt:'2025-01-02',id:'b'},
     {fileId:second,source:'newer',reportDate:'2026-01-01',createdAt:'2026-01-01',id:'c'}];
-  const memory=memoryStore({reportRequests:requests}), now=new Date('2026-03-04T05:06:07Z');
+  const sourceEntry = {sourceId:'source',name:'원본',path:'경로',mimeType:'text/plain',remoteVersion:'1',sizeBytes:1,fileId:first,indexStatus:'indexed' as const,unreachable:false,unreachableAt:null,completedVersion:'1',completedHash:null,seenScan:null};
+  const memory=memoryStore({reportRequests:requests,sourceEntries:[{...sourceEntry,id:'unsafe',remoteId:'sk-ABCDEFGHIJKLMNOPQRST'},{...sourceEntry,id:'safe',remoteId:'safe-id'}]}), now=new Date('2026-03-04T05:06:07Z');
   expect((await memory.ensureSelfUser(sampleSelfUserInput())).ok).toBe(true);
   expect((await memory.ensureSession(sampleEnsureSessionInput())).ok).toBe(true);
   const batch=sampleIngestBatch(), message=batch.messages[0]!;
@@ -214,6 +215,8 @@ it('memoryStore 실제 추출의 현재 세대, 출처, 가림과 순위를 지�
     return {id:ids.next(),harnessMessageId:message.harnessMessageId,ordinal,sourceKind:'file' as const,sourceRef:`report-${ordinal}`,displayName:`report-${ordinal}.md`,file:{id,contentHash:hash,sizeBytes:1,location:{id:ids.next(),storeKind:'local' as const,ownership:'brain' as const,locator:brainLocator(hash.slice(7),bytes)},external:null}};
   });
   expect((await memory.ingest({...batch,attachments})).ok).toBe(true);
+  expect((await memory.writeFileNames({names:[{id:ids.next(),fileId:first,nameSource:'attachment_name',text:'별칭 A'},{id:ids.next(),fileId:first,nameSource:'attachment_name',text:'별칭 B'}]})).ok).toBe(true);
+  const alias=await memory.searchDocuments({query:'별칭 B',pattern:'%별칭 B%',limit:10});expect(alias).toMatchObject({ok:true,rows:[{file_id:first,names:['별칭 A','별칭 B']}]});
   async function generation(fileId:string, bodies:string[]) {
     const work=ids.next(); expect((await memory.addWork({id:work,kind:DOCUMENT_EXTRACT_KIND,targetKind:'file',targetId:fileId,createdAt:now,nextAttemptAt:now})).ok).toBe(true);
     const claimed=await memory.claimWork({now,kinds:[DOCUMENT_EXTRACT_KIND],claimedBy:'fixture'}); if (!claimed.ok || !claimed.item) throw Error('claim');
@@ -226,19 +229,20 @@ it('memoryStore 실제 추출의 현재 세대, 출처, 가림과 순위를 지�
     return extractionId;
   }
   await generation(first,['이전 검색']);
+  const safeSources=await memory.searchDocuments({query:'이전 검색',pattern:'%이전 검색%',limit:1});expect(safeSources).toMatchObject({ok:true,rows:[{file_id:first,internal_origins:expect.arrayContaining([expect.objectContaining({kind:'drive',source_file_id:'safe'})])}]});if(safeSources.ok)expect(JSON.stringify(safeSources)).not.toContain('sk-ABCDEFGHIJKLMNOPQRST');
   const current=await generation(first,['검색 검색 password=','Secret123']);
   await generation(second,['검색 한 번']); await generation(ordinary,['검색 검색 검색']);
   const raw=await memory.searchDocuments({query:'검색',pattern:'%검색%',limit:10});
   expect(raw.ok).toBe(true); if (!raw.ok) throw Error('search');
-  expect(raw.rows.map(r=>r.file_id)).toEqual([first,second]);
-  expect(raw.rows[0]).toMatchObject({source:'latest',extraction_id:current,report_date:'2025-01-02'});
-  expect(raw.contexts).toHaveLength(2);
+  expect(raw.rows.map(r=>r.file_id)).toEqual([ordinary,first,second]);
+  expect(raw.rows[1]).toMatchObject({source:'latest',extraction_id:current,report_date:'2025-01-02'});
+  expect(raw.contexts).toHaveLength(3);
   const found=await searchDocuments(memory,{query:'Secret123'});
   expect(found.ok && found.data[0]?.body).toContain('[REDACTED:password]');
   expect(JSON.stringify(found)).not.toContain('Secret123');
   const masked=await memory.redactFile({fileId:first,plan:state=>planFileRedaction(state,{clock:{now:()=>now},idGen:ids})});
   expect(masked.ok).toBe(true);
-  const after=await searchDocuments(memory,{query:'검색'}); expect(after.ok && after.data.map(r=>r.file_id)).toEqual([second]);
+  const after=await searchDocuments(memory,{query:'검색'}); expect(after.ok && after.data.map(r=>r.file_id)).toEqual([ordinary,second]);
   expect(await showDocument(memory,{file_id:first,chunk_locator:locator(0,2)})).toMatchObject({ok:false,status:'redacted'});
 });
 
@@ -257,4 +261,74 @@ it('기본 문맥은 가운데 조각과 앞뒤 두 조각만 반환한다', asy
     { chunk_locator: locator(40, 41), body: '마' },
     { chunk_locator: locator(50, 51), body: '바' },
   ]);
+});
+
+it('통합 원본을 가리고 내부 위치 참조 없이 각 원본의 상태와 링크를 보존한다', async () => {
+  const loc=JSON.stringify({type:'pdf',page:1});
+  const source:DocumentRecallStore={
+    async searchDocuments(){return {ok:true,rows:[{kind:'document',file_id:'file-1',display_name:'첨부',chunk_locator:loc,extraction_id:'extraction',report_date:null,source:'attachment',source_unreachable:false,body:'찾기',ordinal:0,internal_origins:[
+      {kind:'location',location_id:'location-private',store_kind:'local',locator:'private-locator',ownership:'brain',display_name:'첨부',source_unreachable:false},
+      {kind:'drive',source_file_id:'source-1',source_remote_id:'remote-id',display_name:'password=Secret123',source_path:'폴더',index_status:'indexed',source_unreachable:true,current_version:'2',completed_version:'1',stale:true}
+    ]}],contexts:[{extraction_id:'extraction',pieces:[{ordinal:0,chunk_locator:loc,body:'찾기'}]}]};},
+    async readDocument(){return {ok:true,snapshot:{redacted:false,source_unreachable:false,extraction_id:'extraction',status:'ok',pieces:[{ordinal:0,chunk_locator:loc,body:'찾기'}]}};}
+  };
+  const found=await searchDocuments(source,{query:'찾기'},undefined,async()=>({ok:true,url:'file:///synthetic'}));
+  expect(found).toMatchObject({ok:true,data:[{file_id:'file-1',chunk_locator:loc,origins:[{kind:'location',source_url:'file:///synthetic'},{kind:'drive',source_url:'https://drive.google.com/file/d/remote-id/view',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE',stale:true}]}]});
+  expect(JSON.stringify(found)).not.toContain('Secret123');expect(JSON.stringify(found)).not.toContain('internal_origins');expect(JSON.stringify(found)).not.toContain('location-private');expect(JSON.stringify(found)).not.toContain('private-locator');expect(JSON.stringify(found)).not.toContain('source_remote_id');
+});
+
+it('첨부 이름 결과의 files show는 locator 없이 현재 색인 상태와 가림을 확인한다',async()=>{
+  const pending=store([], {...snapshot,extraction_id:null,status:'pending',pieces:[]});
+  expect(await showDocument(pending,{file_id:'file-1'})).toMatchObject({ok:true,data:[],meta:{file_status:'pending',extraction_id:null}});
+  const hidden=store([], {...snapshot,redacted:true});
+  expect(await showDocument(hidden,{file_id:'file-1'})).toMatchObject({ok:false,status:'redacted'});
+  expect(await showDocument(pending,{file_id:'file-1',offset:1})).toMatchObject({ok:false,code:'INVALID_ARGUMENT'});
+});
+
+it('원본이 큰 결과도 두 링크를 생략하지 않고 예산과 이어 읽기를 지킨다',async()=>{
+  const loc=JSON.stringify({type:'text',start:0,end:12000}),body='찾기'+ '가'.repeat(11998);
+  const source:DocumentRecallStore={async searchDocuments(){return {ok:true,rows:[{kind:'document',file_id:'file-1',display_name:'첨부',chunk_locator:loc,extraction_id:'generation',report_date:null,source:'attachment',source_unreachable:false,body,ordinal:0,internal_origins:[{kind:'location',location_id:'loc',store_kind:'local',locator:'private',ownership:'brain',display_name:'첨부',source_unreachable:false},{kind:'drive',source_file_id:'source-1',source_remote_id:'remote',display_name:'원격',source_path:'폴더',index_status:'indexed',source_unreachable:false,current_version:'1',completed_version:'1',stale:false}]}],contexts:[{extraction_id:'generation',pieces:[{ordinal:0,chunk_locator:loc,body}]}]};},async readDocument(){return {ok:true,snapshot:{redacted:false,source_unreachable:false,extraction_id:'generation',status:'ok',pieces:[{ordinal:0,chunk_locator:loc,body}]}};}};
+  const result=await searchDocuments(source,{query:'찾기'},undefined,async()=>({ok:true,url:'file:///synthetic'}));
+  expect(result.ok).toBe(true);if(!result.ok)throw Error('search');expect(result.data[0]?.origins).toHaveLength(2);expect(result.meta.next).toMatchObject({ns:'files',verb:'show',args:{file_id:'file-1',source_file_id:'source-1',chunk_locator:loc}});expect(Array.from(JSON.stringify(result)).length).toBeLessThanOrEqual(8000);
+});
+
+it('잘못된 원본 참조는 공개 URL을 만들지 않는다',async()=>{
+  const loc=JSON.stringify({type:'pdf',page:1});
+  const source:DocumentRecallStore={async searchDocuments(){return {ok:true,rows:[{kind:'document',file_id:'file-1',display_name:'문서',chunk_locator:loc,extraction_id:'e',report_date:null,source:'attachment',source_unreachable:false,body:'찾기',ordinal:0,internal_origins:[{kind:'drive',source_file_id:'source-1',source_remote_id:'bad/id',display_name:'문서',source_path:'',index_status:'indexed',source_unreachable:false,current_version:'1',completed_version:'1',stale:false}]}],contexts:[{extraction_id:'e',pieces:[{ordinal:0,chunk_locator:loc,body:'찾기'}]}]};},async readDocument(){return {ok:true,snapshot:null};}};
+  const result=await searchDocuments(source,{query:'찾기'});expect(result).toMatchObject({ok:false});expect(JSON.stringify(result)).not.toContain('bad/id');
+});
+
+it('원본 메타데이터가 예산보다 크면 링크를 조용히 버리지 않고 오류를 낸다',async()=>{
+  const loc=JSON.stringify({type:'pdf',page:1});const source:DocumentRecallStore={async searchDocuments(){return {ok:true,rows:[{kind:'document',file_id:'file-1',display_name:'문서',chunk_locator:loc,extraction_id:'e',report_date:null,source:'attachment',source_unreachable:false,body:'찾기',ordinal:0,internal_origins:[{kind:'location',location_id:'loc',store_kind:'local',locator:'private',ownership:'brain',display_name:'가'.repeat(9000),source_unreachable:false},{kind:'drive',source_file_id:'source-1',source_remote_id:'remote',display_name:'원격',source_path:'폴더',index_status:'indexed',source_unreachable:false,current_version:'1',completed_version:'1',stale:false}]}],contexts:[{extraction_id:'e',pieces:[{ordinal:0,chunk_locator:loc,body:'찾기'}]}]};},async readDocument(){return {ok:true,snapshot:null};}};
+  expect(await searchDocuments(source,{query:'찾기'},undefined,async()=>({ok:true,url:'file:///synthetic'}))).toMatchObject({ok:false,code:'INVALID_ARGUMENT'});
+});
+
+it('같은 locator의 모든 일치 조각을 전체 문맥 가림 후 한 결과에 보존한다',async()=>{
+  const loc=JSON.stringify({type:'pdf',page:1}),pieces=[{ordinal:0,chunk_locator:loc,body:'검색 password='},{ordinal:1,chunk_locator:loc,body:'Secret123 검색'}];
+  const source:DocumentRecallStore={async searchDocuments(){return {ok:true,rows:[{...row,extraction_id:'e',chunk_locator:loc,body:pieces[0]!.body,ordinal:0,ordinals:[0,1]}],contexts:[{extraction_id:'e',pieces}]};},async readDocument(){return {ok:true,snapshot:null};}};
+  const result=await searchDocuments(source,{query:'검색'});expect(result.ok).toBe(true);if(!result.ok)throw Error('search');expect(result.data).toHaveLength(1);expect(result.data[0]?.body).toContain('[REDACTED:password]');expect(result.data[0]?.body.match(/검색/g)).toHaveLength(2);expect(JSON.stringify(result)).not.toContain('Secret123');expect(JSON.stringify(result)).not.toContain('ordinals');
+});
+
+
+it('검색된 뒤 조각은 앞 비일치 조각과 겹치는 검색어를 보존한다', async () => {
+  const pieces = [{ordinal:0,chunk_locator:locator(0,6),body:'abcdef'}, {ordinal:1,chunk_locator:locator(3,9),body:'defghi'}];
+  const source: DocumentRecallStore = {
+    async searchDocuments() { return {ok:true,rows:[{...row,chunk_locator:pieces[1]!.chunk_locator,body:pieces[1]!.body,ordinal:1}],contexts:[{extraction_id:'old',pieces}]}; },
+    async readDocument() { return {ok:true,snapshot}; },
+  };
+  const found=await searchDocuments(source,{query:'def'});
+  expect(found.ok && found.data[0]?.body).toBe('defghi');
+});
+
+it('Drive 원본이 붙은 리포트도 확장 상태 메타데이터를 반환한다',async()=>{
+  const {extensionPublicProjection}=await import('../src/index.js');
+  const source: DocumentRecallStore={
+    async searchDocuments(){return {ok:true,rows:[{...row,ordinal:0,report_provenance:true,source:'fixture',source_file_id:'drive-id',internal_origins:[{kind:'drive',source_file_id:'drive-id',source_remote_id:'remote-id',display_name:'원격',source_path:'폴더',index_status:'indexed',source_unreachable:false,current_version:'1',completed_version:'1',stale:false}]}],contexts:[{extraction_id:'old',pieces:[{ordinal:0,chunk_locator:row.chunk_locator!,body:row.body}]}]};},
+    async readDocument(){return {ok:true,snapshot};},
+  };
+  const seen:string[]=[];
+  const status={async listExtensionInventory(){return {ok:true as const,names:[]};},async getExtensionPublicStatus(name:string){seen.push(name);return {ok:true as const,status:extensionPublicProjection(name,null,null,0,0)};}};
+  const result=await searchDocuments(source,{query:'검색'},status);
+  expect(result).toMatchObject({ok:true,data:[{source:'fixture',source_file_id:'drive-id'}],meta:{extensions:[{source:'fixture'}]}});
+  expect(seen).toEqual(['fixture']);expect(JSON.stringify(result)).not.toContain('report_provenance');
 });

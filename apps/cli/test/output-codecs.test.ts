@@ -185,7 +185,7 @@ async function probeFrom(home: string): Promise<OutputProbe> {
     const toolNotes = (await database
       .prepare('select tool, target from tool_notes order by ordinal')
       .all()) as { tool: string; target: string }[];
-    return { texts: bodies, toolNotes, documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret' }] };
+    return { texts: bodies, toolNotes, documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret', source_path: 'password=pathsecret', source_url: 'https://drive.google.com/file/d/password=linksecret/view', source: 'password=sourcesecret', report_date: 'password=datesecret', names: ['password=aliassecret', '안전별칭'], current_version: 'password=versionsecret', completed_version: 'password=completedsecret', origins: [{ kind: 'drive' as const, source_unreachable: false, display_name:'password=originsecret', source_path:'password=originpathsecret', source_url:'https://drive.google.com/file/d/password=originlinksecret/view', current_version:'password=originversionsecret', completed_version:'password=origindonesecret' }] }] };
   } finally {
     (await database.close());
   }
@@ -212,7 +212,8 @@ describe('every registered output codec, on a session that was stored whole', ()
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);
-      for (const secret of [...SECRETS, 'docsecret', 'namesecret', 'locsecret']) {
+      expect(rendered).toContain('안전별칭');
+      for (const secret of [...SECRETS, 'docsecret', 'namesecret', 'locsecret', 'pathsecret', 'linksecret', 'sourcesecret', 'datesecret', 'aliassecret', 'versionsecret', 'completedsecret', 'originsecret', 'originpathsecret', 'originlinksecret', 'originversionsecret', 'origindonesecret']) {
         expect(holds(rendered, secret), `${secret} came out of the ${codec.name} codec`).toBe(
           false,
         );

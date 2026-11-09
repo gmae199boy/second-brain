@@ -1,3 +1,4 @@
+import type { DocumentRow } from '../ports/document-recall-store.js';
 import { encodeChannelText } from '../channels/send.js';
 import { errorEnvelope, okEnvelope } from '../envelope.js';
 import type { Clock } from '../ports/clock.js';
@@ -42,7 +43,7 @@ export interface OutputCodec {
 export interface OutputProbe {
   texts: readonly string[];
   toolNotes: readonly { tool: string; target: string }[];
-  documents: readonly { body: string; display_name: string; chunk_locator: string }[];
+  documents: readonly Pick<DocumentRow, 'body' | 'display_name' | 'chunk_locator' | 'source' | 'report_date' | 'names' | 'source_path' | 'source_url' | 'index_status' | 'current_version' | 'completed_version' | 'origins'>[];
 }
 
 /** A fixed instant, so a codec's output is a function of the probe alone. */
@@ -120,7 +121,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
         encodeHookOutput({ systemMessage: allTexts(read), toolNotes: [...read.toolNotes], documents: [...read.documents] }),
         ...read.texts.map((text) => encodeHookLine(text)),
         ...read.toolNotes.map((note) => encodeHookLine(`${note.tool} ${note.target}`)),
-        ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator].map(encodeHookLine)),
+        ...read.documents.flatMap(doc => documentTexts(doc).map(encodeHookLine)),
       ].join('\n');
     },
   },
@@ -131,7 +132,7 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
       return [
         ...read.texts.map((text) => encodeTextLine(text)),
         ...read.toolNotes.map((note) => encodeTextLine(`${note.tool} ${note.target}`)),
-        ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator].map(encodeTextLine)),
+        ...read.documents.flatMap(doc => documentTexts(doc).map(encodeTextLine)),
       ].join('\n');
     },
   },
@@ -139,7 +140,13 @@ export const OUTPUT_CODECS: readonly OutputCodec[] = [
 
 /** Every text of a read, as one string, for the places that take only one. */
 function allTexts(read: OutputProbe): string {
-  return [...read.texts, ...read.toolNotes.map((note) => `${note.tool} ${note.target}`), ...read.documents.flatMap(doc => [doc.body, doc.display_name, doc.chunk_locator])].join(
+  return [...read.texts, ...read.toolNotes.map((note) => `${note.tool} ${note.target}`), ...read.documents.flatMap(documentTexts)].join(
     '\n',
   );
+}
+
+/** Include each typed document field in line-oriented codecs as well as envelopes. */
+function documentTexts(doc: OutputProbe['documents'][number]): string[] {
+  return [doc.body, doc.display_name, doc.chunk_locator, doc.source_path, doc.source_url, doc.index_status, doc.source, doc.report_date, doc.current_version, doc.completed_version, ...(doc.names ?? []),
+    ...(doc.origins ?? []).flatMap(origin => [origin.display_name, origin.source_path, origin.source_url, origin.index_status, origin.current_version, origin.completed_version])].filter((value): value is string => typeof value === 'string');
 }

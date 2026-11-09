@@ -1,3 +1,5 @@
+import { driveSourceUrl } from '../../recall/documents.js';
+import { isExternalLocator } from '../../domain/file.js';
 import { extensionPublicProjection } from '../../extensions/public-projection.js';
 import { validInstallProgress } from '../../extensions/install-progress.js';
 import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
@@ -677,25 +679,40 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async searchDocuments(input) {
       const rows: import('../../ports/document-recall-store.js').DocumentSearchRow[] = [];
       const binary = (a: string, b: string) => { const x = Array.from(a), y = Array.from(b); for (let i=0; i<Math.min(x.length,y.length); i++) { const delta = x[i]!.codePointAt(0)! - y[i]!.codePointAt(0)!; if (delta) return delta; } return x.length-y.length; };
-      for (const file of fileRows.values()) {
-        if (fileRedacted(file.id)) continue;
-        const request = (options.reportRequests ?? []).filter(r => r.fileId === file.id).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))[0];
-        const extraction = currentExtractions.get(file.id);
-        if (!request || !extraction || extractionById(extraction)?.status !== 'ok') continue;
-        for (const piece of chunksOf(extraction)) {
-          if (!piece.chunkLocator || !piece.body.toLowerCase().includes(input.query.toLowerCase())) continue;
-          const name = fileNames.filter(n => n.fileId === file.id).sort((a,b) => binary(a.nameSource,b.nameSource) || binary(a.text,b.text))[0]?.text ?? `report:${file.id}`;
-          const rawDate = request.reportDate; const date = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T00:00:00Z`) : null;
-          rows.push({ kind:'document', file_id:file.id, display_name:name, extraction_id:extraction, chunk_locator:JSON.stringify(piece.chunkLocator), report_date:date && Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === rawDate ? rawDate : null, source:request.source, source_unreachable:sourceUnreachableAt.has(file.id), body:piece.body, ordinal:piece.ordinal });
+      const entries = (options.sourceEntries ?? []).filter(e => driveSourceUrl(e.remoteId)!==null && (e.fileId===null || (fileById(e.fileId)!==undefined && !fileRedacted(e.fileId))));
+      const matches = (text: string) => text.toLowerCase().includes(input.query.toLowerCase());
+      const sourceOrigin = (entry: typeof entries[number]): import('../../ports/document-recall-store.js').DocumentSearchOrigin => ({kind:'drive',source_file_id:entry.id,source_remote_id:entry.remoteId,display_name:entry.name,source_path:entry.path,index_status:entry.indexStatus,source_unreachable:entry.unreachable,current_version:entry.remoteVersion,completed_version:entry.completedVersion,stale:entry.fileId!==null&&entry.completedVersion!==entry.remoteVersion});
+      const ids = new Set([...Array.from(fileRows.values(), f => f.id), ...entries.flatMap(e => e.fileId ? [e.fileId] : [])]);
+      for (const id of ids) {
+        if (fileRedacted(id)) continue;
+        const related=entries.filter(e=>e.fileId===id).sort((a,b)=>binary(a.id,b.id));
+        const request=(options.reportRequests ?? []).filter(r=>r.fileId===id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id))[0];
+        const names=fileNames.filter(n=>n.fileId===id&&(n.nameSource==='attachment_name'||fileLocationRows.some(l=>l.fileId===id&&l.storeKind==='local'&&l.ownership==='external'&&l.deletedAt===null&&l.locator===n.text&&isExternalLocator(l.locator)))).sort((a,b)=>binary(a.nameSource,b.nameSource)||binary(a.text,b.text));
+        const attached=[...attachmentRows.values()].some(rows=>rows.some(a=>a.file?.id===id));
+        if(!request&&!attached&&!names.length&&!related.length)continue;
+        const name=names[0]?.text ?? (request ? `report:${id}` : related[0]?.name ?? id);
+        const aliases=[...new Set(names.map(n=>n.text))].sort(binary);
+        const localOrigins: import('../../ports/document-recall-store.js').DocumentSearchOrigin[]=fileLocationRows.filter(l=>l.fileId===id&&l.deletedAt===null).sort((a,b)=>binary(a.id,b.id)).map(l=>({kind:'location',location_id:l.id,store_kind:l.storeKind,locator:l.locator,ownership:l.ownership,display_name:name,source_unreachable:false}));
+        const internal_origins=[...localOrigins,...related.map(sourceOrigin)];
+        const first=related[0];
+        const rawDate=request?.reportDate; const date=rawDate&&/^\d{4}-\d{2}-\d{2}$/.test(rawDate)?new Date(`${rawDate}T00:00:00Z`):null;
+        const latest=extractions.filter(e=>e.fileId===id).sort((a,b)=>b.attempt-a.attempt)[0];
+        const extraction=currentExtractions.get(id);
+        const base={kind:'document' as const,report_provenance:!!request,file_id:id,display_name:name,report_date:date&&Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===rawDate?rawDate!:null,source:request?.source??(attached||names.length?'attachment':'drive'),source_unreachable:(localOrigins.length>0||related.some(e=>!e.unreachable))?false:(sourceUnreachableAt.has(id)||related.length>0),names:aliases,internal_origins,file_status:extractionById(extraction ?? '')?.status??latest?.status??'pending' as const,...(first?{source_file_id:first.id,source_path:first.path,source_remote_id:first.remoteId,index_status:first.indexStatus,current_version:first.remoteVersion,completed_version:first.completedVersion,stale:first.completedVersion!==first.remoteVersion}:{})};
+        let bodyHit=false;
+        if(extraction&&extractionById(extraction)?.status==='ok') {
+          const groups=new Map<string,typeof documentChunks extends Map<string,infer P> ? P : never>();
+          for(const piece of chunksOf(extraction)) if(piece.chunkLocator&&matches(piece.body)) { const key=JSON.stringify(piece.chunkLocator);const group=groups.get(key)??[];group.push(piece);groups.set(key,group); }
+          for(const [locator,pieces] of groups) {
+            bodyHit=true;pieces.sort((a,b)=>a.ordinal-b.ordinal);
+            const score=(value:string)=>value.toLowerCase().split(input.query.toLowerCase()).length-1;
+            const representative=[...pieces].sort((a,b)=>score(b.body)-score(a.body)||a.ordinal-b.ordinal)[0]!;
+            rows.push({...base,extraction_id:extraction,chunk_locator:locator,ordinal:pieces[0]!.ordinal,ordinals:pieces.map(p=>p.ordinal),body:representative.body});
+          }
         }
+        if(!bodyHit&&(names.some(n=>matches(n.text))||related.some(e=>matches(e.name)||matches(e.path)))) rows.push({...base,extraction_id:null,chunk_locator:null,ordinal:null,body:''});
       }
-      for(const entry of options.sourceEntries ?? []) {
-        if(entry.fileId && fileRedacted(entry.fileId))continue;
-        const base={kind:'document' as const,file_id:entry.fileId,display_name:entry.name,report_date:null,source:'drive',source_unreachable:entry.unreachable,source_file_id:entry.id,source_path:entry.path,source_remote_id:entry.remoteId,index_status:entry.indexStatus,current_version:entry.remoteVersion,completed_version:entry.completedVersion,stale:entry.fileId!==null&&entry.completedVersion!==entry.remoteVersion};
-        const extraction=entry.fileId?currentExtractions.get(entry.fileId):undefined;
-        if(extraction && extractionById(extraction)?.status==='ok')for(const piece of chunksOf(extraction))if(piece.chunkLocator&&piece.body.toLowerCase().includes(input.query.toLowerCase()))rows.push({...base,extraction_id:extraction,chunk_locator:JSON.stringify(piece.chunkLocator),ordinal:piece.ordinal,body:piece.body});
-        if(entry.name.toLowerCase().includes(input.query.toLowerCase())||entry.path.toLowerCase().includes(input.query.toLowerCase()))rows.push({...base,extraction_id:null,chunk_locator:null,ordinal:null,body:''});
-      }
+      for(const entry of entries.filter(e=>e.fileId===null)) if(matches(entry.name)||matches(entry.path)) rows.push({kind:'document',file_id:null,display_name:entry.name,report_date:null,source:'drive',source_unreachable:entry.unreachable,source_file_id:entry.id,source_path:entry.path,source_remote_id:entry.remoteId,index_status:entry.indexStatus,current_version:entry.remoteVersion,completed_version:entry.completedVersion,stale:false,internal_origins:[sourceOrigin(entry)],extraction_id:null,chunk_locator:null,ordinal:null,body:''});
       const count = (body: string) => body.toLowerCase().split(input.query.toLowerCase()).length - 1;
       rows.sort((a,b) => count(b.body)-count(a.body) || (b.report_date ?? '').localeCompare(a.report_date ?? '') || binary(a.file_id ?? '￿',b.file_id ?? '￿') || binary(a.source_file_id ?? '',b.source_file_id ?? '') || (a.ordinal ?? 999999)-(b.ordinal ?? 999999));
       const selected = rows.slice(0,input.limit);
