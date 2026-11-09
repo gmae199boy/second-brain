@@ -674,3 +674,15 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 �
 - Terra 최소 구현 뒤 Sol 독립 확인에서 실제 해결·새 finding0을 확인했다. 컴파일 확인 뒤 관련 기록 시험 파일만 1회 실행해 38시험 pass/exit0(23.299584초), 실행 source와 최종 commit의 6경로 hash 일치를 중앙 대조했다. 입력/이유/각 suite/tracer/직접·누락 경로와 길이·경계 양음성, 기록 불가 시 명령·exit 동등성을 덮는다.
 - 기존 최초 전체 회귀와 추가 부분 실행·SIGTERM 이력 및 한계는 위 수락 절과 원계획에 보존한다. 이번 관련 통과는 새 전체 회귀 통과가 아니며 추가 전체/성능/PG 생성은 없다. 알려진 패턴 누락 해결과 임의 불투명 비밀을 완전히 분류할 수 없는 한계는 구별한다.
 - 원시·독립 보고·검증 지문은 원 워크트리와 중앙 비공개 archive에 보존했다. deferred/필수 미해결/추가 운영 입력은 없다. 8.6은 중앙 인계 항목을 이 source로 해결 표기하고, 19.9는 정상 경계에서 incoming 기록 가림 및 선택 입력 영향을 대조한다.
+
+## 19.9 — 독립 시험 변경의 Python 전체 선택 축소 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-test-time/tickets/story-python-plan.md)과 [선택 계약](../../../tooling/test-changed/README.md), 최종 source `20c2925014b0b2c98b86308e7f1b21dbef2b59cf`. 중앙은 정확 원격 SHA·독립 후속·실행된 변경 코드9경로 hash·0001~0044 불변과 자원 처분을 대조했다.
+
+- 정확 네 시험(test-changed, test-changed-record, schedule-occurrences, user-keys)만 두 broad prefix의 Python 전체 선택에서 제외한다. 기본 Vitest changed는 유지하며 fixture/globalsetup/config/제품/자식·미입증 경로와 runtime 혼합은 넓게 유지한다. 직접 Python 파일·migration·bootstrap 우선순위도 보존한다.
+- 역방향 import/spawn/파일읽기·src-only 빌드와 설치 소비자를 정적으로 대조했다. hook은 후보도 snapshot에 복사하므로 입력 바이트 무영향을 주장하지 않는다. 현재 소비자가 바뀌면 독립성 근거를 재조사한다. v1 모의 선택 비교61case와 최근3티켓의 고정 Git diff/hash, 통합 전후 실제 분류17행 동등을 확인했다. 이는 선택 비교이며 실제 완료 manifest나 시간 절감량의 증명이 아니다.
+- 최초 전체 TS240파일5259시험 exit0 → Python16파일75pass1fail exit1을 순차 보존했다. 합성 snapshot commit의 phone 가림과 raw 비교 충돌은 승인된 hook 시험 전용 교정으로 해결했다. 실제 full raw commit/PID/생존과 공개 가림을 각각 strict 검증하고 고정 합성 기대·음성을 추가했다. 제품 codec/가림/timeout·기능8case는 불변이다. 후속 관련109pass·hook8pass/exit0, 수락19.8 정상 통합 뒤 관련108pass/exit0이며 최초Python이나 결합 source 전체 통과로 소급하지 않는다.
+- BH5 진단은 출력 내용 대신 상태·길이 등만 보존하므로 상세 stderr/error code의 원인 구분 한계가 남는다. 총 자식 시동량 감소를 주장하지 않는다. 기록 가림/공유 tracer null/list≠완료와 임의 불투명 비밀 판별 한계도 유지한다.
+- 최초 정확 container262개 모두 부재/unknown0, hook 후속 자원 부재와 최종 port bind 성공을 확인했다. 초기 제한 환경의 portBindable false와 확장 확인 성공을 구별한다. 통합 관련 시험은 새 Docker 자원0이다. 모든 원시·독립 보고·장부는 원 워크트리 및 중앙 비공개 archive에 보존했다.
+
+built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니다. 19.1/8.6은 진행 명령 종료 경계에서 incoming rules·hook snapshot 입력과 자기 변경의 선택 영향을 대조한다. 전체/성능 자동 반복을 요구하지 않는다.
