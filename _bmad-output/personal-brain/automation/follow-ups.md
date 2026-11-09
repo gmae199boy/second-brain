@@ -639,3 +639,18 @@ built/deferred[]이며 사용자 인수 done은 아니다. 원시·리뷰·최�
 - 일반회귀253개 정확 ID와 별도 회귀PG, 측정12개 정확 hook container/project/network/volume/home/port 정리 근거를 대조했다. 타 소유 자원 광역 정리는 없다. 워크트리/브랜치/세션·측정 사본·원시/scratch는 보존하고 중앙 비공개 archive에도 증거를 보관했다.
 
 built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 아니다. 8.5·19.1 및 이후19.8은 실행 중 명령 종료 뒤 수락 source를 정상 통합하고 config/선택·fixture 영향과 필요한 관련 검증을 확인한다.
+
+## 8.5 — Drive 증분 동기화·중단 재개 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-drive/tickets/story-drive-plan.md)의 Review Triage Log·Auto Run Result와 operator_actions, 최종 source `ed915a226b26f7e14dda67003c0a94b8706399c8`. 중앙은 정확 원격 SHA/clean·제품/시험71파일의 검증 hash·0001~0043 바이트 불변·0044 pin·독립 최종 감사와 원시 회귀 범위를 대조했다.
+
+- changes 페이지/cursor/내구 후속 의무의 원자 확정과 처리 인계 전 완료 차단, rename/move/권한/삭제·MIME/내용 지문 fence를 구현했다. 큰 업로드는 예약 remote ID/session/확인 offset을 영속하며 20MiB 중간 중단·308·응답 유실을 같은 ID로 복구한다. 설정에 따른 보관 due/queue 재계산과 삭제 직전 현재 설정·claim·연결/세대·마지막 로컬 사본 검증, SDK/CLI/daemon 진행·취소·민감값 비노출을 연결했다.
+- 0044_drive_resume.sql의 정확 hash는 `ba31747c34b80f435ed1a3781bb54866200196e0c64f161039e6098f430dae3c`다. query-perf는 중앙 허용 네 파일의 엄격한44 manifest와 baseline39→current44 출처만 확장했다. 과거39~43 manifest/guard·SQL/oracle/threshold는 보존하며 schema43 역사 성능을44 효과로 전승하지 않는다. 새 성능 실측은 없다.
+- 최초 TS는 Orca 재시작 interrupted/exit unknown으로 남긴다. 중앙 승인 제한 복구와 HTTP 실제 역의존 포함133파일, 실패 교정 후 관련6파일119case·SDK 파일 추가 확인을 연결했다. 19.6 incoming hook 소유 전환 뒤 현재238파일5160case 전수 장부 누락0이다. 이는 중단 원시+제한 보완의 범위 완결이며 결합 source 전체 일괄 통과가 아니다. 최초 전체 Python은16파일76pass/exit0·4slot/30job, 정리 오류/격리0·장부completed였다.
+- SDK show 최초 실패의 공개 code/message가 없어 원인은 미확정이다. 진단만 보강한 뒤 파일 전체 두 번이 각각2/2pass였으나 최초 원인 해결로 소급하지 않는다. 반복 관측 시 보존한 진단과 원시로 별도 귀속한다. 미해결 현재 재현 실패나 제외한 필수 case가 있다는 판정은 아니다.
+- 부모의 외부 HOME/TMP와 기존 수락 runner의 내부 ignored job scratch 편차는 이번 기능 회귀에 한해 명시 수락했다. Python 직후 source_unchanged:false는 추적 pyc 재생성이었으며 생성물을 보존하고 시험 전 바이트로 복원해 전체 dirty patch/71파일 hash가 일치했다. 원시 false는 지우지 않았다.
+- 원격 삭제는 정확 account/root/remote ID/세대/claim에 묶인 실제 DELETE2xx ACK를 영속 확정한 때만 완료다. 응답 유실/ACK 영속 전 중단은 결과불명으로 남아 기존 유한 retry/backoff/실패 표면으로 간다. submit 저널·반복404로 완료를 강제하지 않는다. 재시도 소진 후 불명이 남으면 근거를 보존해 확인하며 ACK 없이 삭제·가림 완료로 수동 강제 전환하지 않는다.
+- 페이지별 source 전체 목록과 공통 부모 metadata 반복의 두 low 성능 제안은 미구현이다. 정확성/실측 지연 근거가 없어 batch/cache 확장은 reject했고 필요가 입증되면 별도 판단한다. deferred는 빈 목록이다. 실계정/운영 적용/릴리스는 하지 않았다.
+- 정확 소유 fixture 생성/제거503개 대응, 전용 TS/4slot·hook project/container/network/volume 부재 및30job 종료 근거를 확인했다. 타 소유 자원 광역 정리는 없다. 원시·워크트리/브랜치/세션·장부/scratch를 보존하고 중앙 비공개 archive에도 보관했다.
+
+built는 사용자 인수 done이 아니다. 후속8.6과19.1/19.8은 수락 source의 schema44/실제 migration hash·공통 HTTP/fixture/선택 영향과 필요한 독립 확인·관련 검증을 진행 명령 종료 경계에서 대조한다.
