@@ -686,3 +686,15 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 �
 - 최초 정확 container262개 모두 부재/unknown0, hook 후속 자원 부재와 최종 port bind 성공을 확인했다. 초기 제한 환경의 portBindable false와 확장 확인 성공을 구별한다. 통합 관련 시험은 새 Docker 자원0이다. 모든 원시·독립 보고·장부는 원 워크트리 및 중앙 비공개 archive에 보존했다.
 
 built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니다. 19.1/8.6은 진행 명령 종료 경계에서 incoming rules·hook snapshot 입력과 자기 변경의 선택 영향을 대조한다. 전체/성능 자동 반복을 요구하지 않는다.
+
+## 8.6 — 첨부·Drive 문서 검색 통합 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-drive/tickets/story-drive-6-plan.md), 최종 source `b94983283c77e4597f3110272e39fa750e3d8684`. 중앙은 정확 원격 SHA·R4 해결/R5 통합/R6 원시 독립 감사와 실제 변경15파일 hash·원시 결과를 대조했다.
+
+- 첨부/Drive 본문·파일 이름·허용 외부 경로를 검색하며 같은 file/추출세대/locator hit를 limit 전에 결합한다. 승인 typed origins/names는 별칭과 원본별 링크/상태를 보존하며 다른 위치·세대·file은 분리한다. 단일 snapshot의 적격 source/가림과 링크 소유/삭제·실제 FileStore 존재·Drive root 검증, 정상 동반 원본의 장애 격리, 기존 대표 provenance/순위·이어 읽기를 연결했다.
+- SDK/CLI·전체문맥 가림/codec probe와 직렬화 메타 예산을 덮는다. 같은 PDF 한 hit/두 링크, 일곱 literal oracle, 실제 합성 PDF·fake Drive 동기화 rename/move·가림 후 차단·미색인 상태·큰 별칭 메타 오류를 포함한 지정8파일178시험이 실제 통과했다. 새 DDL/점수/meta.documents/plugin release는 없다. 0001~0044 바이트와 기존 chunk/tool 검색 함수 본문은 baseline과 동일하다.
+- 최초 순차 전체 TS는5159pass/76fail exit1, Python은8pass/60fail 및 hook timeout exit1로 보존한다. 전용 PATH의 npm/npx 및 pinned Python 전달, 부모 암호 환경 간섭을 교정한 뒤 정확 실패/관련 파일만 재검증했다. 중앙 원시 계산에서 최초TS76개 모두 같은 file/fullName의 최종 pass를 확인했다. 최신 파일별 합집합은 TS241파일5299pass/Python16파일76pass·fail/skip0이며 새 전체 단일 통과가 아니다. 최초 hook timeout의 단독 원인은 미확정이며 이후 환경 교정·정확 파일8pass 관찰로만 기록한다.
+- 제품/시험15경로의 최초/후속/최종 hash가 같으며 19.8·19.9 정상 통합 뒤의 base 차이를 구별했다. 알려진 sk 가림 누락은 19.8 후속 수락 근거로 해결 이력을 보존한다. 기각한 low 성능·확장 제안은 원계획 triage에 이유가 있고 이번에 재도입하지 않는다.
+- 고유 자기 container390개 및 hook3project의 container/network/volume 부재·cleanup/quarantine0 장부를 확인했다. 첫 cleanup optional-key 오류는 Docker 조작 전 실패로 보존한다. 원시·독립 보고·장부·외부 실행 JSON/로그는 원 워크트리와 중앙 비공개 archive에 보존한다.
+
+필수 미해결/자체 operator_actions 없음·built이며 사용자 done은 아니다. 실제 OAuth/개인 문서/설치본 배포·릴리스 인수는 후속8.8 범위이고 합성 시험이나 미실행 성능을 해당 성공으로 확대하지 않는다. 19.1은 정상 경계에서 문서 검색/fixture 의존 영향과 새 고정 성능 입력을 구별한다.
