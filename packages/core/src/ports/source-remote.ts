@@ -1,8 +1,9 @@
 export type RemoteError = {ok:false;code:'UNREACHABLE'|'TEMPORARY'|'TOO_LARGE'|'CHANGED'|'AUTH_REQUIRED'|'AUTH_LOGIN_REQUIRED'|'DB_UNAVAILABLE'|'DB_LOCKED'|'AUTH_SESSION_CHANGED';message:string;retryAfter?:Date};
 export const SOURCE_DOCS_MAX_BYTES=10_000_000;
 export type RemoteResult<T> = ({ok:true}&T)|RemoteError;
-export interface RemoteSourceItem { id:string;name:string;mimeType:string;version:string;sizeBytes:number|null; shortcutTargetId?:string;shortcutTargetMimeType?:string }
+export interface RemoteSourceItem { id:string;name:string;mimeType:string;version:string;sizeBytes:number|null; parents?:string[]; createdTime?:string; trashed?:boolean; shortcutTargetId?:string;shortcutTargetMimeType?:string }
 export interface SourceRemote {
+  changes?(input:{pageToken:string}):Promise<RemoteResult<{changes:{remoteId:string;removed:boolean;item?:RemoteSourceItem}[];nextPageToken:string|null;newStartPageToken:string|null}>>;
   startToken():Promise<RemoteResult<{token:string}>>;
   list(input:{parentId:string;pageToken?:string}):Promise<RemoteResult<{items:RemoteSourceItem[];nextPageToken:string|null;incomplete:boolean}>>;
   metadata(id:string):Promise<RemoteResult<{item:RemoteSourceItem}>>;

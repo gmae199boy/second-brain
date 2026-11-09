@@ -249,7 +249,7 @@ export type { SessionIngestStore } from './ports/store.js';
 export * from './maintenance/table-cleanup-work.js';
 export type { TableMaintenance } from './ports/table-maintenance.js';
 
-export type { SettingsStore, SettingRecord, SettingsStoreFailure } from './ports/store.js';
+export type { SettingsStore, DriveRetentionSettingsStore, SettingRecord, SettingsStoreFailure } from './ports/store.js';
 
 export * from './settings/index.js';
 export { createSettingsBrain, type SettingsBrain } from './brain.js';
@@ -330,3 +330,5 @@ export * from './files/drive-migrate-work.js';
 export type * from './ports/source-store.js';
 export type * from './ports/source-remote.js';
 export * from './sources/sync.js';
+
+export type { WorkProgress, WorkProgressSink } from './queue/progress.js';

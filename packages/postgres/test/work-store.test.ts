@@ -11,7 +11,7 @@ import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures, runSupervisor } from '@second-brain/core';
 import { fakeCron, workStoreContract, scheduleStoreContract, sequenceIdGen, manualTime, fakeProcessInspector, fakeProcessLauncher } from '@second-brain/core/testing';
-import { postgresStore } from '../src/index.js';
+import { EXPECTED_SCHEMA_VERSIONS, postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
 
 for (const [name, cases] of [['work-store contract', workStoreContract((store, id) => (store as Awaited<ReturnType<typeof subject>>).readWorkItem(id), async (store, token) => {
@@ -988,7 +988,7 @@ it('closes a tenth recovered supervised death with one PROCESS_DIED failure', as
   await store.claimSupervisedWork({ now, claimedBy: 'old', kinds: ['process_probe'], attemptToken: id(101) });
   await db.query(`update brain.work_items set attempts = 10 where id = '${id(1)}'`);
   const controller = new AbortController(); const time = manualTime(now);
-  const running = runSupervisor({ store, schemaVersions: { core: 43 }, ...time,
+  const running = runSupervisor({ store, schemaVersions: EXPECTED_SCHEMA_VERSIONS, ...time,
     inspector: fakeProcessInspector(), launcher: fakeProcessLauncher(),
     idGen: sequenceIdGen({ timestampMs: now.getTime() }), signal: controller.signal, launches: {} });
   try {

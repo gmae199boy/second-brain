@@ -166,9 +166,10 @@ const drive = {"name": "0040_drive_uploads.sql", "sha256": "597fef789bea7a96aadc
 const sources = {"name": "0041_sources.sql", "sha256": "ddbd4a0e1c1824a3dd8a5f2d307934e6f687d594b0a347185f1bc799636ffa11"};
 const connection = {"name": "0042_drive_connection.sql", "sha256": "1ed2dca551de313f02e636568186d245618a48880300147f42ad5da9a2ffb57d"};
 const documentCarry = {"name": "0043_document_carry.sql", "sha256": "c0eb6f1c8339ae4bbdebdf689e7bbcf24b4ac12c0c2395f3992203ff5e69a410"};
+const driveResume = {"name": "0044_drive_resume.sql", "sha256": "ba31747c34b80f435ed1a3781bb54866200196e0c64f161039e6098f430dae3c"};
 export function expectedSchema(version) {
- if(version!==39 && version!==40 && version!==41 && version!==42 && version!==43) throw Error('unexpected checkout schema');
- return {version, apiVersion:version, manifest: structuredClone(version===39 ? baseline : version===40 ? [...baseline,drive] : version===41 ? [...baseline,drive,sources] : version===42 ? [...baseline,drive,sources,connection] : [...baseline,drive,sources,connection,documentCarry])};
+ if(version!==39 && version!==40 && version!==41 && version!==42 && version!==43 && version!==44) throw Error('unexpected checkout schema');
+ return {version, apiVersion:version, manifest: structuredClone(version===39 ? baseline : version===40 ? [...baseline,drive] : version===41 ? [...baseline,drive,sources] : version===42 ? [...baseline,drive,sources,connection] : version===43 ? [...baseline,drive,sources,connection,documentCarry] : [...baseline,drive,sources,connection,documentCarry,driveResume])};
 }
 export function inspectMigrationDirectory(directory, apiVersion) {
  const expected=expectedSchema(apiVersion);

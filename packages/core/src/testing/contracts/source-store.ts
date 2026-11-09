@@ -7,7 +7,45 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
 /** Factory creates a valid source_sync work claim for sourceId and returns it. */
 export type SourceContractSubject = {store:SourceStore; claim:{workId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date}};
 const sourceId='019a0000-0000-7000-8000-000000000001', scanId='019a0000-0000-7000-8000-000000000002', entryId='019a0000-0000-7000-8000-000000000003';
-export function sourceStoreContract():ContractCase<SourceContractSubject>[] {return [contractCase('source identity, incomplete scan and claim fencing', factory=>withSubject(factory,async ({store,claim})=>{
+export function sourceStoreContract():ContractCase<SourceContractSubject>[] {return [contractCase('outside node evidence follows cursor and is cleared when reconciliation begins',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'outside-contract',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'start',claim}));assertOk(await store.finishSourceScan({sourceId,generation:1,scanId,claim}));
+  const page={sourceId,generation:1,expectedCursor:'start',nextCursor:'next',changes:[{kind:'outside' as const,remoteId:'outside'}],claim};assertNotOk(await store.applySourceChanges({...page,claim:{...claim,claimedBy:'other'}}));const before=await store.listOutsideSourceNodes({sourceId,generation:1});assertOk(before);assertEqual(before.remoteIds,[]);
+  assertOk(await store.applySourceChanges(page));const saved=await store.listOutsideSourceNodes({sourceId,generation:1});assertOk(saved);assertEqual(saved.remoteIds,['outside']);assertNotOk(await store.listOutsideSourceNodes({sourceId,generation:2}));
+  assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'rescan',claim}));const cleared=await store.listOutsideSourceNodes({sourceId,generation:1});assertOk(cleared);assertEqual(cleared.remoteIds,[]);
+})),contractCase('changes task defers atomically to reconciliation without early prune',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'defer-page',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'start',claim}));assertOk(await store.finishSourceScan({sourceId,generation:1,scanId,claim}));
+  const entry={id:entryId,remoteId:'remote',name:'alias',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3};assertOk(await store.applySourceChanges({sourceId,generation:1,expectedCursor:'start',nextCursor:'next',changes:[{kind:'upsert',entry}],claim}));
+  assertNotOk(await store.deferSourceChangeToReconcile({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',claim:{...claim,claimedBy:'other'}}));
+  assertOk(await store.deferSourceChangeToReconcile({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',claim}));const source=await store.readSource(sourceId);assertOk(source);assertEqual(source.source?.lastFullScanAt,null);
+  const rows=await store.listSourceEntries(sourceId);assertOk(rows);assertEqual(rows.entries[0]?.unreachable,false);const tasks=await store.listSourceChangeTasks({sourceId,generation:1,claim});assertOk(tasks);assertEqual(tasks.tasks,[]);
+})),contractCase('same version MIME changes reset classification in scans and change pages',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'mime-contract',rootId:'root'}));
+  const entry={id:entryId,remoteId:'mime',name:'mime',path:'',mimeType:'application/octet-stream',remoteVersion:'v1',sizeBytes:3};
+  assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'start',claim}));assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry,claim}));
+  assertOk(await store.markSourceCarryCheck({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',extractorVersion:'v',claim}));
+  const photo=await store.observeSourceEntry({sourceId,generation:1,scanId,entry:{...entry,mimeType:'image/jpeg'},claim});assertOk(photo);assertEqual(photo.entry.indexStatus,'pending');
+  assertOk(await store.markSourceEntry({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',status:'photo',claim}));assertOk(await store.finishSourceScan({sourceId,generation:1,scanId,claim}));
+  assertOk(await store.applySourceChanges({sourceId,generation:1,expectedCursor:'start',nextCursor:'next',changes:[{kind:'upsert',entry:{...entry,mimeType:'text/plain'}}],claim}));
+  const rows=await store.listSourceEntries(sourceId);assertOk(rows);assertEqual(rows.entries[0]?.indexStatus,'pending');const tasks=await store.listSourceChangeTasks({sourceId,generation:1,claim});assertOk(tasks);assertEqual(tasks.tasks,[{sourceFileId:entryId,remoteVersion:'v1'}]);
+})),contractCase('changes page cursor CAS and pending entries survive replay',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'page',rootId:'root'}));
+  assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'start',claim}));assertOk(await store.finishSourceScan({sourceId,generation:1,scanId,claim}));
+  const entry={id:entryId,remoteId:'remote',name:'one',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3};
+  const page={sourceId,generation:1,expectedCursor:'start',nextCursor:'next',changes:[{kind:'upsert' as const,entry}],claim};
+  assertNotOk(await store.applySourceChanges({...page,claim:{...claim,claimedBy:'other'}}));
+  assertOk(await store.applySourceChanges(page));assertNotOk(await store.applySourceChanges(page));
+  const cursor=await store.readSource(sourceId);assertOk(cursor);assertEqual(cursor.source?.cursor,'next');
+  const rows=await store.listSourceEntries(sourceId);assertOk(rows);assertEqual(rows.entries[0]?.indexStatus,'pending');assertEqual(rows.entries[0]?.completedVersion,null);
+  const task={sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',claim};
+  const pending=await store.listSourceChangeTasks({sourceId,generation:1,claim});assertOk(pending);assertEqual(pending.tasks,[{sourceFileId:entryId,remoteVersion:'v1'}]);
+  assertNotOk(await store.resolveSourceChangeTask(task));assertNotOk(await store.resolveSourceChangeTask({...task,claim:{...claim,claimedBy:'other'}}));assertNotOk(await store.resolveSourceChangeTask({...task,generation:2}));
+  assertNotOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'unsafe',claim}));
+  assertOk(await store.markSourceEntry({...task,status:'unsupported'}));assertOk(await store.resolveSourceChangeTask(task));
+  const drained=await store.listSourceChangeTasks({sourceId,generation:1,claim});assertOk(drained);assertEqual(drained.tasks,[]);
+
+  assertOk(await store.applySourceChanges({...page,expectedCursor:'next',nextCursor:'end',changes:[{kind:'removed',remoteId:'remote'}]}));
+  const removed=await store.listSourceEntries(sourceId);assertOk(removed);assertEqual(removed.entries[0]?.unreachable,true);
+})),contractCase('source identity, incomplete scan and claim fencing', factory=>withSubject(factory,async ({store,claim})=>{
   const first=await store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'root'});assertOk(first);
   const duplicate=await store.ensureSource({id:'019a0000-0000-7000-8000-000000000004',kind:'drive',account:'synthetic',rootId:'root'});assertOk(duplicate);assertEqual(duplicate.source.id,sourceId);
   assertNotOk(await store.ensureSource({id:'019a0000-0000-7000-8000-000000000006',kind:'drive',account:'synthetic',rootId:'different-root'}));
@@ -44,6 +82,7 @@ export function sourceStoreContract():ContractCase<SourceContractSubject>[] {ret
   const at=(seconds:number)=>({...claim,now:new Date(claim.now.getTime()+seconds*1000)});
   for(const bad of [{...claim,workId:'019a0000-0000-7000-8000-000000000099'},{...claim,claimedBy:'other'},{...claim,claimedAt:new Date(claim.claimedAt.getTime()+1)},{...claim,attempts:claim.attempts+1}]) assertNotOk(await store.renewSourceClaim({sourceId,claim:bad}));
   assertNotOk(await store.renewSourceClaim({sourceId:'019a0000-0000-7000-8000-000000000099',claim}));
+  assertNotOk(await store.renewSourceClaim({sourceId,claim:at(1),nowAtLock:()=>at(600).now}));
   assertOk(await store.renewSourceClaim({sourceId,claim:at(599)}));
   assertOk(await store.renewSourceClaim({sourceId,claim:at(1198)}));
   assertNotOk(await store.renewSourceClaim({sourceId,claim:at(1798)}));
@@ -57,7 +96,15 @@ export function sourceStoreContract():ContractCase<SourceContractSubject>[] {ret
   assertNotOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId,claim:{...claim,attempts:claim.attempts+1}}));
   assertOk(await store.handoffSourceFile({...stage,fileId,sizeBytes:3,workId}));const rows=await store.listSourceHandoffs(fileId);assertOk(rows);assertEqual(rows.handoffs[0]?.tempKey,tempKey);
   const ready=await store.readSourceAttempt(tempKey);assertOk(ready);assertEqual(ready.binding?.open,true);assertEqual(ready.binding?.fileId,fileId);
- })),contractCase('source Carry classification is versioned and fenced',factory=>withSubject(factory,async ({store,claim})=>{
+ })),contractCase('MIME changes invalidate an existing source handoff in scan and changes paths',factory=>withSubject(factory,async ({store,claim})=>{
+  assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'mime-handoff',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
+  const entry={id:entryId,remoteId:'mime',name:'mime',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3},fileId='019a0000-0000-7000-8000-000000000071',workId='019a0000-0000-7000-8000-000000000072';
+  assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry,claim}));assertOk(await store.handoffSourceFile({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',fileId,contentHash:'sha256:'+'e'.repeat(64),sizeBytes:3,workId,claim}));
+  const before=await store.listSourceHandoffs(fileId);assertOk(before);assertEqual(before.handoffs.length,1);
+  assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry:{...entry,mimeType:'image/jpeg'},claim}));const after=await store.listSourceHandoffs(fileId);assertOk(after);assertEqual(after.handoffs.length,0);assertOk(await store.markSourceEntry({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',status:'photo',claim}));assertOk(await store.finishSourceScan({sourceId,generation:1,scanId,claim}));
+  assertOk(await store.applySourceChanges({sourceId,generation:1,expectedCursor:'t',nextCursor:'next',changes:[{kind:'upsert',entry}],claim}));assertOk(await store.handoffSourceFile({sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',fileId,contentHash:'sha256:'+'e'.repeat(64),sizeBytes:3,workId,claim}));
+  assertOk(await store.applySourceChanges({sourceId,generation:1,expectedCursor:'next',nextCursor:'end',changes:[{kind:'upsert',entry:{...entry,mimeType:'image/jpeg'}}],claim}));const final=await store.listSourceHandoffs(fileId);assertOk(final);assertEqual(final.handoffs.length,0);
+})),contractCase('source Carry classification is versioned and fenced' ,factory=>withSubject(factory,async ({store,claim})=>{
   assertOk(await store.ensureSource({id:sourceId,kind:'drive',account:'carry',rootId:'root'}));assertOk(await store.beginSourceScan({sourceId,generation:1,scanId,startToken:'t',claim}));
   const entry={id:entryId,remoteId:'binary',name:'binary',path:'',mimeType:'application/octet-stream',remoteVersion:'v1',sizeBytes:3};assertOk(await store.observeSourceEntry({sourceId,generation:1,scanId,entry,claim}));
   const check={sourceId,generation:1,sourceFileId:entryId,remoteVersion:'v1',extractorVersion:'doc/new',claim};assertNotOk(await store.markSourceCarryCheck({...check,claim:{...claim,claimedBy:'wrong'}}));

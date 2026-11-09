@@ -26,3 +26,27 @@ it('preparing cleanup preserves a live writer and reclaims only a finished owned
 it('preparing cleanup reclaims an owned dead writer and preserves unknown files',async()=>{
  const {spawn}=await import('node:child_process');const root=await mkdtemp(join(tmpdir(),'source-dead-writer-')),key='019a0000-0000-7000-8000-000000000092',unknown='019a0000-0000-7000-8000-000000000093';const child=spawn(process.execPath,['-e','process.stdout.write(String(process.pid));setInterval(()=>{},1000)'],{stdio:['ignore','pipe','pipe']});try{const pid=Number(String(await new Promise<Buffer>((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);})));const temp=sourceTemp(root);await writeFile(join(root,`source-${key}`),'partial');await writeFile(join(root,`source-${key}.owner`),JSON.stringify({pid}));await writeFile(join(root,`source-${unknown}`),'unknown');await temp.cleanup(async k=>k===key?'preparing':'unknown');expect(await temp.read(key,100)).toMatchObject({ok:true});const exited=new Promise<void>(resolve=>child.once('exit',()=>resolve()));child.kill('SIGKILL');await exited;await temp.cleanup(async k=>k===key?'preparing':'unknown');expect(await temp.read(key,100)).toMatchObject({ok:false});expect(await temp.read(unknown,100)).toMatchObject({ok:true});}finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await rm(root,{recursive:true,force:true});}
 });
+
+it('changes HTTP preserves pages, rejected cursors, parent metadata and content fingerprints',async()=>{
+  const server=await fakeDrive();try{
+    const file={id:'f',name:'before.txt',parents:['root'],bytes:Buffer.from('abc'),mimeType:'text/plain',version:'1'};server.files.set(file.id,file);
+    server.changePages.set('first',{changes:[{fileId:'f'}],nextPageToken:'second'});server.changePages.set('second',{changes:[{fileId:'deleted',removed:true}],newStartPageToken:'new-start'});server.rejectedTokens.add('bad');
+    const remote=sourceDrive({baseUrl:server.baseUrl});const one=await remote.changes!({pageToken:'first'});expect(one).toMatchObject({ok:true,nextPageToken:'second',changes:[{remoteId:'f',removed:false,item:{name:'before.txt',parents:['root']}}]});
+    const before=await remote.metadata('f');file.name='renamed.txt';file.version='2';const after=await remote.metadata('f');if(!before.ok||!after.ok)throw Error('metadata');expect(after.item.version).toBe(before.item.version);
+    file.bytes=Buffer.from('different');const contentChanged=await remote.metadata('f');if(!contentChanged.ok)throw Error('metadata');expect(contentChanged.item.version).not.toBe(before.item.version);
+    expect(await remote.changes!({pageToken:'second'})).toMatchObject({ok:true,newStartPageToken:'new-start',changes:[{remoteId:'deleted',removed:true}]});expect(await remote.changes!({pageToken:'bad'})).toMatchObject({ok:false,code:'CHANGED'});
+    expect(server.requests.filter(x=>x.path.startsWith('/drive/v3/changes?')).map(x=>new URL(x.path,'http://test').searchParams.get('pageToken'))).toEqual(['first','second','bad']);
+  }finally{await server.close();}
+});
+
+it('invalid listing page token and incomplete search stay retryable and do not look like end-of-list',async()=>{
+  const server=await fakeDrive();try{server.invalidListTokens.add('broken');const remote=sourceDrive({baseUrl:server.baseUrl});expect(await remote.list({parentId:'root',pageToken:'broken'})).toMatchObject({ok:false,code:'CHANGED'});}finally{await server.close();}
+});
+
+it('Docs content version uses modifiedTime independently from generic metadata version',async()=>{
+  const server=await fakeDrive();try{
+    const doc={id:'doc',name:'before',parents:['root'],bytes:Buffer.from('synthetic'),mimeType:'application/vnd.google-apps.document',version:'1',modifiedTime:'2026-01-01T00:00:00Z'};server.files.set('doc',doc);const remote=sourceDrive({baseUrl:server.baseUrl});
+    const first=await remote.metadata('doc');doc.name='after';doc.version='2';const renamed=await remote.metadata('doc');if(!first.ok||!renamed.ok)throw Error('metadata');expect(renamed.item.version).toBe(first.item.version);
+    doc.modifiedTime='2026-01-02T00:00:00Z';const changed=await remote.metadata('doc');if(!changed.ok)throw Error('metadata');expect(changed.item.version).not.toBe(first.item.version);
+  }finally{await server.close();}
+});
