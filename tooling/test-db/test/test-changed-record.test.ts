@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SECRET_PATTERNS } from '../../../packages/core/src/domain/secret-patterns.js';
 
 const sourceRoot = fileURLToPath(new URL('../../../', import.meta.url));
 type Options = { paths?: string[]; defaultFiles?: string[]; postgresFiles?: string[]; pythonFiles?: string[]; fail?: string; childSignal?: string; block?: string; secret?: string; sources?: Record<string, string[]> };
@@ -188,6 +189,58 @@ describe('test:changed structured records', () => {
 });
 
 describe('r1 regression contracts', () => {
+  it('matches core api_key boundaries and redacts every recorded selection without changing command paths', () => {
+    const core = SECRET_PATTERNS.find(pattern => pattern.kind === 'api_key')!;
+    const matchesCore = (value: string) => new RegExp(core.expression.source, core.expression.flags.replace('g', '')).test(value);
+    const key16 = 'sk-' + 'A1_-'.repeat(4);
+    const keyLong = 'sk-' + 'B'.repeat(21);
+    const short = 'sk-' + 'C'.repeat(15);
+    const blocked = ['a', '9', '_'].map(prefix => prefix + key16);
+    const positives = [key16, keyLong, '-' + key16];
+    const negatives = [short, ...blocked, 'ordinary-file'];
+    for (const value of positives) expect(matchesCore(value)).toBe(true);
+    for (const value of negatives) expect(matchesCore(value)).toBe(false);
+    const paths = [...positives, ...negatives].map(value => `docs/${value}.txt`);
+    const all = execute({paths:[...paths, 'packages/postgres/migrations/0001.sql'],
+      defaultFiles:[`apps/cli/test/${key16}-tracer.test.ts`],
+      postgresFiles:[`packages/postgres/test/${keyLong}.test.ts`],
+      pythonFiles:[`apps/cli/python-test/${key16}.test.ts`]}, true);
+    expect(all.status).toBe(0);
+    const record = all.records[0];
+    expect(record.inputs).toEqual([...positives.map(() => '[redacted]'), ...negatives.map(value => `docs/${value}.txt`), 'packages/postgres/migrations/0001.sql']);
+    expect(record.selection.inputReasons.map((entry:{path:string}) => entry.path)).toEqual(record.inputs);
+    expect(record.selection.default).toEqual(['[redacted]']);
+    expect(record.selection.postgres).toEqual(['[redacted]']);
+    expect(record.selection.python).toEqual(['[redacted]']);
+    expect(record.tracer.files).toEqual(['[redacted]']);
+    expect(JSON.stringify(record)).not.toContain(keyLong);
+    // The same key can occur inside intentionally preserved left-boundary negatives.
+    expect(JSON.stringify(record)).not.toContain(`docs/${key16}.txt`);
+
+    const direct = `apps/cli/python-test/${key16}.test.ts`;
+    const missing = `apps/cli/python-test/${keyLong}.test.ts`;
+    const f = fixture({paths:[direct, missing]});
+    const unrecorded = fixture({paths:[direct, missing]}, false);
+    try {
+      for (const item of [f, unrecorded]) {
+        mkdirSync(join(item.root, 'apps/cli/python-test'), {recursive:true});
+        writeFileSync(join(item.root, direct), '');
+      }
+      const result = spawnSync(process.execPath, f.args, {cwd:f.root, env:f.env, encoding:'utf8', timeout:30000});
+      const withoutRecord = spawnSync(process.execPath, unrecorded.args, {cwd:unrecorded.root, env:unrecorded.env, encoding:'utf8', timeout:30000});
+      const directRecord = f.records()[0];
+      expect(result.status).toBe(0);
+      expect(withoutRecord.status).toBe(result.status);
+      expect(unrecorded.commands()).toEqual(f.commands());
+      expect(directRecord.inputs).toEqual(['[redacted]', '[redacted]']);
+      expect(directRecord.selection.inputReasons.map((entry:{path:string}) => entry.path)).toEqual(directRecord.inputs);
+      expect(directRecord.selection.python).toEqual(['[redacted]']);
+      expect(directRecord.selection.pythonMissing).toEqual(['[redacted]']);
+      expect(JSON.stringify(directRecord)).not.toContain(key16);
+      expect(JSON.stringify(directRecord)).not.toContain(keyLong);
+      expect(f.commands()).toContainEqual(['node', 'tooling/test-db/dist/python-slots.js', '--files', direct]);
+    } finally { f.clean(); unrecorded.clean(); }
+  });
   it('pins the exact baseline blob and compares command order and exit for all fixture cases', () => {
     const bytes = readFileSync(join(sourceRoot, 'tooling/test-db/test/fixtures/test-changed/run-baseline.mjs'));
     expect(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')).toBe('ce6e751256758653db7f5bec6eb2cb0fe818375f');
