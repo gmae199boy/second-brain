@@ -573,6 +573,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
              set completed_at = ${now}, outcome = 'succeeded',
                  claimed_at = null, claim_expires_at = null, claimed_by = null
            where id = ${input.id} and claimed_by = ${input.claimedBy} and completed_at is null
+             and not (kind='source_sync' and target_kind='source' and exists(select 1 from brain.source_change_tasks t join brain.source_files sf on sf.id=t.source_file_id join brain.sources s on s.id=sf.source_id where s.id::text=work_items.target_id and s.connected and t.source_generation=s.generation and t.remote_version=sf.remote_version and not sf.unreachable and not t.resolved))
            returning kind, target_kind, target_id
         `.execute(held);
         const row = completed.rows[0];

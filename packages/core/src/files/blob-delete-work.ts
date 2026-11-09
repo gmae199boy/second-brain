@@ -163,7 +163,7 @@ export function blobDeleteHandler({ store, files, clock, driveFiles, driveRoot }
       storeKind: location.storeKind,
       locator: location.locator,
       ownership: location.ownership,
-    });
+    },location.storeKind==='drive' && item.claimedBy && item.claimedAt ? {workId:item.id,locationId:id,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts}:undefined);
     if (!deleted.ok) {
       // A store that is there but cannot answer right now is somebody else's
       // hiccup: the item waits and tries again (AD-21). A location the port will

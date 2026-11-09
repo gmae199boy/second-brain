@@ -13,6 +13,12 @@ const snapshot = { id, bundleId: id, localDate: '2026-01-01', timeZone: 'UTC', c
 const schedule = { id, kind:'demo', holdGroup:null, targetKind:'session', targetId:id, triggerKind:'once' as const, cronExpr:null, runAt:now, timeZone:null, timeZoneSource:null, intervalSeconds:null, extension:null, scheduleKey:null, userId:id, enabled:true, removedAt:null, triggerUpdatedAt:null, nextRunAt:now, lastRunAt:null, createdAt:now };
 const analysisOutput = { status: 'ok' as const, summary: '', report_md: 'report', judgments: [], evidence: [], next_checks: [] };
 const calls = {
+  deferSourceChangeToReconcile: (s:PostgresStore) => s.deferSourceChangeToReconcile({sourceId:id,generation:1,sourceFileId:id,remoteVersion:'v1',claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
+  deferSourceScanUnreachable: (s:PostgresStore) => s.deferSourceScanUnreachable({sourceId:id,generation:1,scanId:id,sourceFileId:id,remoteVersion:'v1',claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
+  refreshDriveRetention: (s:PostgresStore) => s.refreshDriveRetention(),
+  listSourceChangeTasks: (s:PostgresStore) => s.listSourceChangeTasks({sourceId:id,generation:1,claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
+  resolveSourceChangeTask: (s:PostgresStore) => s.resolveSourceChangeTask({sourceId:id,generation:1,sourceFileId:id,remoteVersion:'v1',claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
+  applySourceChanges: (s:PostgresStore) => s.applySourceChanges({sourceId:id,generation:1,expectedCursor:'a',nextCursor:'b',changes:[],claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
   disableMissingSchedules: (s: PostgresStore) => s.disableMissingSchedules({extension:'testext',userId:id,keys:[]}),
   findScheduleByKey: (s: PostgresStore) => s.findScheduleByKey({extension:'testext',scheduleKey:'key',userId:id}),
   updateSchedule: (s: PostgresStore) => s.updateSchedule({id,expected:schedule,schedule}),
@@ -81,6 +87,7 @@ const calls = {
   listUnsupportedCarry: s => s.listUnsupportedCarry({extractorVersion:'1',limit:1}),
   commitUnsupportedCarry: s => s.commitUnsupportedCarry({fileId:id,extractorVersion:'1',contentHash:'sha256:'+ 'a'.repeat(64),home:{storeKind:'local',ownership:'brain',locator:'x'},supported:true,workId:id,now}),
   reserveSourceCarry: s => s.reserveSourceCarry({sourceId:id,generation:1,extractorVersion:'v',workId:id,now}),
+  hasSourceCarryRun: s => s.hasSourceCarryRun({sourceId:id,generation:1,workId:id}),
   readSourceCarryCheck: s => s.readSourceCarryCheck({sourceFileId:id,remoteVersion:'1',extractorVersion:'v'}),
   markSourceCarryCheck: s => s.markSourceCarryCheck({sourceId:id,generation:1,sourceFileId:id,remoteVersion:'1',extractorVersion:'v',claim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}}),
   listFilesAwaitingExtraction: (s) => s.listFilesAwaitingExtraction({ limit: 1 }),
@@ -134,6 +141,7 @@ const calls = {
   disconnectSource: s => s.disconnectSource({id,now}),
   removeSource: s => s.removeSource({id,now}),
   listSourceEntries: s => s.listSourceEntries(id),
+  listOutsideSourceNodes: s => s.listOutsideSourceNodes({sourceId:id,generation:1}),
   hasDueSourceWork: s => s.hasDueSourceWork({sourceId:id,syncWorkId:id,now}),
   claimSourceWork: s => s.claimSourceWork({sourceId:id,syncWorkId:id,now,claimedBy:'worker'}),
   readSourceWorkStatus: s => s.readSourceWorkStatus({sourceId:id,syncWorkId:id}),
@@ -161,6 +169,7 @@ const calls = {
   readExtensionQuiesce: s => s.readExtensionQuiesce('testext'),
   endExtensionQuiesce: s => s.endExtensionQuiesce({ name: 'testext', owner: '00000000-0000-4000-8000-000000000000' }),
   setSetting: (s) => s.setSetting({ userId: null, key: 'timezone', value: 'UTC', updatedAt: now }),
+  renewDriveMigration: s => s.renewDriveMigration({workId:id,fileId:id,claimedBy:'worker',claimedAt:now,attempts:1,now}),
   readDriveCandidate: s => s.readDriveCandidate(id),
   readDriveIntent: s => s.readDriveIntent(id),
   readDriveLocationRoot: s => s.readDriveLocationRoot(id),
@@ -169,7 +178,7 @@ const calls = {
   beginDriveMigration: s => s.beginDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',locationId:id,locator:'a'.repeat(64),workId:id,at:now}),
   readDriveRetention: s => s.readDriveRetention(id),
   withDriveLocalDelete: s => s.withDriveLocalDelete({workId:id,localLocationId:id,claimedBy:id,claimedAt:now,attempts:1,now},async()=>null),
-  commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now}),
+  commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now,migrationClaim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now,nowAtLock:()=>now}}),
 } satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports' | 'driveUploads'>, (store: PostgresStore) => Promise<unknown>>;
 
 it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing-role', 'authentication'] as const)('every store verb answers DB_UNAVAILABLE when %s', async kind => {
@@ -226,4 +235,9 @@ it.each([
     await db.query(`drop table brain.${table} cascade`);
     expect(await invoke(store)).toMatchObject({ ok: false, code: 'DB_UNAVAILABLE' });
   } finally { await store.close(); await db.drop(); }
+});
+
+it('drive deletion journal methods report an unavailable database',async()=>{
+ const port=await closedPort(),store=postgresStore({databaseUrl:`postgresql://brain_app:unused@127.0.0.1:${port}/unavailable`});
+ try{const identity={rootFolderId:'root',contentHash:'sha256:'+'a'.repeat(64),remoteId:'remote',at:now};expect(await store.driveUploads.checkDelete(identity)).toMatchObject({ok:false});expect(await store.driveUploads.beginDelete(identity)).toMatchObject({ok:false});expect(await store.driveUploads.submitDelete(identity)).toMatchObject({ok:false});expect(await store.driveUploads.markDeleted(identity)).toMatchObject({ok:false});}finally{await store.close();}
 });

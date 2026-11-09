@@ -1,4 +1,4 @@
-import { getSetting, setSetting, resolveSelfUser, type BrainDependencies, type Clock, type DriveMigrationStore, type DriveUploadStore, type IdGen, type SchemaStore, type SchemaVersions, type SettingsStore, type SourceControl, type SourceStore, type Store } from 'second_brain';
+import { getSetting, setSetting, resolveSelfUser, type BrainDependencies, type Clock, type DriveMigrationStore, type DriveUploadStore, type IdGen, type SchemaStore, type SchemaVersions, type SettingsStore, type DriveRetentionSettingsStore, type SourceControl, type SourceStore, type Store } from 'second_brain';
 import { join } from 'node:path';
 import { readDriveCredentials,withDriveConnectionLock } from '../config/codec.js';
 import { connectDriveUnderLock,disconnectDrive,driveAuth,driveRootSettings } from './drive-oauth.js';
@@ -6,11 +6,11 @@ import { sourceDrive } from './source-drive.js';
 import { sourceTemp } from './source-temp.js';
 import { driveFileStore } from './drive-file-store.js';
 
-type DriveStore=Store & SchemaStore & SettingsStore & SourceStore & DriveMigrationStore & {driveUploads:DriveUploadStore};
+type DriveStore=Store & SchemaStore & DriveRetentionSettingsStore & SourceStore & DriveMigrationStore & {driveUploads:DriveUploadStore};
 export type DriveRuntimeNetwork={authorizationEndpoint?:string;tokenEndpoint?:string;driveBaseUrl?:string;fetch?:typeof fetch};
 const failure=(code:string,message:string)=>({ok:false as const,code,message});
 const valid=(id:string)=>/^[A-Za-z0-9_-]+$/.exec(id)?.[0]===id;
-function isDriveStore(s:Store & SchemaStore & SettingsStore):s is DriveStore {const x=s as Partial<DriveStore>;return typeof x.listSources==='function'&&typeof x.updateSourceFolders==='function'&&typeof x.withDriveLocalDelete==='function'&&!!x.driveUploads;}
+function isDriveStore(s:Store & SchemaStore & SettingsStore):s is DriveStore {const x=s as Partial<DriveStore>;return typeof x.listSources==='function'&&typeof x.updateSourceFolders==='function'&&typeof x.withDriveLocalDelete==='function'&&typeof x.renewDriveMigration==='function'&&typeof x.refreshDriveRetention==='function'&&!!x.driveUploads;}
 /** Both one-shot commands and daemon rounds assemble the same adapters. */
 export async function createDriveRuntime(input:{home:string;store:Store & SchemaStore & SettingsStore;clock:Clock;idGen:IdGen;schemaVersions:SchemaVersions;network?:DriveRuntimeNetwork;auth?:ReturnType<typeof driveAuth>}) {
  const {home,store,clock,idGen,schemaVersions,network}=input;if(!isDriveStore(store))return null;
@@ -20,12 +20,12 @@ export async function createDriveRuntime(input:{home:string;store:Store & Schema
  const validateSource=async(id?:string)=>{const c=await current();if(!c.ok)return c;const account=await getSetting(deps,{key:'drive.account_id'});if(!account.ok)return account;if(!c.source?.connected||!account.value||c.source.account!==account.value||(id!==undefined&&c.source.id!==id))return failure('SOURCE_CHANGED','Drive 계정과 source 연결을 확인해야 합니다');return {ok:true as const};};
  const rawRemote=sourceDrive({baseUrl:network?.driveBaseUrl??'https://www.googleapis.com',auth,clock,...(network?.fetch?{fetch:network.fetch}:{})});
  const guarded=async<T>(run:()=>Promise<import('second_brain').RemoteResult<T>>):Promise<import('second_brain').RemoteResult<T>>=>{const allowed=await validateSource();return allowed.ok?run():allowed.code==='DB_UNAVAILABLE'||allowed.code==='DB_LOCKED'?{ok:false,code:allowed.code,message:allowed.message}:{ok:false,code:'TEMPORARY',message:'Drive 계정과 source 연결을 확인해야 합니다'};};
- const remote:import('second_brain').SourceRemote={startToken:()=>guarded(()=>rawRemote.startToken()),list:i=>guarded(()=>rawRemote.list(i)),metadata:id=>guarded(()=>rawRemote.metadata(id)),download:i=>guarded(()=>rawRemote.download(i))};
+ const remote:import('second_brain').SourceRemote={changes:i=>guarded(()=>rawRemote.changes!(i)),startToken:()=>guarded(()=>rawRemote.startToken()),list:i=>guarded(()=>rawRemote.list(i)),metadata:id=>guarded(()=>rawRemote.metadata(id)),download:i=>guarded(()=>rawRemote.download(i))};
  const sourceSync:NonNullable<BrainDependencies['sourceSync']>={store,remote,temp:sourceTemp(join(home,'run','source-temp')),validateSource,roots:async()=>{const result=await getSetting(deps,{key:'drive.watch_folders'});return result.ok?{ok:true,roots:JSON.parse(result.value) as string[]}:result;}};
  const sourceState=await store.listSources();const accountState=await getSetting(deps,{key:'drive.account_id'});
  const drives=sourceState.ok?sourceState.sources.filter(s=>s.kind==='drive'):[];
  const connected=accountState.ok&&!!accountState.value&&root.ok&&drives.length===1&&drives[0]!.connected&&drives[0]!.account===accountState.value;
- const drive:BrainDependencies['drive']=connected&&root.ok&&root.rootId&&credentials?{store,uploads:store.driveUploads,rootFolderId:root.rootId,files:driveFileStore({rootFolderId:root.rootId,baseUrl:network?.driveBaseUrl??'https://www.googleapis.com',uploads:store.driveUploads,clock,auth,...(network?.fetch?{fetch:network.fetch}:{})})}:undefined;
+ const drive:BrainDependencies['drive']=connected&&root.ok&&root.rootId&&credentials?{store,uploads:store.driveUploads,rootFolderId:root.rootId,sourceFence:{sourceId:drives[0]!.id,generation:drives[0]!.generation},files:driveFileStore({rootFolderId:root.rootId,baseUrl:network?.driveBaseUrl??'https://www.googleapis.com',uploads:store.driveUploads,clock,auth,deleteSourceFence:{sourceId:drives[0]!.id,generation:drives[0]!.generation,account:drives[0]!.account},authorize:async()=>{const latest=await current();return latest.ok&&!!latest.source?.connected&&latest.source.id===drives[0]!.id&&latest.source.generation===drives[0]!.generation;},...(network?.fetch?{fetch:network.fetch}:{})})}:undefined;
  // A source is the durable account commitment. Settings alone can be left by
  // an interrupted first consent and are provisional until a source exists.
  const bindAccount=async(accountId:string)=>{const existing=await store.listSources();if(!existing.ok)return false;const drives=existing.sources.filter(s=>s.kind==='drive');if(drives.length>1||drives.some(s=>s.account!==accountId))return false;const old=await getSetting(deps,{key:'drive.account_id'});if(!old.ok)return false;if(drives.length&&old.value&&old.value!==accountId)return false;return true;};
@@ -46,6 +46,6 @@ export async function createDriveRuntime(input:{home:string;store:Store & Schema
   async list(){const found=await store.listSources();if(!found.ok)return found;const folders=await getSetting(deps,{key:'drive.watch_folders'});return folders.ok?{ok:true,sources:found.sources,folders:JSON.parse(folders.value) as string[]}:folders;},
   async disconnect(i){if(i.kind!=='drive')return failure('INVALID_ARGUMENT','Drive만 연결 해제할 수 있습니다');return disconnectDrive(home,async()=>{const c=await current();if(!c.ok)return c;return c.source?store.disconnectSource({id:c.source.id,now:clock.now()}):{ok:true};});},
  };
- const onSettingChanged=async(change:{key:string;value:string})=>{if(!['drive.watch_folders','drive.sync_interval_minutes'].includes(change.key))return;const c=await current();if(!c.ok)throw Error('source');if(!c.source?.connected)return;const result=await reconcile();if(!result.ok)throw Error('schedule');};
+ const onSettingChanged=async(change:{key:string;value:string})=>{if(change.key==='drive.keep_local_days'){const result=await store.refreshDriveRetention();if(!result.ok)throw Error('retention');return;}if(!['drive.watch_folders','drive.sync_interval_minutes'].includes(change.key))return;const c=await current();if(!c.ok)throw Error('source');if(!c.source?.connected)return;const result=await reconcile();if(!result.ok)throw Error('schedule');};
  return {control,drive,sourceSync,reconcile,onSettingChanged};
 }

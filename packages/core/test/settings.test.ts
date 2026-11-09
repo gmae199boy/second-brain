@@ -138,3 +138,20 @@ it('retries interval reconciliation for the same persisted value after a callbac
  const store={...memorySettingsStore(),...self,...memorySchemaStore({version:1})};let calls=0;const deps={store,clock:{now:()=>at},schemaVersions:{core:1},onSettingChanged:async()=>{calls++;if(calls===1)throw Error('synthetic failure');}};const {setSetting}=await import('../src/settings/index.js');
  expect(await setSetting(deps,{key:'drive.sync_interval_minutes',value:'2'})).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});expect(await setSetting(deps,{key:'drive.sync_interval_minutes',value:'2'})).toMatchObject({ok:true,source:'db',value:'2',updatedAt:at});expect(calls).toBe(2);
 });
+
+it('fake retention refresh serializes changes and reads the latest effective value',async()=>{
+  const seen:number[]=[];let release!:()=>void,entered!:()=>void;const hold=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  const store=memorySettingsStore({selfUserId:userId,async applyRetention(days){seen.push(days);if(days===10){entered();await hold;}return {ok:true};}});
+  const first=store.setSetting({userId,key:'drive.keep_local_days',value:'10',updatedAt:at});
+  await started;const second=store.setSetting({userId,key:'drive.keep_local_days',value:'40',updatedAt:at});release();
+  expect(await first).toEqual({ok:true});expect(await second).toEqual({ok:true});expect(await store.refreshDriveRetention()).toEqual({ok:true});
+  expect(seen).toEqual([10,40,40]);expect(await store.getSetting({userId,key:'drive.keep_local_days'})).toMatchObject({ok:true,setting:{value:'40'}});
+});
+
+it('fake uncertain delete barrier rejects retention writes and preserves prior setting',async()=>{
+  let locked=false;const store=memorySettingsStore({selfUserId:userId,async applyRetention(){return locked?{ok:false,code:'DB_LOCKED',message:'uncertain'}:{ok:true};}});
+  expect(await store.setSetting({userId,key:'drive.keep_local_days',value:'30',updatedAt:at})).toEqual({ok:true});locked=true;
+  expect(await store.setSetting({userId,key:'drive.keep_local_days',value:'10',updatedAt:at})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await store.refreshDriveRetention()).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await store.getSetting({userId,key:'drive.keep_local_days'})).toMatchObject({ok:true,setting:{value:'30'}});
+});

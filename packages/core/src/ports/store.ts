@@ -1483,6 +1483,10 @@ export interface SettingsStore {
   insertSetting(input: SettingRecord & { userId: string | null }): Promise<{ ok: true } | SettingsStoreFailure>;
 }
 
+/** Recompute under the delete barrier using the current self setting, never a hook's stale value. */
+export interface DriveRetentionSettingsStore extends SettingsStore {
+  refreshDriveRetention():Promise<{ok:true}|SettingsStoreFailure>;
+}
 
 export interface ExtensionRecord {
   name: string; version: string; packageDigest: string | null; pluginVersion: string | null; installedAt: Date; enabled: boolean; enabledChangedAt: Date;
