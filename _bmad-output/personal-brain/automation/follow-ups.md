@@ -626,3 +626,16 @@ built/deferred[]이며 사용자 인수 done은 아니다. 중앙의 19.5 공식
 - 19.6(hook 중복 제거)·19.1(DB template)은 runner/lease/lane 계약을 유지한다. 8.5는 실행 명령이 끝난 안정 경계에서 수락 main을 통합하고 incoming 영향·필요 관련 검증을 수행한다. 진행 중 suite의 source를 바꾸지 않는다.
 
 built/deferred[]이며 사용자 인수 done은 아니다. 원시·리뷰·최종 보고 438개 파일을 원 워크트리와 중앙 비공개 archive에 보존했다.
+
+## 19.6 — hook 중복 실행 제거 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-test-time/tickets/story-bootstrap-hook-suite-hook-plan.md)의 Review Triage Log·Verification Results·Auto Run Result, 최종 source `0dc360911a02b4f17b4514919c1ce724e8e7c19a`. 중앙은 원격 SHA/clean, 독립 구현 r3·최종 원시 감사·FE-1/FE-2 후속 해결, 60개 원시 hash와 실제 16명령/중앙값을 대조했다.
+
+- hook 파일을 Python suite 단독 소유로 두고 기본 suite에서만 제외했다. case 합집합8·원본문/단언/순서/timeout/조건부 skip과 공유 home/bin/DB 전제를 유지한다. after는 각 case가 한 번씩 통과했고 test:changed의 bootstrap/config 선택 회귀도 통과했다. 제품·migration·plugin·19.5 runner/lease/lane은 불변이다.
+- 고정 before94b5b84/after8da69d1에서 각 warmup1+3, trial별 기본→Python 순차 총16명령이 모두 exit0였다. 합계 wall 중앙값142.145→74.083초, 비율0.5211799492·47.8820% 단축이다. E19-6은 검증 집합을 보존한 중복 제거이며 19.5의 절반 임계와 혼동하지 않는다. 해당 source/host/cache 조건의 결과이고 이후 문서·19.1/0044를 포함한 source나 전체 suite 성능으로 확대하지 않는다.
+- 최초 TS는 Orca 재시작 interrupted/exit unknown으로 남긴다. 중앙 허용 제한 복구에서 project+file236개를 완료203+보완33파일542pass로 연결해 누락0/미해결0을 입증했다. 최초 TS가 exit0으로 끝났다고 쓰지 않는다. 최초 전체 Python은16파일/76case·hook8pass/exit0·233.0309초다.
+- 부모의 외부 HOME/TMP와 기존 runner가 덮어쓰는 job별 내부 ignored TMP를 구별해 이번 기능 회귀 편차로 수락했다. ignored scratch는 hook snapshot 대상에서 빠지며 원시/장부는 보존한다. 일반적인 저장소 내부 TMP 사용 전체를 허용한 것은 아니다.
+- 실제 측정00:41:15.322651~00:55:42.386529UTC가 유한 창 안에서 끝났다. 전송 성공 영수증과 중앙 ack00:56:22UTC/peer 해제 완료를 구별하며 정확 sentUTC는 미기록이다. warmup 반올림과 반환 증거의 두 LOW는 보완 후 독립 resolved다.
+- 일반회귀253개 정확 ID와 별도 회귀PG, 측정12개 정확 hook container/project/network/volume/home/port 정리 근거를 대조했다. 타 소유 자원 광역 정리는 없다. 워크트리/브랜치/세션·측정 사본·원시/scratch는 보존하고 중앙 비공개 archive에도 증거를 보관했다.
+
+built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 아니다. 8.5·19.1 및 이후19.8은 실행 중 명령 종료 뒤 수락 source를 정상 통합하고 config/선택·fixture 영향과 필요한 관련 검증을 확인한다.

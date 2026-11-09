@@ -62,7 +62,7 @@ const exact = [
   'apps/cli/python-test/fixtures/artifacts-lifecycle.ts',
   'apps/cli/python-test/fixtures/lifecycle-timeout.fixture.ts',
   'apps/cli/python-test/fixtures/lifecycle-vitest.config.mjs',
-  'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','package.json','pnpm-lock.yaml',
+  'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','vitest.config.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';
 
