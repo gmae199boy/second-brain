@@ -1,12 +1,86 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyChanges } from '../../test-changed/rules.mjs';
 
 describe('changed test path rules', () => {
+  it('keeps the complete hook file exclusively in the Python config', () => {
+    const root = fileURLToPath(new URL('../../../', import.meta.url));
+    const hook = 'tooling/bootstrap/test/hook.test.ts';
+    expect(readFileSync(join(root, 'apps/cli/python-test/vitest.config.ts'), 'utf8'))
+      .toMatch(/env:\s*\{\s*BRAIN_PYTHON_UPDATE_TEST:\s*['"]1['"]/);
+    const list = (options: string[]) => {
+      const dir = mkdtempSync(join(tmpdir(), 'brain-hook-list-'));
+      try {
+        const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres', BRAIN_PYTHON_UPDATE_TEST: '0' };
+        delete env.BRAIN_TEST_SLOT_LEASE;
+        delete env.BRAIN_TEST_RUN_ID;
+        delete env.BRAIN_TEST_SLOT_ID;
+        delete env.BRAIN_TEST_FILE_ID;
+        const result = spawnSync('pnpm', ['exec', 'vitest', 'list', hook, ...options, '--json'], {
+          cwd: root, env, encoding: 'utf8', timeout: 120000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        return JSON.parse(result.stdout) as { file: string; name: string }[];
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    };
+    expect(list(['--filesOnly'])).toEqual([]);
+    const cases = list(['--config', 'apps/cli/python-test/vitest.config.ts', '--no-static-parse']);
+    expect(cases.every(item => item.file.endsWith('/' + hook))).toBe(true);
+    const names = cases.map(item => item.name);
+    const expected = [
+      'clones, builds, installs, and records the commit the plugin asked for',
+      'does nothing at all on a second session with the same ref',
+      'restarts a loaded daemon once after updating the plugin ref and exposes the new build',
+      '실제 app 승격 뒤 완료 기록 실패를 같은 대상으로 재시도하며 원래 backup을 보존한다',
+      'collects a Stop payload, records its arrival, and ignores a transcript with no conversation',
+      '실제 package 설치와 같은 core bootstrap이 겹쳐도 둘 다 성공하고 일관된다',
+      '설치된 확장의 다른 commit 자동 갱신은 offline 확인 없이 거부하고 보존한다',
+      'offline 확인 없는 bootstrap 갱신을 거부하고 Python 확장을 보존한다',
+    ];
+    expect(names).toHaveLength(expected.length);
+    for (const name of expected) expect(names.filter(actual => actual.endsWith(name)), name).toHaveLength(1);
+  }, 300000);
+
+  it('routes bootstrap and config changes through the Python slots runner', () => {
+    const root = fileURLToPath(new URL('../../../', import.meta.url));
+    const dir = mkdtempSync(join(tmpdir(), 'brain-changed-route-'));
+    const log = join(dir, 'commands');
+    try {
+      writeFileSync(join(dir, 'git'), `#!/bin/sh
+case "$1" in
+  diff) case "$*" in *...HEAD*) printf '%s\\0' "$CHANGED_PATH";; esac;;
+  *) :;;
+esac
+`, { mode: 0o755 });
+      writeFileSync(join(dir, 'pnpm'), `#!/bin/sh
+printf 'pnpm %s\\n' "$*" >> "$COMMAND_LOG"
+case "$*" in
+  *'vitest list'*'--config apps/cli/python-test/vitest.config.ts'*) printf '[{"file":"/tooling/bootstrap/test/hook.test.ts"}]';;
+  *'vitest list'*) printf '[]';;
+esac
+`, { mode: 0o755 });
+      writeFileSync(join(dir, 'node'), `#!/bin/sh
+printf 'node %s\\n' "$*" >> "$COMMAND_LOG"
+`, { mode: 0o755 });
+      for (const changed of ['tooling/bootstrap/test/hook.test.ts', 'tooling/bootstrap/test/hook-resources.ts', 'tooling/bootstrap/src/bootstrap.ts', 'vitest.config.ts', 'apps/cli/python-test/vitest.config.ts']) {
+        writeFileSync(log, '');
+        const result = spawnSync(process.execPath, ['tooling/test-changed/run.mjs', 'HEAD'], {
+          cwd: root, encoding: 'utf8', env: { ...process.env, PATH: dir + delimiter + process.env.PATH, CHANGED_PATH: changed, COMMAND_LOG: log }, timeout: 30000,
+        });
+        expect(result.status, `${changed}: ${result.stderr}`).toBe(0);
+        const commands = readFileSync(log, 'utf8');
+        expect(commands).toContain('vitest list --changed HEAD --filesOnly --json');
+        expect(commands).toContain('vitest list --config apps/cli/python-test/vitest.config.ts --filesOnly --json');
+        expect(commands).toContain('node tooling/test-db/dist/python-slots.js\n');
+        expect(commands).not.toContain('vitest run');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('runs Python for extension and runtime paths', () => {
     for (const file of [
       'extensions/garmin/src/body_ipc.py', 'extensions/garmin/tests/test_body_runtime.py', 'extensions/garmin/tests/test_store_contract_integration.py', 'extensions/garmin/tests/test_report_process.py', 'extensions/garmin/tests/test_report_supervised.py', 'extensions/garmin/tests/report-fixture/codex',
@@ -28,7 +102,7 @@ describe('changed test path rules', () => {
       'apps/cli/src/assembly.ts','apps/cli/scripts/write-build-info.mjs','apps/cli/src/envelope.ts','apps/cli/src/commands/index.ts',
       'apps/cli/src/commands/daemon-status.ts','apps/cli/test/ext-fixture.ts','apps/cli/test/global-setup.ts',
       'apps/cli/test/pg-home.ts','apps/cli/test/extension-commands.test.ts','packages/core/src/testing/contracts/extension-quiesce.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','tooling/test-db/src/index.ts','tooling/bootstrap/src/bootstrap.ts',
-      'tooling/recall-eval/health-cases.json', 'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
+      'tooling/recall-eval/health-cases.json', 'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','vitest.config.ts','tooling/test-changed/rules.mjs','package.json','pnpm-lock.yaml',
       'apps/cli/src/mcp/serve.ts', 'apps/cli/src/commands/mcp-serve.ts', 'packages/core/src/ports/process.ts', 'packages/core/fixtures/extensions/v1/check-manifests.py',
     ]) expect(classifyChanges([file]).pythonAll, file).toBe(true);
   });
