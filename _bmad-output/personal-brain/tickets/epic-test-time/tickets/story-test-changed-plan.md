@@ -178,3 +178,44 @@ deferred: []
 - 후속리뷰권고 **false**: r1의높은위험수정에필요한독립확인과수락main교차계약/증거감사가끝났고미확인기능결함은없다. 관련45시험까지실제통과했다.
 - 검증: 최초필수전체TS237파일5042시험/Python16파일76case exit0을순차확보했다. 새기록37+기존선택8 pass, 실제도구문서전용관측pass, incoming컴파일/목록/분류/관련45pass. 별도관측준비오류로발생한추가Python부분실행의SIGTERM중단과미배정표시·상위exit1은위에원형보존했다. 이를정상완료로꾸미지않는다.
 - 한계: 첫전체는원소스/schema43+19.8구현의결과이며incoming/schema44는수락8.5증거·독립영향감사·관련검증으로확인했다. tracer시간은공유단계/null, list는실제완료manifest가아니며runner-only신호는미관측incomplete일수있다. 임의불투명비밀완전판별보장은없다. parentHOME/TMP와중단hookhome은합성증거로보존돼있고PG/container/volume잔존과구별한다.
+
+
+## 수락 후 최소 교정 — 알려진 sk- 접두 누락
+
+- 중앙 지시 `msg_0a05a2a0a4c6`(2026-11-09)에 따른19.8후속교정이다. 원baseline `4e63538383590b575847754362c61630acd82a3b`와최초전체/추가부분실행이력은보존한다. 이번시작점은중앙수락main `7b09aead25094304f8aee9359899a69fc477a932`, 기존제출 `892b62f9384885cc1878818b1a9ced2e62f99529`를포함한다.
+- 결함: `docs/sk-ABCDEFGHIJKLMNOPQRST.txt`가현재safePath를통과하지만읽기전용core `packages/core/src/domain/secret-patterns.ts` api_key패턴은 `(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{16,}`를비밀로인식한다. 새접두보강은core의문자집합/길이/왼쪽경계를대조하고기존가림을약화하지않는다. 실제비밀·실사용자환경조회는금지한다.
+- 허용소스편집은 `tooling/test-changed/record.mjs`, `tooling/test-db/test/test-changed-record.test.ts`, 이계획뿐이다. v1필드/기록상태·실제경로선택/runner명령/exit는불변이다. 19.9소유 rules.mjs와기존선택시험(test-changed.test.ts), core패턴·기타제품·README는읽기전용이다.
+- 구체관측: Given core api_key패턴의sk-합성값과경계값, when 실제runner의모의자식계약fixture가기록을생성, then16자이상허용본문은입력/이유/기본·Postgres·Python·tracer선택/직접·누락목록과JSON에원문을남기지않으며실제명령에는원경로가전달된다. Given15자/왼쪽alnum·underscore로차단된가짜접두/일반파일명, when동일관측, thencore패턴의양음성및기존정책과맞게일반경로를보존한다. 기존sk-proj같은보수적가림은유지한다.
+
+### Followup Execution
+
+- [x] F1 Terra medium — 허용helper/record회귀2파일의접두누락과core대조/합성양음성/JSON모든기록경로회귀를최소교정한다. 시험 실행 금지, 컴파일 확인만.
+- [x] F2 Sol medium — 실제수정과원core경계대조·기존가림/선택/명령/exit/v1불변·허용편집경계를독립확인한다. 시험실행금지.
+- [x] F3 지휘자 — 마지막수정·독립확인뒤전용합성HOME/TMP의관련record시험파일만재검증한다. 기존최초전체회귀후속규칙에따라전체/test:changed/list/성능/PG는추가실행하지않는다. 범위commit/자기branch일반push/정확원격SHA/clean과 `ticket-result:19.8-followup` 중앙보고를남긴다.
+
+### Followup Verification
+
+- 개발/리뷰수정중 build/typecheck/git diff --check만. 처음의6Task Terra는settled이며새Terra를배정해컨텍스트누적을피한다. 기존보존세션은닫지않고동시소스편집자1을유지한다.
+- 독립해결확인뒤 `VITEST_MAX_WORKERS=2 pnpm exec vitest run --project test-db tooling/test-db/test/test-changed-record.test.ts`만실행한다. 새원시/UTC/HEAD/소스지문/exit/회귀수를 followup디렉터리에보존하고기존결과를덮어쓰지않는다.
+
+
+### Followup Implementation Notes
+
+- Terra는core와같은case-sensitive sk-패턴(허용본문16자이상/왼쪽alnum·underscore차단)을추가했다. 기존credentialShape와sk-proj보수적가림은유지하며schema/runner/분류는변경하지않았다.
+- 새회귀는core실제SECRET_PATTERNS api_key표현식을가져와15/16/초과길이·왼쪽영문/숫자/underscore/하이픈경계를대조하고JSON입력/이유/모든suite/tracer/직접/누락경로와명령원경로·기록불가exit동등성을검증한다.
+- build/typecheck/diff-check exit0, 개발중시험미실행. worker_done의filesModified목록은시험파일만표시했으나실제Git diff에서허용helper+시험2파일수정을확인했다. 계획은지휘자수정이다.
+
+
+### Followup Review Triage
+
+- Sol `ctx_477fcaae36fc` 독립실제해결확인: 새finding0. core실제export의sk-허용문자/16자이상/왼쪽alnum·underscore차단과helper동등성, JSON모든기록경로/원경로명령인수·기록불가exit불변·기존보수적가림·허용3파일범위를확인했다. 상세 `followup/sol-review.md`를보존한다. 이정적확인을실제시험pass로소급하지않고관련record파일검증으로진행한다.
+
+
+### Followup Verification Result / Auto Run Result
+
+- 상태 **built 유지**, 수락후후속교정이며done으로올리지않는다. Terra medium구현/컴파일과Sol medium독립실제해결확인(새finding0)을완료했다.
+- 허용2소스파일+자기계획만바꿨다. core api_key의알려진sk-16자이상/허용본문/왼쪽경계누락만보강했고기존가림·v1·실제경로선택·runner명령/exit는불변이다. rules.mjs·test-changed.test.ts·core/제품·README는읽기전용으로보존했다.
+- 독립확인뒤관련명령 `VITEST_MAX_WORKERS=2 pnpm exec vitest run --project test-db tooling/test-db/test/test-changed-record.test.ts`만실행했다. **1파일38시험 pass, exit0, wall23.2996초**, UTC2026-11-09T02:56:57.235876→02:57:20.535803. 신규core경계/모든JSON기록경로/기록불가·원경로명령회귀가포함됐다.
+- 전용합성HOME/TMP와unused loopback PG URL을사용했고실제비밀·사용자설정·credential을복사/조회하지않았다. 추가전체/test:changed/list/성능/PG생성은실행하지않았다. 원최초전체/추가부분실행/중단및원시를이번결과로덮어쓰지않는다.
+- raw/명령/UTC/exit/소스지문은 `.brain-automation/tickets/19.8/followup/record-result.json`, `record.log`, `record-source.json`, 구현/독립확인은 `terra-report.md`, `sol-review.md`에보존한다. commit/자기branch일반push/정확원격SHA·clean/중앙 `ticket-result:19.8-followup` 영수증은같은followup디렉터리에보존한다. 중앙main/state/peer소유는변경하지않는다.
+- 후속미해결0/deferred단일빈목록/추가운영입력없음. 기존list/sharedtracer/미관측신호·임의불투명비밀판별한계는그대로이며추가독립리뷰권고false다.

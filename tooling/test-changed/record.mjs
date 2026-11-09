@@ -7,13 +7,16 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 // Recognize common credential prefixes conservatively; arbitrary opaque values
 // cannot be reliably classified from a filename alone.
 const credentialShape = /(?:gh[pousr]_|github_pat_|glpat-|npm_|xox[baprs]-|sk_(?:live|test)_)[a-z0-9_-]{8,}|(?:AKIA|ASIA)[A-Z0-9]{16}/i;
+// Keep this in step with core's api_key expression; existing conservative
+// credential checks below intentionally cover additional shapes.
+const coreApiKey = /(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{16,}/u;
 
 export function safePath(root, value) {
   if (typeof value !== 'string') return '[redacted]';
   const path = isAbsolute(value) ? relative(root, value) : value;
   if (!path || path.startsWith('..') || isAbsolute(path) || path.includes('\\') ||
       !/^[a-zA-Z0-9._/@+ -]+$/.test(path) ||
-      path.split('/').some(part => !part || part === '.' || part === '..' || /^\.(?!github$)/.test(part) || (/secret|credential|password|token|private|\.env|api[-_]?key|sk[-_]proj[-_]/i.test(part) || credentialShape.test(part)))) return '[redacted]';
+      path.split('/').some(part => !part || part === '.' || part === '..' || /^\.(?!github$)/.test(part) || (/secret|credential|password|token|private|\.env|api[-_]?key|sk[-_]proj[-_]/i.test(part) || credentialShape.test(part) || coreApiKey.test(part)))) return '[redacted]';
   return path.split(sep).join('/');
 }
 
