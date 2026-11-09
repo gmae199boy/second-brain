@@ -43,3 +43,32 @@ it('invalid_grant records a non-retryable queue failure and doctor reports recon
 it('network errors produce safe transient failures',async()=>{const error=await driveRequest({url:'http://local',fetch:async()=>{throw Error('synthetic-private');}}).catch(e=>e);expect(error).toBeInstanceOf(DriveRequestError);expect(error.code).toBe('TEMPORARY');expect(error.message).not.toContain('synthetic-private');});
 
 it('rejects Retry-After values outside the representable Date range',()=>{expect(parseRetryAfter('8640000000001',start)).toBeUndefined();expect(parseRetryAfter('1',new Date(NaN))).toBeUndefined();});
+
+it('rate-limit body Retry after fallback uses buffer and hides private body',async()=>{
+ const clock=fakeClock(start.toISOString()),target='2026-01-01T00:04:00Z';const fetcher:typeof fetch=async()=>new Response(`private synthetic rateLimitExceeded Retry after ${target}`,{status:403});
+ const remote=sourceDrive({baseUrl:'http://local',fetch:fetcher,clock});const result=await remote.metadata('limited');expect(result).toMatchObject({ok:false,code:'TEMPORARY',retryAfter:new Date('2026-01-01T00:04:03Z')});expect(JSON.stringify(result)).not.toContain('private synthetic');
+});
+
+it('changes metadata preserves creation time needed to prove new out-of-scope structure',async()=>{
+ let requested='';const remote=sourceDrive({baseUrl:'http://local',fetch:async input=>{requested=String(input);return new Response(JSON.stringify({changes:[{fileId:'folder',file:{id:'folder',name:'outside',mimeType:'application/vnd.google-apps.folder',version:'1',parents:['other'],createdTime:'2026-01-01T00:00:01Z'}}],newStartPageToken:'next'}),{status:200});}});
+ expect(await remote.changes!({pageToken:'cursor'})).toMatchObject({ok:true,changes:[{remoteId:'folder',item:{createdTime:'2026-01-01T00:00:01Z'}}]});expect(new URL(requested).searchParams.get('fields')).toContain('createdTime');
+});
+
+it.each([403,429,503])('status %s without retry hint defers queue 63 seconds',async status=>{
+ const queue=memoryStore(),spool=memorySpool(),clock=fakeClock(start.toISOString()),id='019a0000-0000-7000-8000-000000000241',work='019a0000-0000-7000-8000-000000000242';let calls=0;
+ const source=memorySourceStore({claim:()=>true,renew:()=>true,file:(_h,_s,i)=>({id:i,redacted:false}),extraction:()=>true,workOpen:()=>true,isRedacted:()=>false,handoff:()=>{}});await source.ensureSource({id,kind:'drive',account:'retry-default',rootId:'root'});
+ const remote=sourceDrive({baseUrl:'http://local',clock,fetch:async()=>{calls++;return new Response(status===403?'rateLimitExceeded':'temporary',{status});}});
+ await queue.addWork(sampleWorkInput({id:work,kind:'source_sync',targetKind:'source',targetId:id,createdAt:start,nextAttemptAt:start}));
+ const run=()=>drainQueue({store:queue,spool,clock,idGen:sequenceIdGen({timestampMs:start.getTime(),start:1000+calls*10})},{budgetMs:1000,handlers:{source_sync:sourceSyncHandler({store:source,remote,clock,idGen:sequenceIdGen({timestampMs:start.getTime(),start:1100})})}});
+ await run();expect(calls).toBe(1);expect(queue.snapshot().workItems[0]?.nextAttemptAt).toEqual(new Date(start.getTime()+63_000));clock.set('2026-01-01T00:01:02Z');await run();expect(calls).toBe(1);clock.set('2026-01-01T00:01:03Z');await run();expect(calls).toBe(2);
+});
+
+it('aborts a stalled error body, releases its reader and hides remote text',async()=>{
+ const controller=new AbortController();let cancelled=false;let response!:Response;let entered!:()=>void;
+ const reading=new Promise<void>(resolve=>{entered=resolve;});
+ const pending=driveRequest({url:'http://local',init:{signal:controller.signal},fetch:async()=>{
+  response=new Response(new ReadableStream<Uint8Array>({start(stream){stream.enqueue(new TextEncoder().encode('private synthetic'));},pull(){entered();},cancel(){cancelled=true;}}),{status:503});return response;
+ }}).catch(error=>error);
+ await reading;controller.abort();const error=await pending;
+ expect(cancelled).toBe(true);expect(response.body?.locked).toBe(false);expect(error).toBeInstanceOf(DriveRequestError);expect(error.code).toBe('TEMPORARY');expect(JSON.stringify(error)).not.toContain('private synthetic');
+});

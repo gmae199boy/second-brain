@@ -83,6 +83,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  onWorkProgress?: import('./queue/progress.js').WorkProgressSink;
   documentExtractors?: readonly import('./files/extractors.js').DocumentExtractor[];
   cron?: import('./ports/cron.js').CronCalculator;
   importStaging?: ImportStaging;
@@ -101,7 +102,7 @@ export interface BrainDependencies {
    */
   store: Store & SchemaStore & SettingsStore;
   /** Explicitly injected Drive connection; credentials and OAuth are runtime concerns. */
-  drive?: { store:DriveMigrationStore; uploads:DriveUploadStore; files:FileStore; rootFolderId:string };
+  drive?: { store:DriveMigrationStore; uploads:DriveUploadStore; files:FileStore; rootFolderId:string; sourceFence?:{sourceId:string;generation:number} };
   /** Original attachment bytes, written before the database transaction. */
   files: FileStore;
   /**
@@ -371,7 +372,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     url: location => location.storeKind === 'drive' && drive ? drive.files.url(location) : files.url(location),
     delete: location => location.storeKind === 'drive' && drive ? drive.files.delete(location) : files.delete(location),
   };
-  const driveDeps = drive ? {store:drive.store,uploads:drive.uploads,local:files,drive:drive.files,settings:{store,schemaVersions,clock},rootFolderId:drive.rootFolderId,clock,idGen} : undefined;
+  const driveDeps = drive ? {onProgress:dependencies.onWorkProgress,store:drive.store,uploads:drive.uploads,local:files,drive:drive.files,settings:{store,schemaVersions,clock},rootFolderId:drive.rootFolderId,sourceFence:drive.sourceFence,clock,idGen} : undefined;
   // The kinds Core owns, and then the caller's. `session_ingest` is Core's own
   // because what it does is a use case and the ports it needs are the ones this
   // brain was assembled from (`capture/session-ingest-work.ts`).
@@ -389,14 +390,14 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     // and the ports it needs — the store, the file store, the clock, the ids —
     // are exactly the ones this brain was assembled from (`files/extract-work.ts`).
     [DOCUMENT_EXTRACT_KIND]: documentExtractHandler({ store, files:sourceFiles, clock, idGen, ...(dependencies.documentExtractors ? {extractors:dependencies.documentExtractors} : {}), ...(dependencies.sourceSync ? {source:dependencies.sourceSync} : {}) }),
-    ...(dependencies.sourceSync ? {[SOURCE_SYNC_KIND]:sourceSyncHandler({...dependencies.sourceSync,clock,idGen,extractors:dependencies.documentExtractors})} : {}),
+    ...(dependencies.sourceSync ? {[SOURCE_SYNC_KIND]:sourceSyncHandler({...dependencies.sourceSync,clock,idGen,extractors:dependencies.documentExtractors,onProgress:dependencies.onWorkProgress})} : {}),
     // And the same again for deleting one of them: the ports it needs are the
     // store, the file store and the clock, and what it does — empty one place
     // and record that it is empty — is a use case (`files/blob-delete-work.ts`).
     [BLOB_DELETE_KIND]: blobDeleteHandler({ store, files, clock, ...(drive ? {driveFiles:drive.files,driveRoot:{store:drive.store,rootFolderId:drive.rootFolderId}} : {}) }),
     ...(driveDeps ? {
       [DRIVE_MIGRATE_KIND]: driveMigrationHandler(driveDeps),
-      [DRIVE_LOCAL_DELETE_KIND]: driveLocalDeleteHandler({store:{readDriveRetention:id=>driveDeps.store.readDriveRetention(id),withDriveLocalDelete:(input,run)=>driveDeps.store.withDriveLocalDelete(input,run),markFileLocationDeleted:input=>store.markFileLocationDeleted(input),resolveFailures:input=>store.resolveFailures(input)},local:files,drive:driveDeps.drive,rootFolderId:driveDeps.rootFolderId,clock}),
+      [DRIVE_LOCAL_DELETE_KIND]: driveLocalDeleteHandler({store:{readDriveRetention:id=>driveDeps.store.readDriveRetention(id),withDriveLocalDelete:(input,run)=>driveDeps.store.withDriveLocalDelete(input,run),markFileLocationDeleted:input=>store.markFileLocationDeleted(input),resolveFailures:input=>store.resolveFailures(input)},local:files,drive:driveDeps.drive,rootFolderId:driveDeps.rootFolderId,sourceFence:driveDeps.sourceFence,clock}),
     } : {}),
   };
   const handlers: WorkHandlers = { ...coreHandlers, ...workHandlers };

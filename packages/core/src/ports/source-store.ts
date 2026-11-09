@@ -3,15 +3,17 @@ import type { ClaimWorkResult, HasDueWorkResult } from './store.js';
 import { workKindPolicy } from '../domain/work-item.js';
 export const SOURCE_SYNC_LEASE_MS = workKindPolicy('source_sync').claimForMs;
 /** External source state. A source is distinct from a Brain-owned file location. */
-export interface Source { id:string; kind:string; account:string; rootId:string; generation:number; cursor:string|null; connected:boolean }
+export interface Source { id:string; kind:string; account:string; rootId:string; generation:number; cursor:string|null; connected:boolean; cursorGeneration?:number|null; lastFullScanAt?:Date|null; scanInProgress?:boolean }
 export type SourceIndexStatus = 'pending'|'indexed'|'photo'|'too_large'|'unsupported'|'failed';
-export interface SourceEntry { id:string; sourceId:string; remoteId:string; name:string; path:string; mimeType:string; remoteVersion:string; sizeBytes:number|null; fileId:string|null; indexStatus:SourceIndexStatus; unreachable:boolean; unreachableAt:Date|null; completedVersion:string|null; completedHash:string|null; seenScan:string|null }
+export interface SourceEntry { id:string; sourceId:string; remoteId:string; name:string; path:string; mimeType:string; remoteVersion:string; sizeBytes:number|null; fileId:string|null; indexStatus:SourceIndexStatus; unreachable:boolean; unreachableAt:Date|null; completedVersion:string|null; completedHash:string|null; seenScan:string|null; redacted?:boolean }
+export type SourceChange = {kind:'upsert';entry:Omit<SourceEntry,'sourceId'|'fileId'|'indexStatus'|'unreachable'|'unreachableAt'|'completedVersion'|'completedHash'|'seenScan'>} | {kind:'removed';remoteId:string} | {kind:'outside';remoteId:string};
 export interface SourceClaim { workId:string; claimedBy:string; claimedAt:Date; attempts:number; now:Date }
 export type SourceError = {ok:false; code:'DB_UNAVAILABLE'|'DB_LOCKED'|'CLAIM_LOST'|'SOURCE_CHANGED'|'FILE_REDACTED'; message:string};
 export type SourceResult<T> = ({ok:true} & T) | SourceError;
 export interface SourceStore {
   /** Reserve a versioned scan; existing in-flight scans cannot satisfy a later request. */
   reserveSourceCarry(input:{sourceId:string;generation:number;extractorVersion:string;workId:string;now:Date}):Promise<SourceResult<{reserved:boolean}>>;
+  hasSourceCarryRun(input:{sourceId:string;generation:number;workId:string}):Promise<SourceResult<{pending:boolean}>>;
   readSourceCarryCheck(input:{sourceFileId:string;remoteVersion:string;extractorVersion:string}):Promise<SourceResult<{checked:boolean}>>;
   markSourceCarryCheck(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;extractorVersion:string;status?:'unsupported'|'too_large';claim:SourceClaim}):Promise<SourceResult<object>>;
 
@@ -30,11 +32,22 @@ export interface SourceStore {
   listSources():Promise<SourceResult<{sources:Source[]}>>;
   readSource(id:string):Promise<SourceResult<{source:Source|null}>>;
   listSourceEntries(sourceId:string):Promise<SourceResult<{entries:SourceEntry[]}>>;
+  /** Witnesses are valid only for the current cursor generation and uninterrupted change stream. */
+  listOutsideSourceNodes(input:{sourceId:string;generation:number}):Promise<SourceResult<{remoteIds:string[]}>>;
   /** Extend only the original, still-live source_sync claim; never revive an expired claim. */
-  renewSourceClaim(input:{sourceId:string;claim:SourceClaim}):Promise<SourceResult<object>>;
+  renewSourceClaim(input:{sourceId:string;claim:SourceClaim;nowAtLock?:()=>Date}):Promise<SourceResult<object>>;
+  /** Atomically persist page, cursor and durable follow-up tasks. Drain these before completing source_sync. */
+  applySourceChanges(input:{sourceId:string;generation:number;expectedCursor:string;nextCursor:string;changes:SourceChange[];claim:SourceClaim}):Promise<SourceResult<object>>;
+  listSourceChangeTasks(input:{sourceId:string;generation:number;claim:SourceClaim}):Promise<SourceResult<{tasks:{sourceFileId:string;remoteVersion:string}[]}>>;
+  /** Resolve only after the matching extraction handoff or a terminal classification has been persisted. */
+  resolveSourceChangeTask(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;claim:SourceClaim}):Promise<SourceResult<object>>;
+  /** Atomically defer a page task to a complete scan without changing reachability. */
+  deferSourceChangeToReconcile(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   /** Begin only under the source_sync claim. Scan identity fences incomplete listings. */
   beginSourceScan(input:{sourceId:string;generation:number;scanId:string;startToken:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   observeSourceEntry(input:{sourceId:string;generation:number;scanId:string;entry:Omit<SourceEntry,'sourceId'|'fileId'|'indexStatus'|'unreachable'|'unreachableAt'|'completedVersion'|'completedHash'|'seenScan'>;claim:SourceClaim}):Promise<SourceResult<{entry:SourceEntry}>>;
+  /** Omit an observed but now unreachable file from the completed scan; do not prune before finish. */
+  deferSourceScanUnreachable(input:{sourceId:string;generation:number;scanId:string;sourceFileId:string;remoteVersion:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   finishSourceScan(input:{sourceId:string;generation:number;scanId:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   markSourceUnreachable(input:{sourceId:string;generation:number;sourceFileId:string;remoteVersion:string;claim:SourceClaim}):Promise<SourceResult<object>>;
   markSourceFileOutcome(input:{sourceFileId:string;fileId:string;remoteVersion:string;status:'unsupported'|'too_large'|'failed';claim:SourceClaim}):Promise<SourceResult<object>>;

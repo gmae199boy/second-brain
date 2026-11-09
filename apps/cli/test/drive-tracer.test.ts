@@ -46,7 +46,7 @@ async function fixture(days?:string, bodyOverride?:string) {
   const dependencies=assemble(env);
   const brain=createBrain(dependencies);
   const settings={store,schemaVersions:EXPECTED_SCHEMA_VERSIONS,clock};
-  const migrate=()=>migrateFileToDrive({store,uploads:store.driveUploads,local,drive,settings,rootFolderId:'brain-root',clock,idGen},fileId);
+  const migrate=(target=drive)=>migrateFileToDrive({store,uploads:store.driveUploads,local,drive:target,settings,rootFolderId:'brain-root',clock,idGen},fileId);
   async function cliShow(rootFolderId='brain-root') {
     let stdout='',stderr='';
     const driveFactory=(s:Parameters<NonNullable<import('../src/dispatch.js').DispatchRuntime['driveFactory']>>[0]):BrainDependencies['drive']=>{
@@ -125,24 +125,34 @@ it('체크섬 불일치는 home을 보존하고 원격 소실은 보관 삭제�
 });
 
 it('지연 업로드 중 가리면 미확정 원격 파일을 먼저 삭제 완료로 표시하지 않는다',async()=>{
-  const f=await fixture('0'); const barrier=f.server.holdNextUpload();
-  const migrating=f.migrate();
+  const f=await fixture('0');
+  let entered!:()=>void,release!:()=>void,posts=0;
+  const reached=new Promise<void>(resolve=>{entered=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
+  const guarded=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,fetch:async(input,init)=>{
+    if(init?.method==='POST' && String(input).includes('/upload/')) {posts++;if(posts===1){entered();await held;}else return new Response('temporary',{status:503});}
+    return fetch(input,init);
+  }});
+  const migrating=f.migrate(guarded);
   try {
-    await barrier.entered;
-    const competing=await f.migrate(); expect(competing).toMatchObject({ok:false,code:'FILES_UNAVAILABLE'});
-    expect(f.server.requests.filter(r=>r.method==='POST' && r.path.startsWith('/upload/'))).toHaveLength(1);
+    await reached;
+    const competing=await f.migrate(guarded); expect(competing).toMatchObject({ok:false,code:'TEMPORARY',retryable:true,retryAfter:new Date(f.clock.now().getTime()+63_000)});
+    expect(posts).toBe(2);expect(f.server.requests.filter(r=>r.method==='POST' && r.path.startsWith('/upload/'))).toHaveLength(0);expect(f.server.files.size).toBe(0);
     const before=await f.db.rows<{id:string}>(`select id from brain.file_locations where file_id='${f.fileId}' and store_kind='drive'`);
     expect(before).toHaveLength(1);
+    const reserved=await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash});if(!reserved.ok||!reserved.upload)throw Error('reserved upload missing');
+    expect(reserved.upload.state).toBe('submitting');
     expect(await f.brain.files.redact({file:f.fileId,confirm:true})).toMatchObject({ok:true});
     await f.brain.queue.drain({budgetMs:5000});
     expect(await f.store.readFileLocation(before[0]!.id)).toMatchObject({ok:true,location:{deletedAt:null}});
     expect((await f.db.rows(`select home_location_id from brain.files where id='${f.fileId}'`))[0]).toEqual({home_location_id:f.localId});
-    barrier.release(); await migrating;
+    release(); await migrating;
+    expect([...f.server.files.keys()]).toEqual([reserved.upload.remoteId]);
     f.clock.set('2026-01-01T00:16:00.000Z'); await f.brain.queue.drain({budgetMs:5000});
     expect(f.server.files.size).toBe(0);
+    expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{remoteId:reserved.upload.remoteId}});
     expect(await f.store.readFileLocation(before[0]!.id)).toMatchObject({ok:true,location:{deletedAt:f.clock.now()}});
     expect(await f.db.rows('select * from brain.drive_retention')).toEqual([]);
-  } finally {barrier.release(); await migrating.catch(()=>undefined);}
+  } finally {release(); await migrating.catch(()=>undefined);}
 });
 
 it('동시 이전은 root/hash 매핑과 원격 파일 하나로 수렴한다',async()=>{
@@ -345,4 +355,120 @@ it('일시적인 Drive root DB 오류는 추출 재시도 뒤 복구되며 접�
   const rows=await f.db.rows<{body:string}>(`select body from brain.document_chunks where extraction_id='${state.currentExtractionId}' order by ordinal`);
   expect(rows.map(r=>r.body).join('')).toContain('원본 내용');
   expect(await f.db.rows(`select completed_at from brain.work_items where id='${workId}'`)).toMatchObject([{completed_at:expect.anything()}]);
+});
+
+it('retention_live_setting_and_races uses config hooks and protects a claimed local copy during extension',async()=>{
+  const {createSettingsBrain,driveLocalDeleteHandler}=await import('second_brain');
+  const {createDriveRuntime}=await import('../src/runtime/drive-runtime.js');
+  const f=await fixture(); expect(await f.migrate()).toMatchObject({ok:true,state:'committed'});
+  let refreshes=0;
+  const wrapped=new Proxy(f.store,{get(target,key,receiver){if(key==='refreshDriveRetention')return async()=>{refreshes++;return target.refreshDriveRetention();};return Reflect.get(target,key,receiver);}});
+  const runtime=await createDriveRuntime({home:f.home,store:wrapped,clock:f.clock,idGen:f.idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS});if(!runtime)throw Error('runtime missing');
+  const config=createSettingsBrain({store:wrapped,clock:f.clock,schemaVersions:EXPECTED_SCHEMA_VERSIONS,onSettingChanged:runtime.onSettingChanged}).config;
+  f.clock.set('2026-01-16T00:00:00.000Z');
+  let stdout='',stderr='';
+  expect(await dispatch(commands,['config','set','drive.keep_local_days','10'],{env:f.env,clock:f.clock,runner:pgRunner,stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;}})).toBe(0);
+  expect(await config.set({key:'drive.keep_local_days',value:'30'})).toMatchObject({ok:true});
+  expect(await config.set({key:'drive.keep_local_days',value:'10'})).toMatchObject({ok:true});
+  expect(refreshes).toBe(2);
+  const rows=await f.db.rows<{id:string;next_attempt_at:Date}>(`select id::text,next_attempt_at from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`);
+  const workId=rows[0]!.id;expect(rows[0]!.next_attempt_at).toEqual(new Date('2026-01-11T00:00:00.000Z'));
+  await f.db.query(`update brain.work_items set claimed_by='worker',claimed_at='2026-01-16Z',claim_expires_at='2026-01-17Z',attempts=1 where id='${workId}'`);
+  const read=await f.store.getWork(workId);if(!read.ok||!read.entry)throw Error('work missing');
+  let started!:()=>void,release!:()=>void;const entered=new Promise<void>(r=>{started=r;}),hold=new Promise<void>(r=>{release=r;});
+  const handler=driveLocalDeleteHandler({store:f.store,local:f.local,drive:{async getBounded(location,maxBytes){started();await hold;return f.drive.getBounded(location,maxBytes);}},rootFolderId:'brain-root',clock:f.clock});
+  const deleting=handler(read.entry.item);
+  try {await entered;expect(await config.set({key:'drive.keep_local_days',value:'40'})).toMatchObject({ok:true});release();expect(await deleting).toMatchObject({ok:false,retryAfter:new Date('2026-02-10T00:00:00.000Z')});} finally {release();}
+  expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+  expect(refreshes).toBe(3);
+  const current=await f.db.rows<{next_attempt_at:Date}>(`select next_attempt_at from brain.work_items where id='${workId}'`);expect(current[0]!.next_attempt_at).toEqual(new Date('2026-02-10T00:00:00.000Z'));
+  const concurrent=await Promise.all(['10','40'].map(value=>config.set({key:'drive.keep_local_days',value})));
+  expect(concurrent.every(result=>result.ok)).toBe(true);
+  const setting=await config.get({key:'drive.keep_local_days'});if(!setting.ok)throw Error('setting missing');
+  const due=new Date(Date.parse('2026-01-01T00:00:00Z')+Number(setting.value)*86_400_000);
+  expect(await f.store.readDriveRetention(f.localId)).toMatchObject({ok:true,retention:{dueAt:due}});
+  expect(await f.db.rows(`select next_attempt_at from brain.work_items where id='${workId}'`)).toEqual([{next_attempt_at:due}]);
+});
+
+it('retention_live_setting_and_races preserves the last copy across disconnect and uncertain marker',async()=>{
+  const {createSettingsBrain,driveLocalDeleteHandler}=await import('second_brain');
+  const {createDriveRuntime}=await import('../src/runtime/drive-runtime.js');
+  const f=await fixture('0');const sourceId=f.idGen.next();
+  const source=await f.store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'brain-root'});if(!source.ok)throw Error('source missing');
+  expect(await f.migrate()).toMatchObject({ok:true,state:'committed'});
+  const runtime=await createDriveRuntime({home:f.home,store:f.store,clock:f.clock,idGen:f.idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS});if(!runtime)throw Error('runtime missing');
+  const config=createSettingsBrain({store:f.store,clock:f.clock,schemaVersions:EXPECTED_SCHEMA_VERSIONS,onSettingChanged:runtime.onSettingChanged}).config;
+  const rows=await f.db.rows<{id:string}>(`select id::text from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`);const workId=rows[0]!.id;
+  await f.db.query(`update brain.work_items set claimed_by='worker',claimed_at='2026-01-01Z',claim_expires_at='2026-01-02Z',attempts=1 where id='${workId}'`);
+  const read=await f.store.getWork(workId);if(!read.ok||!read.entry)throw Error('work missing');
+  let started!:()=>void,release!:()=>void;const entered=new Promise<void>(r=>{started=r;}),hold=new Promise<void>(r=>{release=r;});
+  const handler=driveLocalDeleteHandler({store:f.store,local:f.local,drive:{async getBounded(location,maxBytes){started();await hold;return f.drive.getBounded(location,maxBytes);}},rootFolderId:'brain-root',sourceFence:{sourceId,generation:source.source.generation},clock:f.clock});
+  const deleting=handler(read.entry.item);
+  try {await entered;expect(await f.store.disconnectSource({id:sourceId,now:f.clock.now()})).toMatchObject({ok:true});expect(await config.set({key:'drive.keep_local_days',value:'10'})).toMatchObject({ok:true});release();expect(await deleting).toMatchObject({ok:false});} finally {release();}
+  expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+  const before=await f.db.rows(`select outcome,completed_at,next_attempt_at from brain.work_items where id='${workId}'`);expect(before).toMatchObject([{outcome:'cancelled'}]);
+  expect(await config.set({key:'drive.keep_local_days',value:'40'})).toMatchObject({ok:true});
+  expect(await f.db.rows(`select outcome,completed_at,next_attempt_at from brain.work_items where id='${workId}'`)).toEqual(before);
+  expect(await config.set({key:'drive.keep_local_days',value:'0'})).toMatchObject({ok:true});
+  await f.db.query(`insert into brain.drive_delete_barriers(work_id,created_at) values ('${workId}','2026-01-01Z')`);
+  expect(await config.set({key:'drive.keep_local_days',value:'5'})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await handler(read.entry.item)).toMatchObject({ok:false});expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+  expect(f.server.requests.filter(request=>request.method==='DELETE')).toHaveLength(0);
+});
+
+it('retention_live_setting_and_races config shortening makes a verified copy eligible before the old due',async()=>{
+  const {createSettingsBrain,driveLocalDeleteHandler}=await import('second_brain');
+  const {createDriveRuntime}=await import('../src/runtime/drive-runtime.js');
+  const f=await fixture();expect(await f.migrate()).toMatchObject({ok:true,state:'committed'});
+  const runtime=await createDriveRuntime({home:f.home,store:f.store,clock:f.clock,idGen:f.idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS});if(!runtime)throw Error('runtime missing');
+  const config=createSettingsBrain({store:f.store,clock:f.clock,schemaVersions:EXPECTED_SCHEMA_VERSIONS,onSettingChanged:runtime.onSettingChanged}).config;
+  f.clock.set('2026-01-16T00:00:00Z');expect(await config.set({key:'drive.keep_local_days',value:'10'})).toMatchObject({ok:true});
+  const rows=await f.db.rows<{id:string;next_attempt_at:Date}>(`select id::text,next_attempt_at from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`);const workId=rows[0]!.id;
+  expect(rows[0]!.next_attempt_at).toEqual(new Date('2026-01-11Z'));
+  await f.db.query(`update brain.work_items set claimed_by='worker',claimed_at='2026-01-16Z',claim_expires_at='2026-01-17Z',attempts=1 where id='${workId}'`);
+  const work=await f.store.getWork(workId);if(!work.ok||!work.entry)throw Error('work missing');
+  const handler=driveLocalDeleteHandler({store:f.store,local:f.local,drive:f.drive,rootFolderId:'brain-root',clock:f.clock});
+  expect(await handler(work.entry.item)).toEqual({ok:true});expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:false});
+  expect(f.server.requests.filter(request=>request.method==='DELETE')).toHaveLength(0);
+});
+
+it('cancel_progress_and_secret_surfaces cancels an actual queued upload before the next chunk',async()=>{
+  const marker='synthetic-private-upload',uriMarker='synthetic-session-uri-secret',clientMarker='synthetic-client-secret',tokenMarker='synthetic-refresh-token';const f=await fixture(undefined,marker+'x'.repeat(11*1024*1024));f.server.sessionIdPrefix=uriMarker;const {saveDriveCredentials}=await import('../src/config/codec.js');await saveDriveCredentials(f.home,{clientId:'synthetic-client',clientSecret:clientMarker,refreshToken:tokenMarker});const workId=f.idGen.next();
+  expect(await f.store.addWork({id:workId,kind:'drive_migrate',targetKind:'file',targetId:f.fileId,createdAt:f.clock.now(),nextAttemptAt:f.clock.now()})).toMatchObject({ok:true});
+  const events:unknown[]=[];let brain!:ReturnType<typeof createBrain>;
+  brain=createBrain({...f.dependencies,onWorkProgress:async event=>{events.push(event);if(event.message?.startsWith('upload_chunk '))expect(await brain.queue.cancel({id:workId})).toMatchObject({ok:true});}});
+  await brain.queue.drain({budgetMs:60000});expect(f.server.chunkRanges).toHaveLength(1);expect(events).toEqual([{abi:1,type:'progress',message:'upload_chunk 1'}]);
+  expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});expect(await f.db.rows(`select outcome from brain.work_items where id='${workId}'`)).toEqual([{outcome:'cancelled'}]);
+  const stored=await f.db.rows<{session_uri:string}>("select session_uri from brain.drive_uploads where state='submitting'");expect(stored[0]!.session_uri).toContain(uriMarker);
+  const sdk=await brain.queue.list({all:true});let stdout='',stderr='',doctorOut='',doctorErr='';await dispatch(commands,['queue','list','--all','--json'],{env:f.env,clock:f.clock,runner:pgRunner,stdout:text=>{stdout+=text;},stderr:text=>{stderr+=text;}});await dispatch(commands,['doctor','run','--json'],{env:f.env,clock:f.clock,runner:pgRunner,stdout:text=>{doctorOut+=text;},stderr:text=>{doctorErr+=text;}});
+  for(const output of [JSON.stringify(sdk),stdout,stderr,doctorOut,doctorErr,JSON.stringify(events)])for(const secret of [marker,uriMarker,clientMarker,tokenMarker])expect(output).not.toContain(secret);
+  expect(JSON.stringify(sdk)).not.toContain('/upload/drive/v3/files');
+},120000);
+
+it('migration renews the same claim across an upload longer than ten minutes',async()=>{
+ const f=await fixture(undefined,'x'.repeat(11*1024*1024));const work=f.idGen.next();let elapsed=0;
+ const drive=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,fetch:async(input,init)=>{const response=await fetch(input,init);const range=new Headers(init?.headers).get('content-range');if(range?.startsWith('bytes ')&&!range.startsWith('bytes *')){elapsed+=6*60_000;f.clock.set(new Date(Date.parse('2026-01-01T00:00:00Z')+elapsed).toISOString());}return response;}});
+ expect(await f.store.addWork({id:work,kind:'drive_migrate',targetKind:'file',targetId:f.fileId,createdAt:f.clock.now(),nextAttemptAt:f.clock.now()})).toMatchObject({ok:true});
+ const events:unknown[]=[];const brain=createBrain({...f.dependencies,drive:{...f.integration,files:drive},onWorkProgress:event=>{events.push(event);}});
+ const drained=await brain.queue.drain({budgetMs:60_000});expect(drained.failed).toBe(0);expect(elapsed).toBeGreaterThan(600_000);
+ expect(await f.db.rows(`select outcome from brain.work_items where id='${work}'`)).toEqual([{outcome:'succeeded'}]);expect(f.server.chunkRanges).toHaveLength(3);expect(events).toContainEqual({abi:1,type:'progress',message:'upload_chunk 3'});
+},120000);
+
+it('multipart migration reports a safe progress event through the public brain queue',async()=>{
+ const f=await fixture();const work=f.idGen.next(),events:unknown[]=[];expect(await f.store.addWork({id:work,kind:'drive_migrate',targetKind:'file',targetId:f.fileId,createdAt:f.clock.now(),nextAttemptAt:f.clock.now()})).toMatchObject({ok:true});
+ const brain=createBrain({...f.dependencies,onWorkProgress:event=>{events.push(event);}});expect(await brain.queue.drain({budgetMs:60_000})).toMatchObject({failed:0});expect(events).toEqual([{abi:1,type:'progress',message:'upload_chunk 1'}]);expect(JSON.stringify(events)).not.toContain(f.body);
+},120000);
+
+it('retention shortening through CLI config wakes the actual queue before the old due date',async()=>{
+ const f=await fixture();expect(await f.migrate()).toMatchObject({ok:true,state:'committed'});
+ const before=await f.db.rows<{id:string;next_attempt_at:Date}>(`select id::text,next_attempt_at from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`);expect(before).toHaveLength(1);expect(before[0]!.next_attempt_at).toEqual(new Date('2026-01-31T00:00:00Z'));
+ f.clock.set('2026-01-16T00:00:00Z');let stderr='';expect(await dispatch(commands,['config','set','drive.keep_local_days','10'],{env:f.env,clock:f.clock,runner:pgRunner,stdout:()=>{},stderr:text=>{stderr+=text;}}),stderr).toBe(0);
+ expect(await f.db.rows(`select next_attempt_at from brain.work_items where id='${before[0]!.id}'`)).toEqual([{next_attempt_at:new Date('2026-01-11T00:00:00Z')}]);
+ expect(await f.brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:false});
+ expect(await f.db.rows(`select outcome,attempts from brain.work_items where id='${before[0]!.id}'`)).toMatchObject([{outcome:'succeeded',attempts:1}]);expect(f.server.requests.filter(request=>request.method==='DELETE')).toHaveLength(0);
+},120000);
+
+it('checksum-free oversized verification during put cannot publish a Drive home',async()=>{
+ const f=await fixture();f.server.checksum='none';let cancelled=false;const drive=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,fetch:async(input,init)=>{if(String(input).includes('alt=media'))return new Response(new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(f.bytes.length+1));},cancel(){cancelled=true;}}));return fetch(input,init);}});
+ expect(await migrateFileToDrive({store:f.store,uploads:f.store.driveUploads,local:f.local,drive,settings:f.settings,rootFolderId:'brain-root',clock:f.clock,idGen:f.idGen},f.fileId)).toMatchObject({ok:false});expect(cancelled).toBe(true);expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'submitting'}});expect(await f.db.rows(`select home_location_id::text from brain.files where id='${f.fileId}'`)).toEqual([{home_location_id:f.localId}]);expect(await f.db.rows(`select id from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`)).toEqual([]);
 });

@@ -158,3 +158,7 @@ export { channelStoreContract } from './contracts/channel-store.js';
 export { fakeCron } from './fakes/cron.js';
 export { memorySourceStore } from './fakes/source-store.js';
 export { sourceStoreContract, type SourceContractSubject } from './contracts/source-store.js';
+
+export { memoryDriveMigrationClaim } from "./fakes/drive-claim.js";
+export { driveMigrationClaimContract } from "./contracts/drive-migration-claim.js";
+export { driveDeleteContract } from './contracts/drive-delete.js';

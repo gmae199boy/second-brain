@@ -47,7 +47,7 @@ it('34→35는 package registry와 기존 사용자 설정을 보존한다', asy
     expect(await runMigrations({databaseUrl:db.url,clock,coreMaxVersion:34})).toMatchObject({ok:true,to:34});
     await db.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at,package_digest,plugin_version) values ('testext','1.0.0',now(),false,now(),repeat('a',64),'2.0.0')");
     const before = await db.rows("select * from brain.extensions where name='testext'");
-    expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,from:34,to:43});
+    expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,from:34,to:44});
     expect(await db.rows("select * from brain.extensions where name='testext'")).toEqual(before);
     expect(await db.rows('select * from brain.extension_quiesce')).toEqual([]);
   } finally { await db.drop(); }

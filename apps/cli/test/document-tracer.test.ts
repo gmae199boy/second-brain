@@ -36,7 +36,7 @@ it('확장 요청에서 리포트 추출, 출처 검색, SDK와 CLI 원문·다�
     expect(output.body.data).toEqual(sdkFound.data); expect(output.stdout).not.toContain('privatefixture');
     const text=await f.runDirect(['recall','docs','검색']); expect(text.code).toBe(0); expect(text.stdout).toContain(source.file_id); expect(text.stdout).not.toContain('privatefixture');
     const sdkRead=await sdk.files.show({file_id:source.file_id,chunk_locator:source.chunk_locator,extraction_id:source.extraction_id,before:0,after:100});
-    expect(sdkRead.ok).toBe(true); if (!sdkRead.ok || !sdkRead.meta.next) throw Error('이어 읽기 없음');
+    expect(sdkRead.ok, sdkRead.ok ? undefined : `SDK show failure: ${JSON.stringify(sdkRead)}`).toBe(true); if (!sdkRead.ok || !sdkRead.meta.next) throw Error('이어 읽기 없음');
     const first=await f.runDirect(['files','show',source.file_id,'--chunk-locator',source.chunk_locator,'--extraction-id',source.extraction_id,'--before','0','--after','100','--json']);
     expect(first.code).toBe(0); expect(first.body.data).toEqual(sdkRead.data); expect(first.stdout).not.toContain('privatefixture');
     let page=first.body; let collected=''; let count=0; let previous=-1;

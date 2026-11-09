@@ -68,6 +68,7 @@ export interface BrainAssembly<S = Store & SchemaStore & SettingsStore> {
   sourceSyncFactory?: (store:S) => BrainDependencies['sourceSync'];
   sourceControl?: BrainDependencies['sourceControl'];
   /** Kinds beyond Core's own. Empty for every real invocation (AD-21). */
+  onWorkProgress?: BrainDependencies['onWorkProgress'];
   workHandlers: WorkHandlers;
 }
 
@@ -83,6 +84,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    onWorkProgress:assembly.onWorkProgress,
     documentExtractors: runtimeDocumentExtractors,
     ...(assembly.sourceControl ? {sourceControl:assembly.sourceControl} : {}),
     ...(assembly.driveFactory ? {drive:assembly.driveFactory(store)} : {}),

@@ -1,6 +1,7 @@
 import { afterEach, it } from 'vitest';
 import { sourceStoreContract } from '@second-brain/core/testing';
 import { subject } from './fixture.js';
+import { postgresStore } from '../src/index.js';
 const sourceId='019a0000-0000-7000-8000-000000000001', workId='019a0000-0000-7000-8000-000000000005';
 const claim={workId,claimedBy:'worker',claimedAt:new Date('2026-01-01T00:00:00Z'),attempts:0,now:new Date('2026-01-01T00:00:00Z')};
 const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const f of cleanup.splice(0))await f();});
@@ -469,3 +470,171 @@ it('이미 시작된 로컬 추출은 source를 지나쳤으므로 handoff를 �
  const handoff={sourceId,generation:1,sourceFileId:sf,remoteVersion:'v1',fileId:file,contentHash:hash,sizeBytes:3,workId:next,carryExtractorVersion:'new',claim};expect(await s.handoffSourceFile(handoff)).toMatchObject({ok:false,code:'SOURCE_CHANGED'});expect(await s.readSourceCarryCheck({sourceFileId:sf,remoteVersion:'v1',extractorVersion:'new'})).toMatchObject({ok:true,checked:false});
  await s.db.query(`update brain.work_items set completed_at='2026-01-01Z',outcome='succeeded',claimed_by=null,claimed_at=null,claim_expires_at=null where id='${old}'`);expect(await s.handoffSourceFile(handoff)).toMatchObject({ok:true,workId:next});
 });
+
+it('changes page and cursor rollback together when a later entry fails',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());
+  const {expect}=await import('vitest');
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'page-rollback',rootId:'root'});
+  const scan='019a0000-0000-7000-8000-000000000002';await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  const entry={id:'019a0000-0000-7000-8000-000000000003',remoteId:'first',name:'first',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:1};
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',claim,changes:[{kind:'upsert',entry},{kind:'upsert',entry:{...entry,remoteId:'second'}}]})).toMatchObject({ok:false});
+  expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'old'}});
+  expect(await s.listSourceEntries(sourceId)).toMatchObject({ok:true,entries:[]});
+  expect(await s.db.rows('select * from brain.source_change_tasks')).toEqual([]);
+});
+
+it('changes page durable work survives store restart and fences success until handoff',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  const scan='019a0000-0000-7000-8000-000000000002',sf='019a0000-0000-7000-8000-000000000003',file='019a0000-0000-7000-8000-000000000004',extractWork='019a0000-0000-7000-8000-000000000006';
+  await s.ensureSource({id:sourceId,kind:'drive',account:'page-work',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  const entry={id:sf,remoteId:'r',name:'n',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3};const page={sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'upsert' as const,entry}],claim};
+  expect(await s.applySourceChanges(page)).toMatchObject({ok:true});expect(await s.applySourceChanges(page)).toMatchObject({ok:false});
+  expect(await s.completeWork({id:workId,claimedBy:'worker',now:claim.now})).toMatchObject({ok:true,outcome:'lost'});
+  const second=postgresStore({databaseUrl:s.db.appUrl});cleanup.unshift(()=>second.close());
+  expect(await second.listSourceChangeTasks({sourceId,generation:1,claim})).toMatchObject({ok:true,tasks:[{sourceFileId:sf,remoteVersion:'v1'}]});
+  expect(await second.resolveSourceChangeTask({sourceId,generation:1,sourceFileId:sf,remoteVersion:'v1',claim})).toMatchObject({ok:false});
+  expect(await second.handoffSourceFile({sourceId,generation:1,sourceFileId:sf,remoteVersion:'v1',fileId:file,contentHash:'sha256:'+'a'.repeat(64),sizeBytes:3,workId:extractWork,claim})).toMatchObject({ok:true});
+  expect(await second.resolveSourceChangeTask({sourceId,generation:1,sourceFileId:sf,remoteVersion:'v1',claim})).toMatchObject({ok:true});
+  expect(await s.completeWork({id:workId,claimedBy:'worker',now:claim.now})).toMatchObject({ok:true,outcome:'done'});
+  expect(await s.db.rows(`select completed_version,completed_hash from brain.source_files where id='${sf}'`)).toEqual([{completed_version:null,completed_hash:null}]);
+});
+
+it('changes page rejects stale claims and redacted provenance without advancing cursor',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');
+  const sf='019a0000-0000-7000-8000-000000000012',file='019a0000-0000-7000-8000-000000000013',scan='019a0000-0000-7000-8000-000000000014';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'page-redacted',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});
+  const entry={id:sf,remoteId:'remote',name:'before',path:'',mimeType:'text/plain',remoteVersion:'v1',sizeBytes:3};await s.observeSourceEntry({sourceId,generation:1,scanId:scan,entry,claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  await s.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at,redacted_at) values ('${file}','sha256:${'b'.repeat(64)}',3,'2026-01-01Z','2026-01-02Z');update brain.source_files set file_id='${file}' where id='${sf}'`);
+  const page={sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'upsert' as const,entry:{...entry,remoteVersion:'v2'}}],claim};
+  expect(await s.applySourceChanges({...page,claim:{...claim,claimedBy:'other'}})).toMatchObject({ok:false,code:'CLAIM_LOST'});
+  expect(await s.applySourceChanges({...page,generation:2})).toMatchObject({ok:false,code:'SOURCE_CHANGED'});
+  expect(await s.applySourceChanges(page)).toMatchObject({ok:false,code:'FILE_REDACTED'});
+  expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'old'}});
+  expect(await s.db.rows('select * from brain.source_change_tasks')).toEqual([]);
+});
+
+it('changes removal preserves shared provenance and another source remains reachable',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');
+  const other='019a0000-0000-7000-8000-000000000021',file='019a0000-0000-7000-8000-000000000022',one='019a0000-0000-7000-8000-000000000023',two='019a0000-0000-7000-8000-000000000024';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z');
+    insert into brain.sources(id,kind,account,root_id,generation,cursor,cursor_generation,connected) values ('${sourceId}','drive','one','one',1,'old',1,true),('${other}','drive','two','two',1,'other',1,true);
+    insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'e'.repeat(64)}',3,'2026-01-01Z');
+    insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,file_id,index_status,unreachable) values ('${one}','${sourceId}','one','one','','text/plain','v1','${file}','indexed',false),('${two}','${other}','two','two','','text/plain','v1','${file}','indexed',false)`);
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'removed',remoteId:'one'}],claim})).toMatchObject({ok:true});
+  expect(await s.db.rows(`select id,unreachable from brain.source_files where file_id='${file}' order by id`)).toEqual([{id:one,unreachable:true},{id:two,unreachable:false}]);
+  expect(await s.db.rows(`select source_unreachable_at from brain.files where id='${file}'`)).toEqual([{source_unreachable_at:null}]);
+});
+
+it('changes_page_checkpoint_restart drains durable page work before consuming its next token',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');const {sourceSyncHandler}=await import('@second-brain/core');const {sequenceIdGen}=await import('@second-brain/core/testing');
+  const scan='019a0000-0000-7000-8000-000000000991',sf='019a0000-0000-7000-8000-000000000992';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',0)`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'page-restart',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'start',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  const entry={id:sf,remoteId:'photo',name:'photo',path:'',mimeType:'image/jpeg',remoteVersion:'v1',sizeBytes:3};expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'start',nextCursor:'next',changes:[{kind:'upsert',entry}],claim})).toMatchObject({ok:true});
+  const remoteItem={id:'photo',name:'photo',mimeType:'image/jpeg',version:'v1',sizeBytes:3,parents:['root']},calls:string[]=[];
+  const remote:import('@second-brain/core').SourceRemote={async startToken(){throw Error('unexpected full scan');},async list(){throw Error('unexpected full scan');},async metadata(){calls.push('metadata');return {ok:true,item:remoteItem};},async download(){throw Error('photo');},async changes({pageToken}){calls.push(`changes:${pageToken}`);return {ok:true,changes:[],nextPageToken:null,newStartPageToken:'final'};}};
+  const loaded=await s.getWork(workId);if(!loaded.ok||!loaded.entry)throw Error('work missing');const handler=sourceSyncHandler({store:s,remote,clock:{now:()=>claim.now},idGen:sequenceIdGen({timestampMs:claim.now.getTime(),start:100})});
+  expect(await handler(loaded.entry.item)).toEqual({ok:true});expect(calls).toEqual(['metadata','changes:next']);expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'final'}});
+  expect(await s.listSourceChangeTasks({sourceId,generation:1,claim})).toEqual({ok:true,tasks:[]});expect(await s.db.rows(`select completed_version,completed_hash from brain.source_files where id='${sf}'`)).toEqual([{completed_version:null,completed_hash:null}]);
+});
+
+it('scan generation and complete timestamp fence old cursor after reconnect and cancellation',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');const scan='019a0000-0000-7000-8000-000000000981';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',0)`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'scan-generation',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'cursor',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursorGeneration:1,lastFullScanAt:claim.now,scanInProgress:false}});
+  await s.db.query(`update brain.work_items set cancel_requested_at='2026-01-01Z' where id='${workId}'`);
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'cursor',nextCursor:'next',changes:[],claim})).toMatchObject({ok:false,code:'CLAIM_LOST'});
+  expect(await s.renewSourceClaim({sourceId,claim})).toMatchObject({ok:false,code:'CLAIM_LOST'});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'cursor'}});
+});
+
+it('changes_page_checkpoint_restart after child termination consumes committed second-page work',async()=>{
+  const {fork}=await import('node:child_process');const {fileURLToPath}=await import('node:url');const {sourceSyncHandler}=await import('@second-brain/core'),{sequenceIdGen}=await import('@second-brain/core/testing');
+  const {fakeDrive}=await import('../../../apps/cli/test/fixtures/fake-drive.js'),{sourceDrive}=await import('../../../apps/cli/src/runtime/source-drive.js');const {expect}=await import('vitest');const s=await subject(),server=await fakeDrive();cleanup.push(()=>s.close());cleanup.unshift(()=>server.close());
+  const scan='019a0000-0000-7000-8000-000000000961';await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',0)`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'child-pages',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'page1',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  for(const id of ['one','two','three'])server.files.set(id,{id,name:id,parents:['root'],mimeType:'image/jpeg',version:'1',bytes:Buffer.from('synthetic')});
+  server.changePages.set('page1',{changes:[{fileId:'one'}],nextPageToken:'page2'});server.changePages.set('page2',{changes:[{fileId:'two'}],nextPageToken:'page3'});server.changePages.set('page3',{changes:[{fileId:'three'}],newStartPageToken:'end'});
+  const child=fork(fileURLToPath(new URL('./fixtures/source-changes-crash-child.mjs',import.meta.url)),[],{env:{...process.env,BRAIN_TEST_SOURCE_CHANGES:JSON.stringify({url:s.db.appUrl,baseUrl:server.baseUrl,sourceModule:fileURLToPath(new URL('../../../apps/cli/dist/runtime/source-drive.js',import.meta.url)),now:claim.now.toISOString(),workId})},stdio:['ignore','ignore','inherit','ipc']});
+  const closed=new Promise<{signal:NodeJS.Signals|null}>((resolve,reject)=>{child.once('error',reject);child.once('close',(_code,signal)=>resolve({signal}));});
+  try{
+    expect(await Promise.race([new Promise<unknown>(resolve=>child.once('message',resolve)),closed.then(x=>{throw Error(`child exited before barrier: ${JSON.stringify(x)}`);})])).toBe('second-page-committed');
+    expect(child.kill('SIGKILL')).toBe(true);expect(await closed).toMatchObject({signal:'SIGKILL'});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'page3'}});
+    const restartedAt=new Date(claim.now.getTime()+1000);await s.db.query(`update brain.work_items set claimed_by='next',claimed_at='2026-01-01T00:00:01Z',claim_expires_at='2026-01-02Z',attempts=1 where id='${workId}'`);
+    const restarted=await s.getWork(workId);if(!restarted.ok||!restarted.entry)throw Error('synthetic restart claim missing');const remote=sourceDrive({baseUrl:server.baseUrl});
+    const handler=sourceSyncHandler({store:s,remote,clock:{now:()=>restartedAt},idGen:sequenceIdGen({timestampMs:restartedAt.getTime(),start:10})});
+    expect(await handler(restarted.entry.item)).toEqual({ok:true});const rows=await s.listSourceEntries(sourceId);expect(rows).toMatchObject({ok:true,entries:expect.arrayContaining([expect.objectContaining({remoteId:'one',indexStatus:'photo'}),expect.objectContaining({remoteId:'two',indexStatus:'photo'}),expect.objectContaining({remoteId:'three',indexStatus:'photo'})])});
+    expect(server.requests.filter(r=>r.path.includes('/drive/v3/changes?')).map(r=>new URL(r.path,'http://test').searchParams.get('pageToken'))).toEqual(['page1','page2','page3']);
+  }finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await closed;}
+},30000);
+
+it('cursor_rejected_full_scan_atomic_prune keeps inaccessible evidence staged until finish',async()=>{
+  const s=await subject();cleanup.push(()=>s.close());const {expect}=await import('vitest');const first='019a0000-0000-7000-8000-000000000951',second='019a0000-0000-7000-8000-000000000952',sf='019a0000-0000-7000-8000-000000000953';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z',0)`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'deferred-prune',rootId:'root'});const entry={id:sf,remoteId:'file',name:'file',path:'',mimeType:'text/plain',remoteVersion:'1',sizeBytes:3};
+  await s.beginSourceScan({sourceId,generation:1,scanId:first,startToken:'old',claim});await s.observeSourceEntry({sourceId,generation:1,scanId:first,entry,claim});await s.finishSourceScan({sourceId,generation:1,scanId:first,claim});
+  await s.beginSourceScan({sourceId,generation:1,scanId:second,startToken:'new',claim});await s.observeSourceEntry({sourceId,generation:1,scanId:second,entry,claim});expect(await s.deferSourceScanUnreachable({sourceId,generation:1,scanId:second,sourceFileId:sf,remoteVersion:'1',claim})).toMatchObject({ok:true});
+  expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'old',scanInProgress:true}});expect(await s.listSourceEntries(sourceId)).toMatchObject({ok:true,entries:[{unreachable:false}]});
+  expect(await s.finishSourceScan({sourceId,generation:1,scanId:second,claim})).toMatchObject({ok:true});expect(await s.listSourceEntries(sourceId)).toMatchObject({ok:true,entries:[{unreachable:true}]});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'new',scanInProgress:false}});
+});
+
+it('failed carry handoff after page commit is replaced before the durable task resolves',async()=>{
+  const {expect}=await import('vitest');const {sourceSyncHandler,contentHashOfBytes,DOCUMENT_EXTRACTOR_VERSION}=await import('@second-brain/core');const {sequenceIdGen}=await import('@second-brain/core/testing');
+  const s=await subject();cleanup.push(()=>s.close());const scan='019a0000-0000-7000-8000-000000000a11',sf='019a0000-0000-7000-8000-000000000a12',file='019a0000-0000-7000-8000-000000000a13',old='019a0000-0000-7000-8000-000000000a14',bytes=Uint8Array.of(37,80,68,70),hash=contentHashOfBytes(bytes);
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'carry-failed-task',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  const entry={id:sf,remoteId:'pdf',name:'file.bin',path:'',mimeType:'application/octet-stream',remoteVersion:'1',sizeBytes:bytes.length};expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'upsert',entry}],claim})).toMatchObject({ok:true});
+  expect(await s.handoffSourceFile({sourceId,generation:1,sourceFileId:sf,remoteVersion:'1',fileId:file,contentHash:hash,sizeBytes:bytes.length,workId:old,carryExtractorVersion:DOCUMENT_EXTRACTOR_VERSION,claim})).toMatchObject({ok:true});
+  await s.db.query(`update brain.work_items set completed_at='2026-01-01Z',outcome='failed' where id='${old}';update brain.source_files set index_status='failed' where id='${sf}'`);
+  expect(await s.readSourceCarryCheck({sourceFileId:sf,remoteVersion:'1',extractorVersion:DOCUMENT_EXTRACTOR_VERSION})).toEqual({ok:true,checked:false});
+  const remoteItem={id:'pdf',name:'file.bin',mimeType:'application/octet-stream',version:'1',sizeBytes:bytes.length,parents:['root']};const remote:import('@second-brain/core').SourceRemote={async startToken(){throw Error('no full scan');},async list(){throw Error('no full scan');},async metadata(){return {ok:true,item:remoteItem};},async download(){return {ok:true,bytes};},async changes(){return {ok:true,changes:[],nextPageToken:null,newStartPageToken:'end'};}};
+  const probe:import('@second-brain/core').DocumentExtractor={name:'carry',detect:()=>null,detectCarry:async()=>true,extract:async()=>({ok:true,pieces:[]})};const work=await s.getWork(workId);if(!work.ok||!work.entry)throw Error('missing work');
+  expect(await sourceSyncHandler({store:s,remote,clock:{now:()=>claim.now},idGen:sequenceIdGen({timestampMs:claim.now.getTime(),start:5000}),extractors:[probe]})(work.entry.item)).toEqual({ok:true});
+  const handoff=await s.db.rows<{work_id:string}>(`select work_id::text from brain.source_handoffs where source_file_id='${sf}'`);expect(handoff[0]!.work_id).not.toBe(old);expect(await s.listSourceChangeTasks({sourceId,generation:1,claim})).toEqual({ok:true,tasks:[]});
+});
+
+it('redacted durable change task terminates before changed remote metadata is applied',async()=>{
+  const {expect}=await import('vitest');const {sourceSyncHandler}=await import('@second-brain/core');const {sequenceIdGen}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());
+  const scan='019a0000-0000-7000-8000-000000000b11',sf='019a0000-0000-7000-8000-000000000b12',file='019a0000-0000-7000-8000-000000000b13';await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'hidden-task',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'upsert',entry:{id:sf,remoteId:'hidden',name:'old',path:'',mimeType:'text/plain',remoteVersion:'1',sizeBytes:3}}],claim})).toMatchObject({ok:true});
+  await s.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at,redacted_at) values ('${file}','sha256:${'b'.repeat(64)}',3,'2026-01-01Z','2026-01-01Z');update brain.source_files set file_id='${file}' where id='${sf}'`);
+  let metadata=0;const remote:import('@second-brain/core').SourceRemote={async startToken(){throw Error('no scan');},async list(){throw Error('no scan');},async metadata(){metadata++;return {ok:true,item:{id:'hidden',name:'new',mimeType:'text/plain',version:'2',sizeBytes:3,parents:['root']}};},async download(){throw Error('no download');},async changes(){return {ok:true,changes:[],nextPageToken:null,newStartPageToken:'end'};}};
+  const work=await s.getWork(workId);if(!work.ok||!work.entry)throw Error('missing work');expect(await sourceSyncHandler({store:s,remote,clock:{now:()=>claim.now},idGen:sequenceIdGen({timestampMs:claim.now.getTime(),start:6000})})(work.entry.item)).toEqual({ok:true});expect(metadata).toBe(0);
+  expect(await s.db.rows(`select name,remote_version,unreachable from brain.source_files where id='${sf}'`)).toEqual([{name:'old',remote_version:'1',unreachable:true}]);expect(await s.db.rows(`select resolved from brain.source_change_tasks where source_file_id='${sf}'`)).toEqual([{resolved:true}]);expect(await s.listSourceChangeTasks({sourceId,generation:1,claim})).toEqual({ok:true,tasks:[]});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'end'}});
+});
+
+it('outside-node evidence commits with the cursor survives restart and is cleared on a new scan',async()=>{
+  const {expect}=await import('vitest');const s=await subject();cleanup.push(()=>s.close());const scan='019a0000-0000-7000-8000-000000000c11',nextScan='019a0000-0000-7000-8000-000000000c12';
+  await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:'outside-proof',rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  const bad={id:'not-a-uuid',remoteId:'bad',name:'bad',path:'',mimeType:'text/plain',remoteVersion:'1',sizeBytes:1};
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'bad',changes:[{kind:'outside',remoteId:'outside'},{kind:'upsert',entry:bad}],claim})).toMatchObject({ok:false});
+  expect(await s.listOutsideSourceNodes({sourceId,generation:1})).toEqual({ok:true,remoteIds:[]});expect(await s.readSource(sourceId)).toMatchObject({ok:true,source:{cursor:'old'}});
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'outside',remoteId:'outside'}],claim})).toMatchObject({ok:true});
+  const restarted=postgresStore({databaseUrl:s.db.appUrl});cleanup.unshift(()=>restarted.close());expect(await restarted.listOutsideSourceNodes({sourceId,generation:1})).toEqual({ok:true,remoteIds:['outside']});
+  expect(await s.beginSourceScan({sourceId,generation:1,scanId:nextScan,startToken:'fresh',claim})).toMatchObject({ok:true});expect(await s.listOutsideSourceNodes({sourceId,generation:1})).toEqual({ok:true,remoteIds:[]});
+});
+
+it.each(['apply','resolve'] as const)('redaction racing task %s settles the durable task without publishing',async phase=>{
+  const {expect}=await import('vitest');const {sourceSyncHandler,planFileRedaction}=await import('@second-brain/core');const {sequenceIdGen}=await import('@second-brain/core/testing');const s=await subject();cleanup.push(()=>s.close());
+  const scan='019a0000-0000-7000-8000-000000000d11',sf='019a0000-0000-7000-8000-000000000d12',file='019a0000-0000-7000-8000-000000000d13';await s.db.query(`insert into brain.work_items(execution_class,id,kind,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at) values ('core','${workId}','source_sync','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-02Z')`);
+  await s.ensureSource({id:sourceId,kind:'drive',account:`race-${phase}`,rootId:'root'});await s.beginSourceScan({sourceId,generation:1,scanId:scan,startToken:'old',claim});await s.finishSourceScan({sourceId,generation:1,scanId:scan,claim});
+  expect(await s.applySourceChanges({sourceId,generation:1,expectedCursor:'old',nextCursor:'next',changes:[{kind:'upsert',entry:{id:sf,remoteId:'photo',name:'photo',path:'',mimeType:'image/jpeg',remoteVersion:'1',sizeBytes:3}}],claim})).toMatchObject({ok:true});
+  await s.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${'c'.repeat(64)}',3,'2026-01-01Z');update brain.source_files set file_id='${file}' where id='${sf}'`);
+  let redactions=0;const redact=async()=>{redactions++;expect(await s.redactFile({fileId:file,plan:current=>planFileRedaction(current,{clock:{now:()=>claim.now},idGen:sequenceIdGen({timestampMs:claim.now.getTime(),start:8000})})})).toMatchObject({ok:true});};
+  const raw={id:'photo',name:'photo',mimeType:'image/jpeg',version:phase==='apply'?'2':'1',sizeBytes:3,parents:['root']};const remote:import('@second-brain/core').SourceRemote={async startToken(){throw Error('no scan');},async list(){throw Error('no scan');},async metadata(){if(phase==='apply')await redact();return {ok:true,item:raw};},async download(){throw Error('photo');},async changes(){return {ok:true,changes:[],nextPageToken:null,newStartPageToken:'end'};}};
+  const store={...s,async resolveSourceChangeTask(input:Parameters<typeof s.resolveSourceChangeTask>[0]){if(phase==='resolve')await redact();return s.resolveSourceChangeTask(input);}};
+  const work=await s.getWork(workId);if(!work.ok||!work.entry)throw Error('missing work');expect(await sourceSyncHandler({store,remote,clock:{now:()=>claim.now},idGen:sequenceIdGen({timestampMs:claim.now.getTime(),start:7000})})(work.entry.item)).toEqual({ok:true});
+  expect(redactions).toBe(1);expect(await s.db.rows(`select redacted_at,current_extraction_id from brain.files where id='${file}'`)).toEqual([{redacted_at:claim.now,current_extraction_id:null}]);expect(await s.db.rows(`select id from brain.document_extractions where file_id='${file}'`)).toEqual([]);expect(await s.db.rows(`select resolved from brain.source_change_tasks where source_file_id='${sf}'`)).toEqual([{resolved:true}]);
+  expect(await s.db.rows(`select unreachable from brain.source_files where id='${sf}'`)).toEqual([{unreachable:true}]);expect(await s.listSourceChangeTasks({sourceId,generation:1,claim})).toEqual({ok:true,tasks:[]});
+});
+
+it.each(['source','work'] as const)('renewal cannot revive a claim expired while waiting for %s lock',async target=>{
+ const {expect}=await import('vitest'),s=await subject();cleanup.push(()=>s.close());await s.ensureSource({id:sourceId,kind:'drive',account:`renew-lock-${target}`,rootId:'root'});await s.db.query(`insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,next_attempt_at,claimed_by,claimed_at,claim_expires_at,attempts) values ('${workId}','source_sync','core','source','${sourceId}','2026-01-01Z','2026-01-01Z','worker','2026-01-01Z','2026-01-01T00:10:00Z',0)`);
+ const pg=(await import('pg')).default,blocker=new pg.Client({connectionString:s.db.url});await blocker.connect();await blocker.query('begin');if(target==='source')await blocker.query('select id from brain.sources where id=$1::uuid for update',[sourceId]);else await blocker.query('select id from brain.work_items where id=$1::uuid for update',[workId]);
+ let now=claim.now;const pending=s.renewSourceClaim({sourceId,claim,nowAtLock:()=>now});try{let waiting=false;for(let i=0;i<100;i++){const rows=await s.db.rows<{count:number}>(`select count(*)::int as count from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%${target==='source'?'brain.sources':'brain.work_items'}%' and query like '%for update%'`);if(rows[0]?.count){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,20));}if(!waiting)throw Error('renewal did not wait');now=new Date('2026-01-01T00:10:01Z');await blocker.query('commit');expect(await pending).toMatchObject({ok:false,code:'CLAIM_LOST'});expect(await s.db.rows(`select claim_expires_at from brain.work_items where id='${workId}'`)).toEqual([{claim_expires_at:new Date('2026-01-01T00:10:00Z')}]);}finally{await blocker.query('rollback').catch(()=>{});await blocker.end();await pending;}
+},30000);

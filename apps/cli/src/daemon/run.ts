@@ -213,6 +213,7 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
             sourceSyncFactory: options.sourceSyncFactory,
             driveNetwork: options.driveNetwork,
             driveAuth:roundAuth,
+            onWorkProgress: event=>log.write(`Drive 진행 ${event.message ?? ""}`),
             workHandlers: options.workHandlers ?? {},
             budgetMs: options.drainBudgetMs ?? DAEMON_DRAIN_BUDGET_MS,
           })
@@ -318,6 +319,7 @@ interface RoundOptions {
   sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
   driveNetwork?: DispatchRuntime['driveNetwork'];
   driveAuth?:ReturnType<typeof driveAuth>;
+  onWorkProgress?: import('second_brain').WorkProgressSink;
   workHandlers: WorkHandlers;
   budgetMs: number;
   signal: AbortSignal;
@@ -373,7 +375,7 @@ async function drainOnce(options: RoundOptions): Promise<Round> {
     const driveRuntime=await createDriveRuntime({home,store,clock,idGen,schemaVersions:opened.expected,network:options.driveNetwork,auth:options.driveAuth});
     const driveReconcile = driveRuntime ? await driveRuntime.reconcile() : null;
     const brain = createBrain(
-      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers, driveFactory:options.driveFactory??(driveRuntime?.drive?()=>driveRuntime.drive:undefined),sourceSyncFactory:options.sourceSyncFactory??(driveRuntime?()=>driveRuntime.sourceSync:undefined),sourceControl:driveRuntime?.control }),
+      brainDependencies({ home, env, config, schemaVersions: opened.expected, store, clock, idGen, workHandlers, onWorkProgress:options.onWorkProgress, driveFactory:options.driveFactory??(driveRuntime?.drive?()=>driveRuntime.drive:undefined),sourceSyncFactory:options.sourceSyncFactory??(driveRuntime?()=>driveRuntime.sourceSync:undefined),sourceControl:driveRuntime?.control }),
     );
     const tick = await brain.schedules.tick();
     tickState = {

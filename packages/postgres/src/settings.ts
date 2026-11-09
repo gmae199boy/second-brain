@@ -4,8 +4,9 @@ import { databaseFailure, type PgConnect } from './connect.js';
 import { withWrite } from './write.js';
 import { ensureWork } from './work.js';
 import { randomUUID } from 'node:crypto';
+import { lockDriveRetention, recalculateDriveRetention } from './drive-retention.js';
 
-export function postgresSettingsStore(connect: PgConnect): SettingsStore {
+export function postgresSettingsStore(connect: PgConnect): import('@second-brain/core').DriveRetentionSettingsStore {
   const write = async (input: Parameters<SettingsStore['setSetting']>[0], insertOnly: boolean) => {
     const opened = connect();
     if (!opened.ok) return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: opened.message };
@@ -13,6 +14,14 @@ export function postgresSettingsStore(connect: PgConnect): SettingsStore {
       const instant = formatInstant(input.updatedAt);
       if (!instant.ok) throw new TypeError(instant.message);
       const result = await withWrite(opened.connection, async held => {
+        if (input.key === 'drive.keep_local_days') {
+          if (!await lockDriveRetention(held)) return {ok:false as const,code:'DB_LOCKED' as const,message:'이전 로컬 삭제 결과를 확인해야 합니다'};
+          if(!/^(0|[1-9][0-9]*)$/.test(input.value) || Number(input.value)>100_000_000) throw new Error('보관 기간이 유효하지 않습니다');
+          if(insertOnly) await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do nothing`.execute(held);
+          else await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do update set value=excluded.value,updated_at=excluded.updated_at`.execute(held);
+          await recalculateDriveRetention(held);
+          return {ok:true as const};
+        }
         if (!insertOnly && input.key === 'drive.watch_folders' && input.userId !== null) {
           // All Drive mutations lock source rows before settings, schedules and work.
           const sources = await sql<{id:string}>`select id from brain.sources where kind='drive' and connected order by id for update`.execute(held);
@@ -34,7 +43,7 @@ export function postgresSettingsStore(connect: PgConnect): SettingsStore {
         if (insertOnly) await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do nothing`.execute(held);
         else await sql`insert into brain.settings (user_id,key,value,updated_at) values (${input.userId},${input.key},${input.value},${instant.value}) on conflict (user_id,key) do update set value=excluded.value, updated_at=excluded.updated_at`.execute(held);
       });
-      return result.ok ? { ok: true as const } : result;
+      return result.ok ? (result.value ?? { ok: true as const }) : result;
     } catch (error) { return databaseFailure(error); }
   };
   const getSettings: SettingsStore['getSettings'] = async ({ keys, userId }) => {
@@ -48,6 +57,13 @@ export function postgresSettingsStore(connect: PgConnect): SettingsStore {
   };
   return {
     getSettings,
+    async refreshDriveRetention() {
+      const opened=connect();if(!opened.ok)return {ok:false,code:'DB_UNAVAILABLE',message:opened.message};
+      const result=await withWrite(opened.connection,async held=>{
+        if(!await lockDriveRetention(held))return {ok:false as const,code:'DB_LOCKED' as const,message:'이전 로컬 삭제 결과를 확인해야 합니다'};
+        await recalculateDriveRetention(held);return {ok:true as const};
+      });return result.ok?result.value:result;
+    },
     async getSetting({ key, userId }) {
       const result = await getSettings({ keys: [key], userId });
       return result.ok ? { ok: true, setting: result.settings[0] ?? null } : result;

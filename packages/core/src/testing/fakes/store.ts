@@ -3,7 +3,7 @@ import { validInstallProgress } from '../../extensions/install-progress.js';
 import { conversationFingerprint } from '../../recall/conversation-fingerprint.js';
 import { attemptUsage } from '../../queue/list.js';
 import type { ChannelStore } from '../../channels/store.js';
-import type { SettingsStore } from '../../ports/store.js';
+import type { DriveRetentionSettingsStore } from '../../ports/store.js';
 import { addLocalDays, isLocalTime } from '../../local-time.js';
 import { formatInstant } from '../../instant.js';
 import type { IngestAttachment } from '../../domain/ingest-batch.js';
@@ -92,6 +92,8 @@ export interface MemoryStoreOptions {
   health?: StoreHealth;
   /** Synthetic external source records; array may be updated by the fixture. */
   sourceEntries?: readonly import('../../ports/source-store.js').SourceEntry[];
+  /** Connect the source fake's completion fence when composing the queue and source stores. */
+  sourceSyncCanComplete?: (sourceId:string)=>boolean;
   /** Synthetic successful report requests for document recall contracts. */
   reportRequests?: readonly { fileId: string; source: string; reportDate: string | null; createdAt: string; id: string }[];
 }
@@ -123,7 +125,7 @@ export interface MemoryStoreSnapshot {
   closes: number;
 }
 
-export interface MemoryStore extends Store, SettingsStore, ChannelStore {
+export interface MemoryStore extends Store, DriveRetentionSettingsStore, ChannelStore {
   snapshot(): MemoryStoreSnapshot;
 }
 
@@ -176,7 +178,6 @@ function plainToolNote(note: StoredToolNote): ToolNote {
  * it is read back in (migration 0006).
  */
 export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
-  const settingStore = memorySettingsStore();
   const { health = DEFAULT_HEALTH } = options;
 
   const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
@@ -186,6 +187,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const pythonEnvironments = new Map<string, import('../../ports/store.js').ExtensionPythonEnvironment>();
   const extensions = new Map<string, import('../../ports/store.js').ExtensionRecord>();
   const users = new Map<string, User>();
+  const settingStore = memorySettingsStore({selfUserId:()=>[...users.values()].find(user=>user.isSelf)?.id??null});
   // Keyed by the idempotency keys of the Table Contract: a project by its
   // comparison key, a worktree by its project and path.
   const projects = new Map<string, Project>();
@@ -1770,6 +1772,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async completeWork(input: CompleteWorkInput): Promise<FinishWorkResult> {
       const item = claimed(input);
       if (item === null) return { ok: true, outcome: 'lost' };
+      if(item.kind==='source_sync' && item.targetKind==='source' && options.sourceSyncCanComplete && !options.sourceSyncCanComplete(item.targetId)) return {ok:true,outcome:'lost'};
       settleSuccess(item, input.now);
       unclaim(item);
       return { ok: true, outcome: 'done' };
@@ -2071,15 +2074,24 @@ function cloneSchedule(row: import('../../domain/schedule.js').Schedule): import
 }
 
 /** Independent fake: settings remain a separate Store capability. */
-export function memorySettingsStore(): import('../../ports/store.js').SettingsStore & {getExactSetting(input:{userId:string;key:string}):Promise<import('../../ports/store.js').SettingRecord | undefined>} {
+export function memorySettingsStore(options:{selfUserId?:string|(()=>string|null);applyRetention?:(days:number)=>Promise<{ok:true}|import('../../ports/store.js').SettingsStoreFailure>}={}): import('../../ports/store.js').DriveRetentionSettingsStore & {getExactSetting(input:{userId:string;key:string}):Promise<import('../../ports/store.js').SettingRecord | undefined>} {
   const settings = new Map<string, import('../../ports/store.js').SettingRecord>();
   const keyOf = (userId: string | null, key: string) => JSON.stringify([userId, key]);
   const read = (userId: string | null, key: string) => settings.get(keyOf(userId, key)) ?? settings.get(keyOf(null, key));
+  let tail:Promise<void>=Promise.resolve();
+  const serialized=async<T>(fn:()=>Promise<T>):Promise<T>=>{let release!:()=>void;const prior=tail;tail=new Promise<void>(resolve=>{release=resolve;});await prior;try{return await fn();}finally{release();}};
+  const refresh=async()=>{const self=typeof options.selfUserId==='function'?options.selfUserId():options.selfUserId??null;const raw=read(self,'drive.keep_local_days')?.value??'30';if(!/^(0|[1-9][0-9]*)$/.test(raw)||Number(raw)>100_000_000)return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'보관 기간이 유효하지 않습니다'};return options.applyRetention?options.applyRetention(Number(raw)):{ok:true as const};};
+  const write=async(input:import('../../ports/store.js').SettingRecord & {userId:string|null},insertOnly:boolean)=>{
+    const key=keyOf(input.userId,input.key),row={key:input.key,value:input.value,updatedAt:new Date(input.updatedAt)};
+    if(input.key!=='drive.keep_local_days'){if(!insertOnly||!settings.has(key))settings.set(key,row);return {ok:true as const};}
+    return serialized(async()=>{if(!/^(0|[1-9][0-9]*)$/.test(input.value)||Number(input.value)>100_000_000)return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'보관 기간이 유효하지 않습니다'};const prior=settings.get(key);if(!insertOnly||!prior)settings.set(key,row);try{const result=await refresh();if(!result.ok){if(prior)settings.set(key,prior);else settings.delete(key);}return result;}catch(error){if(prior)settings.set(key,prior);else settings.delete(key);throw error;}});
+  };
   return {
     async getExactSetting({userId,key}) { return settings.get(keyOf(userId,key)); },
     async getSettings({ keys, userId }) { return { ok: true, settings: [...new Set(keys)].flatMap(key => { const row = read(userId, key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt) }] : []; }) }; },
     async getSetting({ key, userId }) { const row = read(userId, key); return { ok: true, setting: row ? { ...row, updatedAt: new Date(row.updatedAt) } : null }; },
-    async setSetting({ userId, ...input }) { settings.set(keyOf(userId, input.key), { ...input, updatedAt: new Date(input.updatedAt) }); return { ok: true }; },
-    async insertSetting({ userId, ...input }) { const key = keyOf(userId, input.key); if (!settings.has(key)) settings.set(key, { ...input, updatedAt: new Date(input.updatedAt) }); return { ok: true }; },
+    setSetting: input=>write(input,false),
+    insertSetting: input=>write(input,true),
+    refreshDriveRetention:()=>serialized(refresh),
   };
 }

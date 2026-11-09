@@ -3,7 +3,7 @@ import {homedir,tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach,expect,it} from 'vitest';
 import {createIsolatedTestDatabase} from '@second-brain/test-db';
-import {createBrain,cleanupSourceTemps,type BrainDependencies} from 'second_brain';
+import {createBrain,cleanupSourceTemps,contentHashOfBytes,type BrainDependencies} from 'second_brain';
 import {sequenceIdGen} from 'second_brain/testing';
 import {EXPECTED_SCHEMA_VERSIONS,postgresStore,type PostgresStore} from 'second_brain/postgres';
 import {brainDependencies} from '../src/assembly.js';
@@ -21,7 +21,7 @@ async function fixture(){
   const db=await pgHome(home,true,createIsolatedTestDatabase);cleanup.push(()=>db.drop());const server=await fakeDrive();cleanup.push(()=>server.close());
   const clock=fakeClock('2026-01-01T00:00:00Z'),ids=sequenceIdGen({timestampMs:clock.now().getTime(),start:2000});const store=postgresStore({databaseUrl:db.appUrl});cleanup.push(()=>store.close());
   const sourceId=ids.next();expect(await store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'root'})).toMatchObject({ok:true});
-  const temp=sourceTemp(tempRoot),remote=sourceDrive({baseUrl:server.baseUrl});
+  const temp=sourceTemp(tempRoot),remote=sourceDrive({baseUrl:server.baseUrl,clock});
   const sourceSyncFactory:NonNullable<DispatchRuntime['sourceSyncFactory']>=s=>({store:s as PostgresStore,remote,temp});
   const env={HOME:home,SECOND_BRAIN_HOME:home,BRAIN_DATABASE_URL:db.appUrl,CLAUDE_CONFIG_DIR:join(home,'claude-config'),PATH:process.env.PATH,TMPDIR:root};const config=await readConfig(home);
   const assemble=(inputEnv:NodeJS.ProcessEnv)=>brainDependencies({home,env:inputEnv,config,store,clock,idGen:ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory});
@@ -98,7 +98,7 @@ it('killed temporary writer preserves an open extraction and removes only owned 
 },120000);
 it('temporary remote failure leaves existing source records reachable and reports incomplete sync',async()=>{
  const f=await fixture();seed(f.server);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);const before=await f.db.rows('select id,unreachable,completed_version,completed_hash from brain.source_files order by id');
- const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root};const remote=sourceDrive({baseUrl:f.server.baseUrl});const failed={...remote,async list(){return {ok:false as const,code:'TEMPORARY' as const,message:'synthetic outage'};}};
+ const config=await readConfig(f.home),env={HOME:f.home,SECOND_BRAIN_HOME:f.home,BRAIN_DATABASE_URL:f.db.appUrl,CLAUDE_CONFIG_DIR:join(f.home,'claude-config'),PATH:process.env.PATH,TMPDIR:f.root};const remote=sourceDrive({baseUrl:f.server.baseUrl});const failed={...remote,async changes(){return {ok:false as const,code:'TEMPORARY' as const,message:'synthetic outage'};},async list(){return {ok:false as const,code:'TEMPORARY' as const,message:'synthetic outage'};}};
  const brain=createBrain(brainDependencies({home:f.home,env,config,store:f.store,clock:f.clock,idGen:f.ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory:s=>({store:s as PostgresStore,remote:failed,temp:f.temp})}));
  expect(await brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:false,code:'SOURCE_SYNC_INCOMPLETE'});expect(await f.db.rows('select id,unreachable,completed_version,completed_hash from brain.source_files order by id')).toEqual(before);
 });
@@ -160,7 +160,7 @@ for (const boundary of ['sync-write','extract-read'] as const) it(`SIGKILL at ac
   await cleanupSourceTemps(f.temp,f.store,f.clock);if(boundary==='extract-read')expect(await f.temp.read(line,1024)).toMatchObject({ok:true});expect(await readdir(f.tempRoot)).toContain('unrelated-owner');
   f.clock.set('2026-01-01T00:11:00Z');await cleanupSourceTemps(f.temp,f.store,f.clock);if(boundary==='sync-write')expect(await f.temp.read(line,1024)).toMatchObject({ok:false});else expect(await f.temp.read(line,1024)).toMatchObject({ok:true});
   const resumed=await f.brain.sources.sync({sourceId:f.sourceId});expect(resumed).toMatchObject({ok:true});
-  expect(await f.db.rows("select index_status,completed_version from brain.source_files where remote_id='crash'")).toEqual([{index_status:'indexed',completed_version:'1'}]);expect(await readdir(f.tempRoot)).toEqual(['unrelated-owner']);expect(await readdir(join(f.home,'files')).catch(()=>[])).toEqual([]);
+  expect(await f.db.rows("select index_status,completed_version from brain.source_files where remote_id='crash'")).toEqual([{index_status:'indexed',completed_version:`${contentHashOfBytes(Buffer.from('합성 중단 복구 본문'))}:${Buffer.byteLength('합성 중단 복구 본문')}`}]);expect(await readdir(f.tempRoot)).toEqual(['unrelated-owner']);expect(await readdir(join(f.home,'files')).catch(()=>[])).toEqual([]);
  }finally{if(child.exitCode===null&&child.signalCode===null){const stopped=new Promise<void>(resolve=>child.once('exit',()=>resolve()));child.kill('SIGKILL');await stopped;}}
 },120000);
 
@@ -168,9 +168,10 @@ it('preserved body identifies its completed version after newer metadata fails',
  const f=await fixture();f.server.files.set('versioned',{id:'versioned',name:'기존.txt',mimeType:'text/plain',version:'1',bytes:Buffer.from('이전 본문 검색'),parents:['root']});
  expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
  await f.db.query("update brain.source_files set remote_version='2',name='새이름.txt',index_status='failed' where remote_id='versioned'");
- const found=await f.cli(['recall','docs','검색','--json']);const row=found.body.data[0];expect(row).toMatchObject({display_name:'새이름.txt',current_version:'2',completed_version:'1',stale:true,body:expect.stringContaining('이전 본문')});
- const show=await f.cli(['files','show',row.file_id,'--source-file-id',row.source_file_id,'--chunk-locator',row.chunk_locator,'--json']);expect(show.body).toMatchObject({ok:true,meta:{source_file:{current_version:'2',completed_version:'1',stale:true}},data:[{body:expect.stringContaining('이전 본문')}]});
- const name=await f.cli(['recall','docs','새이름','--json']);expect(name.body.data[0]).toMatchObject({current_version:'2',completed_version:'1',stale:true});
+ const completedVersion=`${contentHashOfBytes(Buffer.from('이전 본문 검색'))}:${Buffer.byteLength('이전 본문 검색')}`;
+ const found=await f.cli(['recall','docs','검색','--json']);const row=found.body.data[0];expect(row).toMatchObject({display_name:'새이름.txt',current_version:'2',completed_version:completedVersion,stale:true,body:expect.stringContaining('이전 본문')});
+ const show=await f.cli(['files','show',row.file_id,'--source-file-id',row.source_file_id,'--chunk-locator',row.chunk_locator,'--json']);expect(show.body).toMatchObject({ok:true,meta:{source_file:{current_version:'2',completed_version:completedVersion,stale:true}},data:[{body:expect.stringContaining('이전 본문')}]});
+ const name=await f.cli(['recall','docs','새이름','--json']);expect(name.body.data[0]).toMatchObject({current_version:'2',completed_version:completedVersion,stale:true});
 });
 
 it('disconnect during an actual HTTP download cancels the claim and refuses the late handoff',async()=>{
@@ -251,7 +252,7 @@ it('열린 scan 뒤 요청된 Carry는 완료 트랜잭션에서 후속 sync로 
 
 it('이전 버전이 가려져도 바뀐 원격 바이트는 해시 확인 뒤 새 파일로 색인한다',async()=>{
  const f=await fixture(),sf=f.ids.next(),old=f.ids.next(),bytes=carryPdf();f.server.files.set('changed',{id:'changed',name:'changed.bin',mimeType:'application/octet-stream',version:'2',parents:['root'],bytes});await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at,redacted_at) values ('${old}','sha256:${'e'.repeat(64)}',3,'2026-01-01Z','2026-01-01Z');insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,size_bytes,file_id,index_status,unreachable) values ('${sf}','${f.sourceId}','changed','changed.bin','','application/octet-stream','1',3,'${old}','unsupported',false)`);
- const result=await f.cli(['sources','sync',f.sourceId,'--json']);expect(result.body).toMatchObject({ok:true});const rows=await f.db.rows<{file_id:string;index_status:string;remote_version:string}>(`select file_id::text,index_status,remote_version from brain.source_files where id='${sf}'`);expect(rows).toEqual([expect.objectContaining({file_id:expect.any(String),index_status:'indexed',remote_version:'2'})]);expect(rows[0]!.file_id).not.toBe(old);expect(await readdir(f.tempRoot).catch(()=>[])).toEqual([]);
+ const result=await f.cli(['sources','sync',f.sourceId,'--json']);expect(result.body).toMatchObject({ok:true});const rows=await f.db.rows<{file_id:string;index_status:string;remote_version:string}>(`select file_id::text,index_status,remote_version from brain.source_files where id='${sf}'`);expect(rows).toEqual([expect.objectContaining({file_id:expect.any(String),index_status:'indexed',remote_version:`${contentHashOfBytes(bytes)}:${bytes.length}`})]);expect(rows[0]!.file_id).not.toBe(old);expect(await f.db.rows(`select content_hash,redacted_at from brain.files where id='${old}'`)).toEqual([{content_hash:`sha256:${'e'.repeat(64)}`,redacted_at:new Date('2026-01-01Z')}]);expect(await f.db.rows(`select content_hash,redacted_at from brain.files where id='${rows[0]!.file_id}'`)).toEqual([{content_hash:contentHashOfBytes(bytes),redacted_at:null}]);expect(await readdir(f.tempRoot).catch(()=>[])).toEqual([]);
 },120000);
 
 it('일반 조립의 로컬 첨부와 Drive 원본이 같은 extractor를 통해 색인된다',async()=>{
@@ -321,6 +322,147 @@ it('A Carry 예약 뒤 새 store와 B drain이 같은 work를 승계해 실제 P
 },120000);
 
 it('B 판정 marker가 이미 있어도 이전 A 미완료 run을 B foreground에서 회수한다',async()=>{
- const {DOCUMENT_EXTRACTOR_VERSION}=await import('second_brain');const f=await fixture(),sf=f.ids.next(),old=f.ids.next();f.server.files.set('checked',{id:'checked',name:'checked.bin',mimeType:'application/octet-stream',version:'1',parents:['root'],bytes:Buffer.from([0,1,2])});await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,index_status,unreachable) values ('${sf}','${f.sourceId}','checked','checked.bin','','application/octet-stream','1','unsupported',false);insert into brain.source_carry_checks(source_file_id,remote_version,extractor_version,requires_handoff) values ('${sf}','1','${DOCUMENT_EXTRACTOR_VERSION}',false);insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,attempts,next_attempt_at,completed_at,outcome) values ('${old}','source_sync','core','source','${f.sourceId}','2026-01-01Z',1,'2026-01-01Z','2026-01-01Z','failed');insert into brain.source_carry_runs(source_id,generation,extractor_version,work_id,started,completed) values ('${f.sourceId}',1,'doc/previous','${old}',true,false)`);
+ const {DOCUMENT_EXTRACTOR_VERSION}=await import('second_brain');const f=await fixture(),sf=f.ids.next(),old=f.ids.next(),bytes=Buffer.from([0,1,2]),{createHash}=await import('node:crypto'),version=`sha256:${createHash('sha256').update(bytes).digest('hex')}:${bytes.length}`;f.server.files.set('checked',{id:'checked',name:'checked.bin',mimeType:'application/octet-stream',version:'1',parents:['root'],bytes});await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,index_status,unreachable) values ('${sf}','${f.sourceId}','checked','checked.bin','','application/octet-stream','${version}','unsupported',false);insert into brain.source_carry_checks(source_file_id,remote_version,extractor_version,requires_handoff) values ('${sf}','${version}','${DOCUMENT_EXTRACTOR_VERSION}',false);insert into brain.work_items(id,kind,execution_class,target_kind,target_id,created_at,attempts,next_attempt_at,completed_at,outcome) values ('${old}','source_sync','core','source','${f.sourceId}','2026-01-01Z',1,'2026-01-01Z','2026-01-01Z','failed');insert into brain.source_carry_runs(source_id,generation,extractor_version,work_id,started,completed) values ('${f.sourceId}',1,'doc/previous','${old}',true,false)`);
  expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});expect(await f.db.rows(`select completed from brain.source_carry_runs where source_id='${f.sourceId}' order by extractor_version`)).toEqual([{completed:true},{completed:true}]);expect(f.server.requests.filter(r=>r.path.includes('/checked?alt=media'))).toHaveLength(0);expect(await f.db.rows(`select extractor_version,requires_handoff from brain.source_carry_checks where source_file_id='${sf}'`)).toEqual([{extractor_version:DOCUMENT_EXTRACTOR_VERSION,requires_handoff:false}]);
+},120000);
+
+it('scheduled_changes_next_tick merges manual and scheduled sync and publishes the next daemon change',async()=>{
+ const {runDaemon}=await import('../src/daemon/run.js');const {readFile}=await import('node:fs/promises');
+ const f=await fixture();const file={id:'scheduled',name:'scheduled.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('이전본문 공통검색')};f.server.files.set(file.id,file);
+ let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});let held=false;
+ const brain=createBrain({...f.dependencies,onWorkProgress:async event=>{if(event.message?.startsWith('source_page ')&&!held){held=true;entered();await hold;}}});
+ const self=await f.store.readSelfUser();if(!self.ok||!self.user)throw Error('self missing');const schedule=f.ids.next(),at=f.clock.now();
+ expect(await f.store.addSchedule({id:schedule,kind:'source_sync',targetKind:'source',targetId:f.sourceId,triggerKind:'interval',cronExpr:null,runAt:null,timeZone:null,timeZoneSource:null,intervalSeconds:1800,extension:null,scheduleKey:null,userId:self.user.id,enabled:true,removedAt:null,triggerUpdatedAt:null,nextRunAt:at,lastRunAt:null,createdAt:at})).toMatchObject({ok:true});
+ const manual=brain.sources.sync({sourceId:f.sourceId});
+ try {await started;const open=await f.db.rows<{id:string}>(`select id::text from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`);expect(open).toHaveLength(1);expect(await brain.schedules.tick()).toMatchObject({ok:true,fired:1,enqueued:0});expect(await f.db.rows(`select id::text from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`)).toEqual(open);release();expect(await manual).toMatchObject({ok:true,workId:open[0]!.id});}finally{release();}
+ const old=await f.db.rows('select id::text,content_hash,current_extraction_id::text from brain.files order by id');expect(old).toHaveLength(1);
+ f.server.files.set(file.id,{...file,version:'2',bytes:Buffer.from('새본문 공통검색')});f.clock.set('2026-01-01T00:30:00Z');
+ const controller=new AbortController();const finished=runDaemon({supervisor:{disabled:true},home:f.home,env:f.env,clock:f.clock,idGen:f.ids,signal:controller.signal,heartbeatMs:40,drainPauseMs:20,sourceSyncFactory:s=>({store:s as PostgresStore,remote:sourceDrive({baseUrl:f.server.baseUrl}),temp:f.temp})});
+ try {let found=false;for(let i=0;i<200;i++){const docs=await f.cli(['recall','docs','새본문','--json']);if(docs.body?.data?.length){found=true;break;}await new Promise(r=>setTimeout(r,20));}expect(found).toBe(true);} finally {controller.abort();await finished;}
+ expect(f.server.requests.some(r=>r.path.startsWith('/drive/v3/changes?'))).toBe(true);
+ const after=await f.db.rows('select id::text,content_hash,current_extraction_id::text from brain.files order by id');expect(after).toHaveLength(2);expect(after).toEqual(expect.arrayContaining(old));
+ const recall=await f.cli(['recall','docs','새본문','--json']);expect(JSON.stringify(recall.body)).toContain('새본문');
+ const log=await readFile(join(f.home,'log','daemon.log'),'utf8');expect(log).toContain('Drive 진행 source_page');
+ const cliEvents:unknown[]=[];let cliOut='',cliErr='';const code=await dispatch(commands,['sources','sync',f.sourceId,'--json'],{env:f.env,clock:f.clock,idGen:f.ids,runner:pgRunner,sourceSyncFactory:s=>({store:s as PostgresStore,remote:sourceDrive({baseUrl:f.server.baseUrl}),temp:f.temp}),onWorkProgress:event=>{cliEvents.push(event);},stdout:value=>{cliOut+=value;},stderr:value=>{cliErr+=value;}});
+ expect(code,cliErr).toBe(0);expect(cliEvents).toContainEqual({abi:1,type:'progress',message:'source_page 1'});expect(JSON.parse(cliOut)).toMatchObject({ok:true});
+},120000);
+
+it('cancel_progress_and_secret_surfaces cancels before the next change page and hides remote data',async()=>{
+ const f=await fixture();const marker='synthetic-private-marker';f.server.files.set('private',{id:'private',name:`${marker}.txt`,mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from(marker)});
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const source=await f.store.readSource(f.sourceId);if(!source.ok||!source.source?.cursor)throw Error('cursor missing');
+ f.server.changePages.set(source.source.cursor,{changes:[],nextPageToken:`${marker}-next`});f.server.changePages.set(`${marker}-next`,{changes:[],newStartPageToken:`${marker}-end`});
+ const events:unknown[]=[];let brain!:ReturnType<typeof createBrain>;
+ brain=createBrain({...f.dependencies,onWorkProgress:async event=>{events.push(event);const rows=await f.db.rows<{id:string}>(`select id::text from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`);expect(await brain.queue.cancel({id:rows[0]!.id})).toMatchObject({ok:true});}});
+ expect(await brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:false});expect(events).toEqual([{abi:1,type:'progress',message:'source_page 1'}]);
+ expect(f.server.requests.filter(r=>r.path.includes(encodeURIComponent(`${marker}-next`)))).toHaveLength(0);
+ const queue=await f.cli(['queue','list','--all','--json']);const doctor=await f.cli(['doctor','run','--json']);const sdk=await brain.queue.list({all:true});
+ for(const output of [queue.stdout,queue.stderr,doctor.stdout,doctor.stderr,JSON.stringify(sdk),JSON.stringify(events)])expect(output).not.toContain(marker);
+},120000);
+
+it('cancel_progress_and_secret_surfaces suppresses external error text in SDK CLI queue and doctor',async()=>{
+ const f=await fixture();const markers=['synthetic-filename-secret','synthetic-body-secret','synthetic-token-secret','synthetic-session-uri-secret','synthetic-oauth-code-secret','synthetic-verifier-secret','synthetic-client-secret','synthetic-external-error-secret'];
+ f.server.files.set('one',{id:'one',name:markers[0]!,mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from(markers[1]!)});
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});const remote=sourceDrive({baseUrl:f.server.baseUrl});
+ const poisoned={...remote,async changes(){return {ok:false as const,code:'TEMPORARY' as const,message:markers.join(' ')};}};
+ const failureBrain=createBrain({...f.dependencies,sourceSync:{...f.dependencies.sourceSync!,remote:poisoned}});
+ const result=await failureBrain.sources.sync({sourceId:f.sourceId});expect(result).toMatchObject({ok:false});
+ let syncOut='',syncErr='';await dispatch(commands,['sources','sync',f.sourceId,'--json'],{env:f.env,clock:f.clock,idGen:f.ids,runner:pgRunner,sourceSyncFactory:s=>({store:s as PostgresStore,remote:poisoned,temp:f.temp}),stdout:value=>{syncOut+=value;},stderr:value=>{syncErr+=value;}});
+ const queue=await f.cli(['queue','list','--all','--json']),doctor=await f.cli(['doctor','run','--json']);
+ for(const output of [JSON.stringify(result),syncOut,syncErr,JSON.stringify(await failureBrain.queue.list({all:true})),queue.stdout,queue.stderr,doctor.stdout,doctor.stderr])for(const marker of markers)expect(output).not.toContain(marker);
+ const {runDaemon}=await import('../src/daemon/run.js');const {readFile}=await import('node:fs/promises');f.clock.set('2026-01-01T00:16:00Z');const controller=new AbortController();
+ const running=runDaemon({supervisor:{disabled:true},home:f.home,env:f.env,clock:f.clock,idGen:f.ids,signal:controller.signal,heartbeatMs:40,drainPauseMs:20,sourceSyncFactory:s=>({store:s as PostgresStore,remote:poisoned,temp:f.temp})});
+ try {let attempted=false;for(let i=0;i<200;i++){const rows=await f.db.rows<{attempts:number}>(`select attempts from brain.work_items where kind='source_sync' and completed_at is null`);if(rows.some(r=>r.attempts>=2)){attempted=true;break;}await new Promise(r=>setTimeout(r,20));}expect(attempted).toBe(true);}finally{controller.abort();await running;}
+ const log=await readFile(join(f.home,'log','daemon.log'),'utf8');for(const marker of markers)expect(log).not.toContain(marker);
+},120000);
+
+it('changes_paths_versions_recovery uses CLI sync and recall for folder rename move and restoration',async()=>{
+ const f=await fixture();const folder={id:'folder',name:'이전폴더',mimeType:'application/vnd.google-apps.folder',version:'1',parents:['root'],bytes:Buffer.alloc(0)};const file={id:'note',name:'복구문서.txt',mimeType:'text/plain',version:'1',parents:['folder'],bytes:Buffer.from('복구본문 합성검색')};
+ f.server.files.set(folder.id,folder);f.server.files.set(file.id,file);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const before=await f.db.rows<{id:string;file_id:string;completed_hash:string;path:string}>("select id::text,file_id::text,completed_hash,path from brain.source_files where remote_id='note'");expect(before).toHaveLength(1);expect(before[0]!.path).toBe('이전폴더');
+ f.server.files.set(folder.id,{...folder,name:'새폴더',version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect(await f.db.rows("select path,unreachable from brain.source_files where remote_id='note'")).toEqual([{path:'새폴더',unreachable:false}]);
+ f.server.files.set(file.id,{...file,parents:['outside'],version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect(await f.db.rows("select unreachable from brain.source_files where remote_id='note'")).toEqual([{unreachable:true}]);expect(JSON.stringify((await f.cli(['recall','docs','복구본문','--json'])).body)).toContain('FILE_SOURCE_UNREACHABLE');
+ f.server.files.set(file.id,{...file,parents:['folder'],version:'3'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect(await f.db.rows("select path,unreachable,file_id::text,completed_hash from brain.source_files where remote_id='note'")).toEqual([{path:'새폴더',unreachable:false,file_id:before[0]!.file_id,completed_hash:before[0]!.completed_hash}]);
+ const found=await f.cli(['recall','docs','복구본문','--json']);expect(found.body).toMatchObject({ok:true});expect(JSON.stringify(found.body)).toContain('복구본문');
+},120000);
+
+it('cursor_rejected_full_scan_atomic_prune preserves CLI recall until a real HTTP rescan completes',async()=>{
+ const f=await fixture();for(const id of ['one','two','lost'])f.server.files.set(id,{id,name:`${id}.txt`,mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from(`검색 ${id}`)});
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});const source=await f.store.readSource(f.sourceId);if(!source.ok||!source.source?.cursor)throw Error('cursor missing');
+ f.server.files.delete('lost');for(const id of ['new-a','new-b'])f.server.files.set(id,{id,name:`${id}.txt`,mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from(`검색 ${id}`)});
+ f.server.rejectedTokens.add(source.source.cursor);f.server.invalidListTokens.add('1');
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:false});
+ expect(await f.db.rows("select unreachable from brain.source_files where remote_id='lost'")).toEqual([{unreachable:false}]);
+ const retained=await f.cli(['recall','docs','lost','--json']);expect(JSON.stringify(retained.body)).not.toContain('FILE_SOURCE_UNREACHABLE');expect(JSON.stringify(retained.body)).toContain('lost');
+ f.server.invalidListTokens.clear();f.clock.set('2026-01-01T00:16:00Z');expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect(await f.db.rows("select unreachable from brain.source_files where remote_id='lost'")).toEqual([{unreachable:true}]);expect(JSON.stringify((await f.cli(['recall','docs','lost','--json'])).body)).toContain('FILE_SOURCE_UNREACHABLE');
+},120000);
+
+it('file permission 403 marks only its provenance while rate-limit 403 preserves both until retry',async()=>{
+ const f=await fixture();const file={id:'one',name:'공유원본.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('공유 검색 본문')};
+ f.server.files.set('one',file);f.server.files.set('copy',{...file,id:'copy',name:'공유사본.txt'});expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const original=await f.db.rows<{remote_id:string;file_id:string;unreachable:boolean}>("select remote_id,file_id::text,unreachable from brain.source_files where remote_id in ('one','copy') order by remote_id");expect(original).toHaveLength(2);expect(original[0]!.file_id).toBe(original[1]!.file_id);
+ f.server.files.set('one',{...file,version:'2',bytes:Buffer.from('변경된 검색 본문')});f.server.fileForbidden.set('one','rateLimitExceeded');expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:false});
+ expect(await f.db.rows("select remote_id,unreachable from brain.source_files where remote_id in ('one','copy') order by remote_id")).toEqual([{remote_id:'copy',unreachable:false},{remote_id:'one',unreachable:false}]);
+ const pending=await f.db.rows<{next_attempt_at:Date}>(`select next_attempt_at from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`);expect(pending).toHaveLength(1);expect(pending[0]!.next_attempt_at).toEqual(new Date('2026-01-01T00:01:03Z'));
+ f.server.fileForbidden.set('one','permission');f.clock.set('2026-01-01T00:01:03Z');expect(await f.brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});
+ expect(await f.db.rows("select remote_id,unreachable from brain.source_files where remote_id in ('one','copy') order by remote_id")).toEqual([{remote_id:'copy',unreachable:false},{remote_id:'one',unreachable:true}]);
+ expect(await f.db.rows(`select source_unreachable_at from brain.files where id='${original[0]!.file_id}'`)).toEqual([{source_unreachable_at:null}]);const recall=await f.cli(['recall','docs','공유','--limit','30','--json']);expect(JSON.stringify(recall.body)).toContain('FILE_SOURCE_UNREACHABLE');expect(JSON.stringify(recall.body)).toContain('공유사본');
+ expect(f.server.requests.filter(r=>r.path.startsWith('/drive/v3/files/one?')).length).toBeGreaterThanOrEqual(2);
+},120000);
+
+it('최근 full scan 뒤 빈 changes와 새 Carry 예약은 스캔하고 run과 work를 완료한다',async()=>{
+ const {DOCUMENT_EXTRACTOR_VERSION}=await import('second_brain');const f=await fixture(),bytes=Buffer.from([0,1,2]),sf=f.ids.next();
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const initial=await f.store.readSource(f.sourceId);if(!initial.ok||!initial.source?.cursor)throw Error('missing initial cursor');
+ f.server.changePages.set(initial.source.cursor,{changes:[],newStartPageToken:initial.source.cursor});
+ const changesBefore=f.server.requests.filter(r=>r.path.includes('/changes?')).length;
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ expect(f.server.requests.filter(r=>r.path.includes('/changes?')).length).toBe(changesBefore+1);
+ f.server.files.set('carry-empty',{id:'carry-empty',name:'carry.bin',mimeType:'application/octet-stream',parents:['root'],bytes});
+ const version=`${contentHashOfBytes(bytes)}:${bytes.length}`;
+ await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,size_bytes,index_status,unreachable) values ('${sf}','${f.sourceId}','carry-empty','carry.bin','','application/octet-stream','${version}',${bytes.length},'unsupported',false)`);
+ // The cursor already includes this file, so the changes page is empty.
+ const source=await f.store.readSource(f.sourceId);if(!source.ok||!source.source?.cursor)throw Error('missing cursor');
+ f.server.changePages.set(source.source.cursor,{changes:[],newStartPageToken:source.source.cursor});
+ const work=f.ids.next();expect(await f.store.reserveSourceCarry({sourceId:f.sourceId,generation:1,extractorVersion:'doc/new-carry',workId:work,now:f.clock.now()})).toMatchObject({ok:true,reserved:true});
+ expect(await f.brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});
+ expect(await f.db.rows(`select extractor_version,started,completed from brain.source_carry_runs where work_id='${work}' order by extractor_version`)).toEqual([{extractor_version:DOCUMENT_EXTRACTOR_VERSION,started:true,completed:true},{extractor_version:'doc/new-carry',started:true,completed:true}].sort((a,b)=>a.extractor_version.localeCompare(b.extractor_version)));
+ expect(await f.db.rows(`select id from brain.work_items where kind='source_sync' and target_id='${f.sourceId}' and completed_at is null`)).toEqual([]);
+ expect(await f.db.rows(`select outcome from brain.work_items where id='${work}'`)).toEqual([{outcome:'succeeded'}]);
+ expect(await f.db.rows(`select index_status from brain.source_files where id='${sf}'`)).toEqual([{index_status:'unsupported'}]);
+ expect(f.server.requests.filter(r=>r.path.includes('/carry-empty?alt=media'))).toHaveLength(1);
+ const lists=f.server.requests.filter(r=>r.path.includes('/files?')).length,downloads=f.server.requests.filter(r=>r.path.includes('/carry-empty?alt=media')).length;
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ expect(f.server.requests.filter(r=>r.path.includes('/files?')).length).toBe(lists);expect(f.server.requests.filter(r=>r.path.includes('/carry-empty?alt=media')).length).toBe(downloads);
+});
+
+it('같은 내용의 MIME 변경은 양방향 재분류하고 이전 성공 포인터를 보존한다',async()=>{
+ const f=await fixture(),bytes=Buffer.from('same synthetic text');
+ f.server.files.set('mime',{id:'mime',name:'mime.txt',mimeType:'text/plain',parents:['root'],bytes});
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const before=(await f.db.rows<{file_id:string;completed_version:string;completed_hash:string;index_status:string}>(`select file_id::text,completed_version,completed_hash,index_status from brain.source_files where remote_id='mime'`))[0]!;
+ expect(before).toMatchObject({index_status:'indexed',file_id:expect.any(String),completed_version:expect.any(String),completed_hash:expect.any(String)});
+ f.server.files.get('mime')!.mimeType='image/jpeg';
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const photo=(await f.db.rows(`select file_id::text,completed_version,completed_hash,index_status from brain.source_files where remote_id='mime'`))[0];
+ expect(photo).toEqual({...before,index_status:'photo'});
+ const downloads=f.server.requests.filter(r=>r.path.includes('/mime?alt=media')).length;
+ f.server.files.get('mime')!.mimeType='text/plain';
+ expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ expect(f.server.requests.filter(r=>r.path.includes('/mime?alt=media')).length).toBe(downloads+1);
+ expect(await f.db.rows(`select file_id::text,completed_version,completed_hash,index_status from brain.source_files where remote_id='mime'`)).toEqual([before]);
+});
+
+it('MIME-only photo sync fences an already running text parser without losing the previous publication',async()=>{
+ const f=await fixture();f.server.files.set('mime-race',{id:'mime-race',name:'race.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('기존 합성 문서')});expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});
+ const before=(await f.db.rows<{id:string;file_id:string;current_extraction_id:string;completed_version:string;completed_hash:string}>(`select sf.id::text,sf.file_id::text,f.current_extraction_id::text,sf.completed_version,sf.completed_hash from brain.source_files sf join brain.files f on f.id=sf.file_id where sf.remote_id='mime-race'`))[0]!;expect(before.current_extraction_id).toBeTruthy();const oldChunks=await f.db.rows(`select id,body from brain.document_chunks where extraction_id='${before.current_extraction_id}'`);
+ const work=f.ids.next(),now=f.clock.now();expect(await f.store.addWork({id:work,kind:'document_extract',targetKind:'file',targetId:before.file_id,createdAt:now,nextAttemptAt:now})).toMatchObject({ok:true});await f.db.query(`update brain.source_handoffs set work_id='${work}' where source_file_id='${before.id}'`);
+ let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});const {textExtractor}=await import('second_brain');const blocking={...textExtractor,async extract(...args:Parameters<typeof textExtractor.extract>){entered();await gate;return textExtractor.extract(...args);}};const brain=createBrain({...f.dependencies,documentExtractors:[blocking]});
+ const pending=brain.queue.drain({budgetMs:60000});try{await started;f.server.files.get('mime-race')!.mimeType='image/jpeg';expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});expect(await f.db.rows(`select index_status,completed_version,completed_hash,file_id::text from brain.source_files where id='${before.id}'`)).toEqual([{index_status:'photo',completed_version:before.completed_version,completed_hash:before.completed_hash,file_id:before.file_id}]);release();await pending;
+  expect(await f.db.rows(`select current_extraction_id::text from brain.files where id='${before.file_id}'`)).toEqual([{current_extraction_id:before.current_extraction_id}]);expect(await f.db.rows(`select id,body from brain.document_chunks where extraction_id='${before.current_extraction_id}'`)).toEqual(oldChunks);expect(await f.db.rows(`select index_status from brain.source_files where id='${before.id}'`)).toEqual([{index_status:'photo'}]);expect(await f.db.rows(`select work_id from brain.source_work_publications where work_id='${work}'`)).toEqual([]);
+ }finally{release();await pending;}
 },120000);

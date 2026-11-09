@@ -365,6 +365,7 @@ export type CommandSpec<T = unknown> = DatabaseCommandSpec<T> | StandaloneComman
 export type CreateConnectionStore = NonNullable<import('./runtime/brain-store.js').OpenBrainStoreOptions['createStore']>;
 
 export interface DispatchRuntime {
+  onWorkProgress?: BrainDependencies['onWorkProgress'];
   /** Explicit Drive integration; the default CLI never opens an external account. */
   driveFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['drive'];
   sourceSyncFactory?: (store: Store & SchemaStore & SettingsStore) => BrainDependencies['sourceSync'];
@@ -464,6 +465,7 @@ export async function dispatch(
       rawExtensionInput: runtime.rawExtensionInput,
       createStore: runtime.createStore,
       driveFactory: runtime.driveFactory,
+      onWorkProgress: runtime.onWorkProgress,
       sourceSyncFactory: runtime.sourceSyncFactory,
       driveNetwork: runtime.driveNetwork,
       stdin: runtime.stdin ?? (() => readStdin()),
@@ -552,6 +554,7 @@ export async function dispatch(
 
 /** The parts of the runtime `execute` passes on to a command or to the SDK. */
 interface Wiring {
+  onWorkProgress?: BrainDependencies['onWorkProgress'];
   driveFactory?: DispatchRuntime['driveFactory'];
   sourceSyncFactory?: DispatchRuntime['sourceSyncFactory'];
   driveNetwork?: DriveRuntimeNetwork;
@@ -652,7 +655,7 @@ async function execute(
   // Assemble the spool without Drive I/O: a failed write guard must be able
   // to hand off a hook after its single schema probe.
   const baseDependencies = brainDependencies({
-    home, env, config, store, clock, idGen, workHandlers, schemaVersions: expected,
+    home, env, config, store, clock, idGen, workHandlers, onWorkProgress:wiring.onWorkProgress, schemaVersions: expected,
     adapterProbeIds: opened.adapterProbeIds, runner: wiring.runner,
   });
   const spool = baseDependencies.spool;
