@@ -114,3 +114,6 @@ apps/cli/extensions/
 
 # Python slot coordinator ownership ledger
 .brain-test-runs/
+
+# Structured test:changed observations
+.brain-test-changed/
