@@ -27,6 +27,9 @@ const projects = roots.flatMap((root) =>
           name: entry.name,
           root: packageRoot,
           include: ['test/**/*.test.ts'],
+          // The hook's ordered installation and Python preservation cases share
+          // one fixture, so the Python suite owns the entire file.
+          ...(root === roots[2] && entry.name === 'bootstrap' ? { exclude: ['test/hook.test.ts'] } : {}),
           testTimeout: 30_000,
           hookTimeout: 60_000,
           ...(existsSync(globalSetup) ? { globalSetup } : {}),
