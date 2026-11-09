@@ -654,3 +654,15 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 �
 - 정확 소유 fixture 생성/제거503개 대응, 전용 TS/4slot·hook project/container/network/volume 부재 및30job 종료 근거를 확인했다. 타 소유 자원 광역 정리는 없다. 원시·워크트리/브랜치/세션·장부/scratch를 보존하고 중앙 비공개 archive에도 보관했다.
 
 built는 사용자 인수 done이 아니다. 후속8.6과19.1/19.8은 수락 source의 schema44/실제 migration hash·공통 HTTP/fixture/선택 영향과 필요한 독립 확인·관련 검증을 진행 명령 종료 경계에서 대조한다.
+
+## 19.8 — test:changed 구조화 실행 기록 수락 (2026-11-09)
+
+근거: [계획](../tickets/epic-test-time/tickets/story-test-changed-plan.md)의 Review Triage Log·Verification Results·Auto Run Result와 [기록 계약](../../../tooling/test-changed/README.md), 최종 source `892b62f9384885cc1878818b1a9ced2e62f99529`. 중앙은 원격 SHA/clean·원source와 통합 후 실행코드 동일 hash·r4/incoming 독립 감사·실제 회귀/관측/자원 처분을 대조했다.
+
+- `.brain-test-changed/<UUID>.json` v1은 UTC/monotonic·단계별 exit/signal·기준ref/SHA·입력/선택파일/규칙이유·완료/실패/중단/미완료를 원자적 best-effort snapshot으로 남긴다. 기존 선택/명령/exit 및 rules는 불변이며 기록 쓰기 실패로 시험 결과를 바꾸지 않는다. 기록은 gitignored라 선택·hook snapshot 입력에 혼입되지 않는다.
+- 최초 전체 TS237파일5042시험 exit0·742.9058초 → Python16파일76선택case exit0·229.3816초를 순차 실행했다. 이는 sourcef361d8d/schema43+19.8구현의 결과다. 8.5 수락main/schema44 정상 통합 뒤 compile·73경로 분류 불변·실제 list185/16·관련2파일45시험 exit0으로 교차 영향을 확인했다. 결합 schema44 전체 통과로 소급하지 않는다.
+- 별도 실제 도구 관측에서 지휘자의 합성 사본 준비 실수가 있었다. 최초 pnpm symlink 안전 거부 exit1, 교정 뒤 합성 Git의 의존성 symlink9경로 오추적으로 Python전체가 의도치 않게 선택돼 부분 실행했다. 정확 coordinator PID/start·자기run을 대조해 SIGTERM, Python143/상위1·5pass/5signal·미배정 표시를 보존했다. 이를 추가 heavy 없음·정상 전체 완료로 바꾸지 않는다. 합성 index를 교정하고 입력 문서1건·tracked diff0을 확인한 마지막 관측은 하위suite0·exit0이었다. 향후 소비자는 실제 실행 전 입력 경로와 선택 목록의 기대 집합을 검증하고 단순 기록 관측 때문에 긴 suite가 시작되지 않도록 준비를 대조한다.
+- 기록 목록은 실제 완료 manifest가 아니다. tracer는 기본 단계에 포함된 공유시간/null이며 독립 비용으로 합산하지 않는다. runner-only signal은 미관측 incomplete를 남길 수 있어 자식 종료·정상 정리를 추론하지 않는다. SHA/exit 미관측은 null이고 기록 실패 자체는 관측 부재다. 알려진 credential/민감경로 가림은 임의 불투명 비밀의 완전 판별 보장이 아니다. env/오류원문/개인홈 절대값은 JSON에 남기지 않는다.
+- 필수 회귀와 추가 부분 관측의249개 정확 container ID 전부 부재, hook2 project/network/volume 부재·portbind를 확인했다. 정상 hookhome 부재와 중단 hookhome·parent HOME/TMP/venv/합성 사본·원시 증거 보존을 구별한다. 기존 runner 내부 ignored job TMP도 숨기지 않으며 타 소유 자원은 변경하지 않았다. 워크트리/브랜치/세션과 중앙 비공개 archive에 근거를 보존했다.
+
+built/deferred[]/추가 operator_actions 없음이며 사용자 인수 done은 아니다. 후속19.9는 v1 기록을 안전하게 소비하고 좁힐 경로별 실제 import/spawn/파일읽기 비의존 근거·인접 음성을 확인한다. 19.1/8.6은 실행 명령 종료 경계에서 수락 기록 계약과 필요한 선택 영향을 대조한다.
