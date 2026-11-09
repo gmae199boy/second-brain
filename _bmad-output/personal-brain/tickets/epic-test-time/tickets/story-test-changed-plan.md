@@ -3,7 +3,7 @@ title: 'test:changed 구조화 실행 기록 (19.8)'
 type: 'feature'
 ticket: '8'
 created: '2026-11-09'
-status: 'in-review'
+status: 'built'
 baseline_revision: '4e63538383590b575847754362c61630acd82a3b'
 route: 'full'
 route_source: 'pinned'
@@ -62,7 +62,7 @@ deferred: []
 - [x] 1 `tooling/test-changed/` 기록 helper 및 `run.mjs`, `.gitignore` -- 단계관측/선택명·이유/비교ref·SHA·입력·best-effort/고유원자적 snapshot 통합. 기존 선택/명령/종료 불변.
 - [x] 2 `tooling/test-db/test/test-changed.test.ts` 및 필요 전용회귀 -- 위 matrix 모든 행의 모의자식 계약 회귀 코드 작성. 기록 enabled/불가의 명령순서·exit/signal 동등성과 비밀가림/강제종료/동시실행을 검증. 시험 실행 금지, 컴파일 확인만.
 - [x] 3 `tooling/test-changed/README.md` -- version/필드·위치·읽는법·시간/exit주체·생략/미완료·tracer포함단계/기록실패 계약을 19.9가 소비할 수 있게 기록.
-- [ ] 4 지휘자 -- diff/matrix 감사·4렌즈 독립리뷰·필요수정/독립후속, 전용환경 preflight 뒤 전체TS→Python 각1회·실패별 관련재검증·정확자원감사·built/commit/일반branchpush/중앙보고.
+- [x] 4 지휘자 -- diff/matrix 감사·4렌즈 독립리뷰·필요수정/독립후속, 전용환경 preflight 뒤 전체TS→Python 각1회·실패별 관련재검증·정확자원감사·built/commit/일반branchpush/중앙보고.
 
 **Acceptance Criteria:**
 - Given 합성 변경과 list/실행 결과, when 실제 runner를 호출, then 한 실행의 버전 JSON에서 기준/head·입력·파일명/이유·각단계 시작/끝/경과/exit/중단·완료상태를 복원한다.
@@ -156,3 +156,25 @@ deferred: []
 ### 수락 main 통합
 
 - 중앙은8.5 source `ed915a226b26f7e14dda67003c0a94b8706399c8`, main `8839c35408cbd02e07d2d6b62ebd848cdb03e4ca`/schema44를 수락했다. 진행명령 종료 뒤 자기branch에 정상merge하고 incoming영향/독립확인/관련선택검증을 수행한다. 원baseline·최초전체결과·관측실패 이력은 변경하지 않는다. 추가전체자동반복은 하지 않는다.
+
+
+### 수락 main 통합 결과
+
+- 19.8 source `f361d8d40a8170c0e1fd470d665428440d7d782a`를 보존한 정상 merge HEAD는 `93d4bb20d6b52cf6bf98744388b16a67dcdb2fe6`이다. 중앙수락 main `8839c35408cbd02e07d2d6b62ebd848cdb03e4ca`/schema44를 포함한다. 19.8 source/helper/rules/회귀는 incoming에 의해 바뀌지 않았다.
+- 통합 build/typecheck/diff-check exit0. 원baseline과 비교한 migration0001~0043바이트 동일, 새0044와 postgres자식fixture3개는 기존넓은규칙에 모두포함된다. query-perf4파일의baseline39/current44·미래45거절·0044manifest정합은 독립Sol이 확인했다.
+- incoming73경로 각각의 원분류와 현재분류는 동일하다. 실제Vitest list는 기본185/Python16, exit0이며 하위suite는 실행하지 않았다. 이 선택이면 Python/Postgres전체를 고르지만 추가전체반복은 하지 않았다(`verify/incoming-selection.json`).
+- 독립 `review-incoming-evidence.md`는 새finding0, 관련45시험이면교차계약확인에충분하다고판정했다. 이후 위 mergeHEAD에서 **관련2파일45시험 pass/exit0/22.3184초**, UTC02:04:55.582855~02:05:17.901635를확인했다(`verify/incoming-related.json/log`). 최초전체를merge후전체pass로소급하지않는다.
+- root 기록은 최초회귀5개+관련회귀5개로총10개 valid v1/절대홈값0이다(`verify/record-audit-final.json`). 원시/사본/브랜치/워크트리/세션/장부는보존한다.
+
+## Operator Actions
+
+- 추가운영입력·계정조치없음. 중앙의결과수락/main병합·push와사용자인수는별도다. 보존한합성증거영역을자동삭제하지않는다.
+
+## Auto Run Result
+
+- 상태 **built**(사용자인수전). 실행단계·전용Run/Task/Dispatch·최초Terra ready/depth1·최상위부모없음·원baseline·검증/리뷰/자원증거는 `.brain-automation/worker.json`과19.8로컬보고에보존했다. 최종범위commit/일반branchpush·정확원격SHA/clean영수증은 `.brain-automation/tickets/19.8/final-report.md`에서확인한다. 중앙main/state는변경하지않는다.
+- 구현: runner의기존선택/명령/exit를유지하며v1 JSON관측을추가했다. `.gitignore`는기록입력혼입을막고, `record.mjs`는안전필드/atomic best-effort snapshot, README는소비계약, 전용회귀와고정baseline/preload는matrix와비간섭을검증한다. rules와제품/migration은19.8에서편집하지않았다.
+- 리뷰: 공식4렌즈r1의17행(high2/medium10/low1/false4)을개별triage했다. 채택항목은신호/가림/오류/시간/fixture/검증공백수정과r2~r4 독립확인으로해결했다. r2/r3각medium1(가림접두/Stripe구분자)도수정·독립확인했다. IA-A공유tracer/IA-B list표면/IA-E usage범위/IA-F 진행중인도는원문과실행구조근거로기각했다. deferred는단일빈목록이다.
+- 후속리뷰권고 **false**: r1의높은위험수정에필요한독립확인과수락main교차계약/증거감사가끝났고미확인기능결함은없다. 관련45시험까지실제통과했다.
+- 검증: 최초필수전체TS237파일5042시험/Python16파일76case exit0을순차확보했다. 새기록37+기존선택8 pass, 실제도구문서전용관측pass, incoming컴파일/목록/분류/관련45pass. 별도관측준비오류로발생한추가Python부분실행의SIGTERM중단과미배정표시·상위exit1은위에원형보존했다. 이를정상완료로꾸미지않는다.
+- 한계: 첫전체는원소스/schema43+19.8구현의결과이며incoming/schema44는수락8.5증거·독립영향감사·관련검증으로확인했다. tracer시간은공유단계/null, list는실제완료manifest가아니며runner-only신호는미관측incomplete일수있다. 임의불투명비밀완전판별보장은없다. parentHOME/TMP와중단hookhome은합성증거로보존돼있고PG/container/volume잔존과구별한다.
