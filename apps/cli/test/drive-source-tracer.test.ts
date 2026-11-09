@@ -27,7 +27,7 @@ async function fixture(){
   const assemble=(inputEnv:NodeJS.ProcessEnv)=>brainDependencies({home,env:inputEnv,config,store,clock,idGen:ids,schemaVersions:EXPECTED_SCHEMA_VERSIONS,workHandlers:{},sourceSyncFactory});
   const dependencies=assemble(env);
   const brain=createBrain(dependencies);
-  async function cli(args:string[]){let stdout='',stderr='';const code=await dispatch(commands,args,{env,clock,idGen:ids,runner:pgRunner,sourceSyncFactory,stdout:s=>{stdout+=s;},stderr:s=>{stderr+=s;}});return {code,stdout,stderr,body:stdout?JSON.parse(stdout):null};}
+  async function cli(args:string[],driveFactory?:DispatchRuntime['driveFactory']){let stdout='',stderr='';const code=await dispatch(commands,args,{env,clock,idGen:ids,runner:pgRunner,sourceSyncFactory,driveFactory,stdout:s=>{stdout+=s;},stderr:s=>{stderr+=s;}});return {code,stdout,stderr,body:stdout&&args.includes('--json')?JSON.parse(stdout):null};}
   return {root,home,tempRoot,db,server,clock,ids,store,sourceId,brain,cli,temp,dependencies,env,assemble};
 }
 function seed(server:Awaited<ReturnType<typeof fakeDrive>>){
@@ -78,7 +78,7 @@ it('remote deletion preserves chunks and another source, then redaction hides al
  const f=await fixture();seed(f.server);f.server.files.set('copy',{id:'copy',name:'다른사본.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('공통검색 텍스트')});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);
  const before=await f.db.rows<{id:string;file_id:string}>("select id,file_id from brain.source_files where remote_id='text'");const target=before[0]!;const chunks=await f.db.rows(`select count(*)::int as n from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${target.file_id}')`);
  f.server.files.delete('text');expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);expect(await f.db.rows(`select unreachable from brain.source_files where id='${target.id}'`)).toEqual([{unreachable:true}]);expect(await f.db.rows(`select source_unreachable_at from brain.files where id='${target.file_id}'`)).toEqual([{source_unreachable_at:null}]);expect(await f.db.rows(`select count(*)::int as n from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${target.file_id}')`)).toEqual(chunks);
- const found=await f.cli(['recall','docs','검색','--limit','30','--json']);expect(found.body.data).toEqual(expect.arrayContaining([expect.objectContaining({source_file_id:target.id,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({source_unreachable:false,file_id:target.file_id})]));
+ const found=await f.cli(['recall','docs','검색','--limit','30','--json']);expect(found.body.data).toEqual(expect.arrayContaining([expect.objectContaining({file_id:target.file_id,origins:expect.arrayContaining([expect.objectContaining({source_file_id:target.id,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({source_unreachable:false})])})]));const merged=found.body.data.filter((row:{file_id:string})=>row.file_id===target.file_id);expect(merged).toHaveLength(1);expect(merged[0].origins.filter((origin:{kind:string})=>origin.kind==='drive')).toHaveLength(2);expect(JSON.stringify(merged)).not.toContain('source_remote_id');expect(JSON.stringify(merged)).not.toContain('internal_origins');
  expect((await f.cli(['files','redact',target.file_id,'--yes','--json'])).code).toBe(0);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);const after=await f.cli(['recall','docs','사본','--json']);expect(JSON.stringify(after.body)).not.toContain('다른사본');const show=await f.cli(['files','show','--source-file-id',target.id,'--json']);expect(show.body.ok).toBe(false);expect(show.stdout).not.toContain('remote');expect(await readdir(f.tempRoot).catch(()=>[])).toEqual([]);
 },120000);
 it('killed temporary writer preserves an open extraction and removes only owned closed bytes after restart',async()=>{
@@ -192,7 +192,7 @@ it('disconnect warns only its source while a shared source and search survive, t
  const entries=await f.db.rows<{id:string;source_id:string;file_id:string}>(`select id::text,source_id::text,file_id::text from brain.source_files where remote_id='shared' order by source_id`);expect(entries).toHaveLength(2);expect(entries[0]!.file_id).toBe(entries[1]!.file_id);
  const gone=entries.find(e=>e.source_id===f.sourceId)!,live=entries.find(e=>e.source_id===second)!,file=gone.file_id;const before=await f.db.rows(`select current_extraction_id from brain.files where id='${file}'`);const chunks=await f.db.rows(`select id,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`);
  expect(await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()})).toMatchObject({ok:true});expect(await f.db.rows(`select source_unreachable_at,current_extraction_id from brain.files where id='${file}'`)).toMatchObject([{source_unreachable_at:null,current_extraction_id:before[0]!.current_extraction_id}]);expect(await f.db.rows(`select id,body from brain.document_chunks where extraction_id=(select current_extraction_id from brain.files where id='${file}') order by ordinal`)).toEqual(chunks);
- const recall=await f.cli(['recall','docs','본문검색','--limit','30','--json']);expect(recall.body.data).toEqual(expect.arrayContaining([expect.objectContaining({source_file_id:gone.id,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({source_file_id:live.id,source_unreachable:false})]));
+ const recall=await f.cli(['recall','docs','본문검색','--limit','30','--json']);expect(recall.body.data).toHaveLength(1);expect(recall.body.data[0]).toMatchObject({file_id:file,source_unreachable:false,origins:expect.arrayContaining([expect.objectContaining({source_file_id:gone.id,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({source_file_id:live.id,source_unreachable:false})])});expect(recall.body.data[0]).not.toHaveProperty('warning');
  const goneShow=await f.cli(['files','show','--source-file-id',gone.id,'--json']);const liveShow=await f.cli(['files','show','--source-file-id',live.id,'--json']);expect(goneShow.body.meta.source_file).toMatchObject({source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'});expect(liveShow.body.meta.source_file).toMatchObject({source_unreachable:false});
  expect((await f.cli(['files','redact',file,'--yes','--json'])).code).toBe(0);expect(JSON.stringify((await f.cli(['recall','docs','공유합성','--json'])).body)).not.toContain('공유합성');expect((await f.cli(['files','show','--source-file-id',live.id,'--json'])).body.ok).toBe(false);expect(f.server.requests.some(r=>r.method==='DELETE')).toBe(false);
 },120000);
@@ -382,11 +382,19 @@ it('changes_paths_versions_recovery uses CLI sync and recall for folder rename m
  const before=await f.db.rows<{id:string;file_id:string;completed_hash:string;path:string}>("select id::text,file_id::text,completed_hash,path from brain.source_files where remote_id='note'");expect(before).toHaveLength(1);expect(before[0]!.path).toBe('이전폴더');
  f.server.files.set(folder.id,{...folder,name:'새폴더',version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
  expect(await f.db.rows("select path,unreachable from brain.source_files where remote_id='note'")).toEqual([{path:'새폴더',unreachable:false}]);
+ expect((await f.cli(['recall','docs','새폴더','--json'])).body.data).toHaveLength(1);expect((await f.cli(['recall','docs','이전폴더','--json'])).body.data).toHaveLength(0);
+ const destination={id:'destination',name:'이동대상',mimeType:'application/vnd.google-apps.folder',version:'1',parents:['root'],bytes:Buffer.alloc(0)};
+ f.server.files.set(destination.id,destination);f.server.files.set(file.id,{...file,parents:['destination'],version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect((await f.cli(['recall','docs','이동대상','--json'])).body.data).toHaveLength(1);expect((await f.cli(['recall','docs','새폴더','--json'])).body.data).toHaveLength(0);
  f.server.files.set(file.id,{...file,parents:['outside'],version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
  expect(await f.db.rows("select unreachable from brain.source_files where remote_id='note'")).toEqual([{unreachable:true}]);expect(JSON.stringify((await f.cli(['recall','docs','복구본문','--json'])).body)).toContain('FILE_SOURCE_UNREACHABLE');
  f.server.files.set(file.id,{...file,parents:['folder'],version:'3'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
  expect(await f.db.rows("select path,unreachable,file_id::text,completed_hash from brain.source_files where remote_id='note'")).toEqual([{path:'새폴더',unreachable:false,file_id:before[0]!.file_id,completed_hash:before[0]!.completed_hash}]);
  const found=await f.cli(['recall','docs','복구본문','--json']);expect(found.body).toMatchObject({ok:true});expect(JSON.stringify(found.body)).toContain('복구본문');
+ f.server.files.set(file.id,{...file,name:'변경된문서.txt',parents:['folder'],version:'4'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const renamed=await f.cli(['recall','docs','변경된문서','--json']);expect(renamed.body).toMatchObject({ok:true,data:[{file_id:before[0]!.file_id,display_name:'변경된문서.txt'}]});
+ expect((await f.cli(['recall','docs','복구문서','--json'])).body).toMatchObject({ok:true,data:[]});
+ const sdk=await f.brain.recall.docs({query:'변경된문서'});expect(sdk).toMatchObject({ok:true,data:[{file_id:before[0]!.file_id,display_name:'변경된문서.txt'}]});
 },120000);
 
 it('cursor_rejected_full_scan_atomic_prune preserves CLI recall until a real HTTP rescan completes',async()=>{
@@ -465,4 +473,190 @@ it('MIME-only photo sync fences an already running text parser without losing th
  const pending=brain.queue.drain({budgetMs:60000});try{await started;f.server.files.get('mime-race')!.mimeType='image/jpeg';expect(await f.brain.sources.sync({sourceId:f.sourceId})).toMatchObject({ok:true});expect(await f.db.rows(`select index_status,completed_version,completed_hash,file_id::text from brain.source_files where id='${before.id}'`)).toEqual([{index_status:'photo',completed_version:before.completed_version,completed_hash:before.completed_hash,file_id:before.file_id}]);release();await pending;
   expect(await f.db.rows(`select current_extraction_id::text from brain.files where id='${before.file_id}'`)).toEqual([{current_extraction_id:before.current_extraction_id}]);expect(await f.db.rows(`select id,body from brain.document_chunks where extraction_id='${before.current_extraction_id}'`)).toEqual(oldChunks);expect(await f.db.rows(`select index_status from brain.source_files where id='${before.id}'`)).toEqual([{index_status:'photo'}]);expect(await f.db.rows(`select work_id from brain.source_work_publications where work_id='${work}'`)).toEqual([]);
  }finally{release();await pending;}
+},120000);
+
+it('같은 내용의 첨부 위치와 Drive 출처가 SDK와 CLI의 한 결과에 남는다',async()=>{
+  const f=await fixture(),bytes=Buffer.from('첨부와 드라이브 공통 단어');
+  f.server.files.set('same-document',{id:'same-document',name:'합성문서.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes});
+  expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);
+  const source=(await f.db.rows<{id:string;file_id:string}>("select id,file_id from brain.source_files where remote_id='same-document'"))[0]!;
+  const local=await f.dependencies.files.put(bytes);if(!local.ok)throw Error('local put failed');
+  const location=f.ids.next(),name=f.ids.next();
+  await f.db.query(`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${source.file_id}','local','${local.location.locator}','brain',now())`);
+  await f.db.query(`insert into brain.file_names(id,file_id,name_source,text) values ('${name}','${source.file_id}','attachment_name','합성첨부.txt')`);
+  const sdk=await f.brain.recall.docs({query:'공통'});expect(sdk.ok).toBe(true);if(!sdk.ok)throw Error('SDK search failed');
+  expect(sdk.data).toHaveLength(1);expect(sdk.data[0]).toMatchObject({file_id:source.file_id,origins:expect.arrayContaining([expect.objectContaining({kind:'location',source_url:expect.stringMatching(/^file:/)}),expect.objectContaining({kind:'drive',source_file_id:source.id,source_url:'https://drive.google.com/file/d/same-document/view'})])});
+  const cli=await f.cli(['recall','docs','공통','--json']);expect(cli.body.data).toHaveLength(1);expect(cli.body.data[0].origins).toHaveLength(2);expect(cli.stdout).not.toContain('internal_origins');expect(cli.stdout).not.toContain('source_remote_id');
+  const row=cli.body.data[0];const shown=await f.cli(['files','show',source.file_id,'--source-file-id',source.id,'--chunk-locator',row.chunk_locator,'--json']);expect(shown.body).toMatchObject({ok:true,meta:{source_file:{source_file_id:source.id}}});
+},120000);
+
+it('같은 PDF의 대화 첨부와 Drive 본문은 쪽 위치 하나와 두 원본을 표시한다',async()=>{
+  const f=await fixture(),bytes=carryPdf();
+  f.server.files.set('same-pdf',{id:'same-pdf',name:'원격.pdf',mimeType:'application/pdf',version:'1',parents:['root'],bytes});
+  expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+  const source=(await f.db.rows<{id:string;file_id:string}>("select id::text,file_id::text from brain.source_files where remote_id='same-pdf'"))[0]!;
+  const local=await f.dependencies.files.put(bytes);if(!local.ok)throw Error('local put failed');
+  const location=f.ids.next(),user=f.ids.next(),session=f.ids.next(),message=f.ids.next(),attachment=f.ids.next(),name=f.ids.next();
+  await f.db.query(`insert into brain.users(id,name,is_self,created_at) values ('${user}','synthetic',0,now()); insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${session}','claude-code','synthetic-pdf','${user}','synthetic',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','pdf-message','user','synthetic',now()); insert into brain.message_attachments(id,message_id,ordinal,source_kind,display_name,file_id,status) values ('${attachment}','${message}',0,'file','대화첨부.pdf','${source.file_id}','stored'); insert into brain.file_names(id,file_id,name_source,text) values ('${name}','${source.file_id}','attachment_name','대화첨부.pdf'); insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${source.file_id}','local','${local.location.locator}','brain',now())`);
+  const found=await f.cli(['recall','docs','Drivecarry','--json']);expect(found.body).toMatchObject({ok:true});expect(found.body.data).toHaveLength(1);
+  const row=found.body.data[0];expect(row.file_id).toBe(source.file_id);expect(JSON.parse(row.chunk_locator)).toMatchObject({type:'pdf',page:1});expect(row.origins).toEqual(expect.arrayContaining([expect.objectContaining({kind:'location',source_url:expect.stringMatching(/^file:/)}),expect.objectContaining({kind:'drive',source_file_id:source.id,source_url:'https://drive.google.com/file/d/same-pdf/view'})]));
+  const shown=await f.cli(['files','show',source.file_id,'--chunk-locator',row.chunk_locator,'--json']);expect(shown.body).toMatchObject({ok:true,data:[expect.objectContaining({body:expect.stringContaining('Drivecarry')})]});
+  expect((await f.cli(['files','redact',source.file_id,'--yes','--json'])).code).toBe(0);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);
+  for(const query of ['대화첨부','원격.pdf','Drivecarry']){const hidden=await f.cli(['recall','docs',query,'--json']);expect(hidden.body.data).toEqual([]);expect(hidden.stdout).not.toContain('same-pdf');}
+  const hiddenShow=await f.cli(['files','show','--source-file-id',source.id,'--json']);expect(hiddenShow.body.ok).toBe(false);expect(hiddenShow.stdout).not.toContain('same-pdf');expect(hiddenShow.stdout).not.toContain('원격.pdf');
+},120000);
+
+it('폴더 이름으로 사진을 찾고 rename 뒤 새 이름만 찾는다',async()=>{
+ const f=await fixture();const folder={id:'photo-folder',name:'옛사진폴더',mimeType:'application/vnd.google-apps.folder',version:'1',parents:['root'],bytes:Buffer.alloc(0)},photo={id:'photo-item',name:'image.jpg',mimeType:'image/jpeg',version:'1',parents:['photo-folder'],bytes:Buffer.from('fake image')};
+ f.server.files.set(folder.id,folder);f.server.files.set(photo.id,photo);expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const before=await f.cli(['recall','docs','옛사진폴더','--json']);expect(before.body.data).toMatchObject([{file_id:null,index_status:'photo'}]);
+ f.server.files.set(folder.id,{...folder,name:'새사진폴더',version:'2'});expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ expect((await f.cli(['recall','docs','새사진폴더','--json'])).body.data).toMatchObject([{file_id:null,index_status:'photo'}]);expect((await f.cli(['recall','docs','옛사진폴더','--json'])).body.data).toEqual([]);
+},120000);
+
+it('Drive home 미연결 원본은 CLI와 SDK의 보존 본문이나 정상 source를 막지 않는다',async()=>{
+  const f=await fixture(),bytes=Buffer.from('정상출처 보존본문');
+  f.server.files.set('live-doc',{id:'live-doc',name:'정상문서.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes});
+  expect((await f.cli(['sources','sync',f.sourceId,'--json'])).code).toBe(0);
+  const source=(await f.db.rows<{id:string;file_id:string}>("select id::text,file_id::text from brain.source_files where remote_id='live-doc'"))[0]!,location=f.ids.next();
+  await f.db.query(`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${source.file_id}','drive','${'a'.repeat(64)}','brain',now())`);
+  const sdk=await f.brain.recall.docs({query:'보존본문'});expect(sdk).toMatchObject({ok:true,data:[{file_id:source.file_id,source_unreachable:false,body:expect.stringContaining('보존본문'),origins:expect.arrayContaining([expect.objectContaining({kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({kind:'drive',source_file_id:source.id,source_unreachable:false})])}]});
+  const cli=await f.cli(['recall','docs','보존본문','--json']);expect(cli.body).toMatchObject({ok:true,data:[{file_id:source.file_id,source_unreachable:false,origins:expect.arrayContaining([expect.objectContaining({kind:'location',source_unreachable:true}),expect.objectContaining({kind:'drive',source_file_id:source.id})])}]});expect(cli.stdout).not.toContain('internal_origins');
+},120000);
+
+
+it('모든 미색인 상태를 SDK와 CLI 이름 검색 및 show에서 보존한다',async()=>{
+ const f=await fixture();
+ for(const status of ['photo','too_large','unsupported','pending','failed'] as const){
+  const id=f.ids.next();await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,index_status,unreachable) values ('${id}','${f.sourceId}','status-${status}','상태-${status}','폴더-${status}','application/octet-stream','1','${status}',false)`);
+  const sdk=await f.brain.recall.docs({query:`상태-${status}`});expect(sdk).toMatchObject({ok:true,data:[{file_id:null,chunk_locator:null,index_status:status,source_file_id:id}]});
+  const cli=await f.cli(['recall','docs',`폴더-${status}`,'--json']);expect(cli.body).toMatchObject({ok:true,data:[{file_id:null,chunk_locator:null,index_status:status,source_file_id:id}]});
+  const shown=await f.cli(['files','show','--source-file-id',id,'--json']);expect(shown.body).toMatchObject({ok:true,meta:{source_file:{index_status:status}}});
+ }
+},120000);
+
+
+it('공개 SDK와 CLI JSON text 및 show가 중첩 원본과 별칭의 비밀을 가린다',async()=>{
+ const f=await fixture(),bytes=Buffer.from('공개검증 본문');
+ f.server.files.set('mask-doc',{id:'mask-doc',name:'공개문서 password=namesecret',mimeType:'text/plain',version:'1',parents:['root'],bytes});
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const source=(await f.db.rows<{id:string;file_id:string}>("select id::text,file_id::text from brain.source_files where remote_id='mask-doc'"))[0]!;
+ await f.db.query(`insert into brain.file_names(id,file_id,name_source,text) values ('${f.ids.next()}','${source.file_id}','attachment_name','안전별칭 password=aliassecret')`);
+ await f.db.query(`update brain.source_files set path='안전경로 password=pathsecret', remote_version='password=versionsecret' where id='${source.id}'`);
+ const sdk=await f.brain.recall.docs({query:'공개검증'});expect(sdk.ok).toBe(true);
+ const json=await f.cli(['recall','docs','공개검증','--json']);const text=await f.cli(['recall','docs','공개검증']);
+ const show=await f.cli(['files','show','--source-file-id',source.id,'--json']);
+ for(const output of [JSON.stringify(sdk),json.stdout,text.stdout,show.stdout]){expect(output).not.toContain('namesecret');expect(output).not.toContain('pathsecret');expect(output).not.toContain('versionsecret');}
+ for(const output of [JSON.stringify(sdk),json.stdout,text.stdout]){expect(output).not.toContain('aliassecret');expect(output).toContain('안전별칭');expect(output).toContain('공개검증');}
+},120000);
+
+it('일곱 리터럴의 모든 문서 표면을 SDK와 CLI에서 전수 LIKE oracle과 비교한다',async()=>{
+ const f=await fixture(),queries=['공백 질의','a-b','AND','"따옴표"','%','_','\\'];
+ const sql=(value:string)=>`'${value.replaceAll("'","''")}'`;
+ const key=(file:string|null,extraction:string|null,locator:string|null,source:string|null)=>JSON.stringify(file ? [file,extraction,locator] : [null,source,null]);
+ const witnesses=new Map<string,string[]>();
+ async function makeFile(label:string){
+  const id=f.ids.next(),hash=contentHashOfBytes(Buffer.from(label));
+  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${id}','${hash}',1,now())`);return id;
+ }
+ async function addName(file:string,value:string,kind:'attachment_name'|'location_path'='attachment_name'){
+  await f.db.query(`insert into brain.file_names(id,file_id,name_source,text) values ('${f.ids.next()}','${file}','${kind}',${sql(value)})`);
+ }
+ async function addSource(file:string|null,remote:string,name:string,path:string){
+  const id=f.ids.next();await f.db.query(`insert into brain.source_files(id,source_id,remote_id,name,path,mime_type,remote_version,file_id,index_status,unreachable) values ('${id}','${f.sourceId}',${sql(remote)},${sql(name)},${sql(path)},'text/plain','1',${file ? sql(file) : 'null'},'indexed',false)`);return id;
+ }
+ async function addBody(file:string,query:string){
+  const extraction=f.ids.next();await f.db.query(`insert into brain.document_extractions(id,file_id,extractor_version,attempt,status,started_at,finished_at) values ('${extraction}','${file}','oracle',1,'ok',now(),now())`);
+  const keys:string[]=[];
+  for(const [ordinal,start] of [[0,0],[1,100]] as const){
+   const body=`본문 ${query}`,locator=JSON.stringify({type:'text',start,end:start+Array.from(body).length});
+   await f.db.query(`insert into brain.document_chunks(id,extraction_id,ordinal,body,chunk_locator) values ('${f.ids.next()}','${extraction}',${ordinal},${sql(body)},${sql(locator)})`);
+   keys.push(key(file,extraction,locator,null));
+  }
+  await f.db.query(`update brain.files set current_extraction_id='${extraction}' where id='${file}'`);return keys;
+ }
+ for(const [i,query] of queries.entries()){
+  const expected:string[]=[];
+  const attachmentBody=await makeFile(`attachment-body-${i}`);await addName(attachmentBody,`첨부 문서 ${i}`);expected.push(...await addBody(attachmentBody,query));
+  const attachmentName=await makeFile(`attachment-name-${i}`);await addName(attachmentName,`첨부 이름 ${query}`);expected.push(key(attachmentName,null,null,null));
+  const external=await makeFile(`external-${i}`),path=`~/외부 ${query}`;
+  await f.db.query(`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${f.ids.next()}','${external}','local',${sql(path)},'external',now())`);
+  await addName(external,path,'location_path');expected.push(key(external,null,null,null));
+  const driveBody=await makeFile(`drive-body-${i}`);await addSource(driveBody,`body-${i}`,'일반 문서','일반 경로');expected.push(...await addBody(driveBody,query));
+  const driveName=await makeFile(`drive-name-${i}`);await addSource(driveName,`name-${i}`,`원격 이름 ${query}`,'일반 경로');expected.push(key(driveName,null,null,null));
+  const drivePath=await makeFile(`drive-path-${i}`);await addSource(drivePath,`path-${i}`,'일반 문서',`원격 경로 ${query}`);expected.push(key(drivePath,null,null,null));
+  const sourceName=await addSource(null,`only-name-${i}`,`단독 이름 ${query}`,'일반 경로');expected.push(key(null,null,null,sourceName));
+  const sourcePath=await addSource(null,`only-path-${i}`,'일반 문서',`단독 경로 ${query}`);expected.push(key(null,null,null,sourcePath));
+  witnesses.set(query,expected);
+ }
+ for(const query of queries){
+  const pattern='%'+query.replace(/[\\%_]/g,'\\$&')+'%',p=sql(pattern);
+  const oracle=await f.db.rows<{file_id:string|null;extraction_id:string|null;chunk_locator:string|null;source_file_id:string|null}>(`with body_hits as (
+   select distinct f.id as file_id,e.id as extraction_id,c.chunk_locator from brain.files f join brain.document_extractions e on e.id=f.current_extraction_id and e.status='ok' join brain.document_chunks c on c.extraction_id=e.id where f.redacted_at is null and lower(c.body) like lower(${p}) escape '\\'
+  ), name_hits as (
+   select f.id as file_id from brain.files f where f.redacted_at is null and not exists(select 1 from body_hits b where b.file_id=f.id) and (
+    exists(select 1 from brain.file_names n where n.file_id=f.id and lower(n.text) like lower(${p}) escape '\\' and (n.name_source='attachment_name' or exists(select 1 from brain.file_locations l where l.file_id=f.id and l.store_kind='local' and l.ownership='external' and l.deleted_at is null and l.locator=n.text)))
+    or exists(select 1 from brain.source_files sf where sf.file_id=f.id and (lower(sf.name) like lower(${p}) escape '\\' or lower(sf.path) like lower(${p}) escape '\\')))
+  ) select file_id::text,extraction_id::text,chunk_locator,null::text as source_file_id from body_hits
+    union all select file_id::text,null::text,null::text,null::text from name_hits
+    union all select null::text,null::text,null::text,sf.id::text from brain.source_files sf where sf.file_id is null and (lower(sf.name) like lower(${p}) escape '\\' or lower(sf.path) like lower(${p}) escape '\\')`);
+  const expected=oracle.map(r=>key(r.file_id,r.extraction_id,r.chunk_locator,r.source_file_id)).sort();
+  for(const witness of witnesses.get(query)!)expect(expected,`oracle omitted ${query}: ${witness}`).toContain(witness);
+  const sdk=await f.brain.recall.docs({query,limit:200});expect(sdk.ok).toBe(true);if(!sdk.ok)throw Error('SDK search');
+  const cli=await f.cli(['recall','docs',query,'--limit','200','--json']);expect(cli.body.ok).toBe(true);
+  type PublicRow={file_id:string|null;extraction_id:string|null;chunk_locator:string|null;source_file_id?:string};
+  const keys=(rows:PublicRow[])=>rows.map(r=>key(r.file_id,r.extraction_id,r.chunk_locator,r.source_file_id??null)).sort();
+  expect(sdk.meta.has_more).toBe(false);expect(cli.body.meta.has_more).toBe(false);
+  expect(sdk.warnings).not.toContain('RESULT_TRUNCATED');expect(cli.body.warnings).not.toContain('RESULT_TRUNCATED');
+  expect(keys(sdk.data),`SDK ${query}`).toEqual(expected);expect(keys(cli.body.data),`CLI ${query}`).toEqual(expected);
+ }
+},120000);
+
+it('보존 본문에서 누락된 로컬 원본만 불가로 표시하고 정상 Drive source를 유지한다',async()=>{
+ const f=await fixture(),bytes=Buffer.from('누락바이트 보존본문');
+ f.server.files.set('missing-local',{id:'missing-local',name:'보존문서.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes});
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const source=(await f.db.rows<{id:string;file_id:string}>("select id::text,file_id::text from brain.source_files where remote_id='missing-local'"))[0]!;
+ const put=await f.dependencies.files.put(bytes);if(!put.ok)throw Error('local put');
+ await f.db.query(`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${f.ids.next()}','${source.file_id}','local','${put.location.locator}','brain',now())`);
+ expect(await f.dependencies.files.delete(put.location)).toMatchObject({ok:true,deleted:true});
+ for(const result of [await f.brain.recall.docs({query:'누락바이트'}),(await f.cli(['recall','docs','누락바이트','--json'])).body]){
+  expect(result).toMatchObject({ok:true,data:[{file_id:source.file_id,source_unreachable:false,body:expect.stringContaining('보존본문'),origins:expect.arrayContaining([expect.objectContaining({kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}),expect.objectContaining({kind:'drive',source_file_id:source.id,source_unreachable:false})])}]});
+ }
+},120000);
+
+it('external 표시경로는 SDK와 CLI에서 정확하게 연결되고 저장된 불가 상태를 지킨다',async()=>{
+ const f=await fixture(),file=f.ids.next(),path='~/합성문서/외부경로.txt',hash=contentHashOfBytes(Buffer.from('external-fixture'));
+ await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','${hash}',1,now());insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${f.ids.next()}','${file}','local','${path}','external',now());insert into brain.file_names(id,file_id,name_source,text) values ('${f.ids.next()}','${file}','location_path','${path}')`);
+ for(const result of [await f.brain.recall.docs({query:'외부경로'}),(await f.cli(['recall','docs','외부경로','--json'])).body])expect(result).toMatchObject({ok:true,data:[{file_id:file,source_unreachable:false,origins:[{kind:'location',source_url:path,source_unreachable:false}]}]});
+ await f.db.query(`update brain.files set source_unreachable_at=now() where id='${file}'`);
+ for(const result of [await f.brain.recall.docs({query:'외부경로'}),(await f.cli(['recall','docs','외부경로','--json'])).body])expect(result).toMatchObject({ok:true,data:[{file_id:file,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE',origins:[{kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}]}]});
+},120000);
+
+it('연결된 모든 미색인 상태는 이름 show와 현재 보존 본문에 함께 남는다',async()=>{
+ const f=await fixture();f.server.files.set('retained',{id:'retained',name:'상태원본.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes:Buffer.from('보존세대 공통본문')});
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const source=(await f.db.rows<{id:string;file_id:string}>("select id::text,file_id::text from brain.source_files where remote_id='retained'"))[0]!;
+ for(const status of ['photo','too_large','unsupported','pending','failed'] as const){
+  await f.db.query(`update brain.source_files set name='상태-${status}',index_status='${status}' where id='${source.id}'`);
+  const names=await f.brain.recall.docs({query:`상태-${status}`});expect(names).toMatchObject({ok:true,data:[{file_id:source.file_id,chunk_locator:null,index_status:status,origins:[expect.objectContaining({kind:'drive',index_status:status})]}]});
+  const namesCli=await f.cli(['recall','docs',`상태-${status}`,'--json']);expect(namesCli.body).toMatchObject({ok:true,data:[{file_id:source.file_id,chunk_locator:null,index_status:status}]});
+  const shown=await f.cli(['files','show','--source-file-id',source.id,'--json']);expect(shown.body).toMatchObject({ok:true,meta:{source_file:{file_id:source.file_id,index_status:status}}});
+  for(const result of [await f.brain.recall.docs({query:'보존세대'}),(await f.cli(['recall','docs','보존세대','--json'])).body])expect(result).toMatchObject({ok:true,data:[{file_id:source.file_id,body:expect.stringContaining('공통본문'),index_status:status,origins:[expect.objectContaining({kind:'drive',index_status:status})]}]});
+ }
+},120000);
+
+
+it('정상 Drive home의 root와 존재 확인 후 SDK와 CLI에 URL을 공개한다',async()=>{
+ const f=await fixture(),bytes=Buffer.from('드라이브홈 본문');
+ f.server.files.set('drive-home-doc',{id:'drive-home-doc',name:'드라이브홈.txt',mimeType:'text/plain',version:'1',parents:['root'],bytes});
+ expect((await f.cli(['sources','sync',f.sourceId,'--json'])).body).toMatchObject({ok:true});
+ const source=(await f.db.rows<{id:string;file_id:string;content_hash:string}>("select sf.id::text,sf.file_id::text,f.content_hash from brain.source_files sf join brain.files f on f.id=sf.file_id where sf.remote_id='drive-home-doc'"))[0]!,location=f.ids.next();
+ await f.db.query(`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${source.file_id}','drive','${'a'.repeat(64)}','brain',now());insert into brain.drive_location_roots(location_id,root_folder_id,content_hash) values ('${location}','drive-home-root','${source.content_hash}')`);
+ let existsCalls=0,urlCalls=0;
+ const driveFactory:NonNullable<DispatchRuntime['driveFactory']>=store=>({store:store as unknown as NonNullable<BrainDependencies['drive']>['store'],uploads:{} as NonNullable<BrainDependencies['drive']>['uploads'],rootFolderId:'drive-home-root',files:{...f.dependencies.files,async exists(){existsCalls++;return {ok:true,exists:true};},async url(){urlCalls++;return {ok:true,url:'https://example.invalid/drive-home'};}}});
+ const drive=driveFactory(f.store);if(!drive)throw Error('drive');const brain=createBrain({...f.dependencies,drive});
+ const sdk=await brain.recall.docs({query:'드라이브홈'}),cli=await f.cli(['recall','docs','드라이브홈','--json'],driveFactory);
+ for(const result of [sdk,cli.body]){expect(result).toMatchObject({ok:true,data:[{file_id:source.file_id,source_unreachable:false,origins:expect.arrayContaining([expect.objectContaining({kind:'location',source_url:'https://example.invalid/drive-home',source_unreachable:false})])}]});expect(result.data[0]).not.toHaveProperty('warning');}
+ expect(existsCalls).toBe(2);expect(urlCalls).toBe(2);
 },120000);

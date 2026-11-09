@@ -42,7 +42,7 @@ interface Kit {
  * recorded — which is the least a collection needs (AD-12).
  */
 async function kit(
-  options: { withFolder?: boolean; listFailure?: string; store?: MemoryStore; spool?: MemorySpool; parser?: ReturnType<typeof memoryParser> } = {},
+  options: { withFolder?: boolean; listFailure?: string; store?: MemoryStore; spool?: MemorySpool; parser?: ReturnType<typeof memoryParser>; files?: BrainDependencies['files']; drive?: BrainDependencies['drive'] } = {},
 ): Promise<Kit> {
   const store = options.store ?? memoryStore();
   expect(await store.ensureSelfUser(sampleSelfUserInput())).toMatchObject({ ok: true });
@@ -69,7 +69,8 @@ async function kit(
       },
     },
     spool,
-    files: memoryFileStore(),
+    files: options.files ?? memoryFileStore(),
+    ...(options.drive ? {drive:options.drive} : {}),
     schemaVersions: { core: 6 },
     clock: fixedClock(NOW),
     idGen: sequenceIdGen({ timestampMs: NOW.getTime() }),
@@ -454,4 +455,89 @@ it('spool 대기 중 원본이 사라지거나 생겨도 처음 캡처한 stored
     { ordinal: 0, status: 'stored', file: { sizeBytes: 1, locations: [{ ownership: 'brain' }, { locator: '~/first.pdf' }] } },
     { ordinal: 1, status: 'missing_at_ingest', file: null },
   ] });
+});
+
+describe('createBrain 문서 원본 resolver',()=>{
+  const locator=JSON.stringify({type:'pdf',page:1}),fileId='file-1',body='찾기 본문';
+  function sourceStore(names=['password=SecretName','안전 별칭']){
+    const base=memoryStore();let redacted=false,deleted=false,dbFailure=false,storedUnreachable=false;
+    const locations=[{id:'local-id',fileId,storeKind:'local' as const,ownership:'brain' as const,locator:'local-private',deletedAt:null},{id:'drive-id',fileId,storeKind:'drive' as const,ownership:'brain' as const,locator:'drive-private',deletedAt:null}];
+    const store={...base,async searchDocuments(){return {ok:true as const,rows:[{kind:'document' as const,file_id:fileId,display_name:'report',names,chunk_locator:locator,extraction_id:'generation',report_date:'2026-01-01',source:'fixture',source_unreachable:false,body,ordinal:0,internal_origins:locations.map(l=>({kind:'location' as const,location_id:l.id,store_kind:l.storeKind,locator:l.locator,ownership:l.ownership,display_name:l.id,source_unreachable:false}))}],contexts:[{extraction_id:'generation',pieces:[{ordinal:0,chunk_locator:locator,body}]}]};},async readFileExtractionState(){if(dbFailure)return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'db down'};return {ok:true as const,fileId,contentHash:'sha256:fixture',sizeBytes:1,home:null,redactedAt:redacted?NOW:null,sourceUnreachableAt:storedUnreachable?NOW:null,currentExtractionId:'generation',openExtraction:null,lastAttempt:1};},async listFileLocations(){return {ok:true as const,locations:locations.filter(l=>!deleted||l.id!=='local-id')};}};
+    return {store:store as MemoryStore,setRedacted:()=>{redacted=true;},setDeleted:()=>{deleted=true;},setDbFailure:()=>{dbFailure=true;},setStoredUnreachable:()=>{storedUnreachable=true;}};
+  }
+  function driveDeps(root:string, url:BrainDependencies['files']['url']):NonNullable<BrainDependencies['drive']>{
+    const fakeStore={async readDriveLocationRoot(){return {ok:true as const,rootFolderId:root};}} as unknown as NonNullable<BrainDependencies['drive']>['store'];
+    return {store:fakeStore,uploads:{} as NonNullable<BrainDependencies['drive']>['uploads'],files:{...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},url},rootFolderId:'expected-root'};
+  }
+  it('Drive 미연결 및 root 불일치 또는 URL 실패는 해당 원본만 불가로 남긴다',async()=>{
+    for(const mode of ['disconnected','root','url'] as const){
+      const data=sourceStore(),local={...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){return {ok:true as const,url:'file:///local'};}};
+      const drive=mode==='disconnected'?undefined:driveDeps(mode==='root'?'other-root':'expected-root',async()=>({ok:false as const,code:'FILES_UNAVAILABLE' as const,message:'offline'}));
+      const {brain}=await kit({store:data.store,files:local,...(drive?{drive}:{})});const result=await brain.recall.docs({query:'찾기'});
+      expect(result).toMatchObject({ok:true,data:[{source:'fixture',source_unreachable:false,body,origins:[{kind:'location',source_url:'file:///local',source_unreachable:false},{kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}]}]});
+      expect(JSON.stringify(result)).not.toContain('SecretName');expect(JSON.stringify(result)).toContain('안전 별칭');expect(JSON.stringify(result)).not.toContain('drive-private');expect(JSON.stringify(result)).not.toContain('internal_origins');
+    }
+  });
+  it('없는 로컬 바이트와 저장 불가 상태를 보존하면서 정상 Drive home 링크를 반환한다',async()=>{
+    for(const mode of ['missing','stored','exists-error'] as const){
+      const data=sourceStore();if(mode==='stored')data.setStoredUnreachable();let localUrls=0,driveExists=0,driveUrls=0,rootReads=0;
+      const files={...memoryFileStore(),async exists(){return mode==='exists-error'?{ok:false as const,code:'FILES_UNAVAILABLE' as const,message:'offline'}:{ok:true as const,exists:mode==='stored'};},async url(){localUrls++;return {ok:true as const,url:'file:///missing'};}};
+      const drive=driveDeps('expected-root',async()=>{driveUrls++;return {ok:true,url:'https://example.invalid/drive'};});
+      drive.files={...drive.files,async exists(){driveExists++;return {ok:true,exists:true};}};
+      drive.store={...drive.store,async readDriveLocationRoot(){rootReads++;return {ok:true,rootFolderId:'expected-root'};}};
+      const {brain}=await kit({store:data.store,files,drive});const found=await brain.recall.docs({query:'찾기'});
+      expect(found).toMatchObject({ok:true,data:[{source_unreachable:false,body,origins:[{kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'},{kind:'location',source_unreachable:false,source_url:'https://example.invalid/drive'}]}]});
+      expect(localUrls).toBe(0);expect(rootReads).toBe(1);expect(driveExists).toBe(1);expect(driveUrls).toBe(1);
+    }
+  });
+  it('정상 원본이 없으면 보존 본문과 전체 불가 경고를 함께 반환한다',async()=>{
+    const data=sourceStore();data.setStoredUnreachable();const files={...memoryFileStore(),async exists(){return {ok:true as const,exists:false};}};
+    const {brain}=await kit({store:data.store,files});const result=await brain.recall.docs({query:'찾기'});
+    expect(result).toMatchObject({ok:true,data:[{body,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE',origins:[{kind:'location',source_unreachable:true},{kind:'location',source_unreachable:true}]}]});
+  });
+  it('URL 대기 중 삭제는 링크를 제외하고 가림과 DB 오류는 전체를 안전하게 실패한다',async()=>{
+    for(const action of ['delete','redact','database'] as const){
+      const data=sourceStore();let entered!:()=>void,release!:()=>void;const inside=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{release=r;});
+      const files={...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){entered();await wait;return {ok:true as const,url:'file:///local'};}};
+      const {brain}=await kit({store:data.store,files});const pending=brain.recall.docs({query:'찾기'});await inside;
+      if(action==='delete')data.setDeleted();else if(action==='redact')data.setRedacted();else data.setDbFailure();release();const result=await pending;
+      if(action==='delete'){expect(result.ok).toBe(true);expect(JSON.stringify(result)).not.toContain('file:///local');}
+      else {expect(result.ok).toBe(false);expect(JSON.stringify(result)).not.toContain(body);expect(JSON.stringify(result)).not.toContain('SecretName');}
+    }
+  });
+  it('단일 원본이 사전 확인 전이나 URL 대기 중 삭제되면 전체 불가로 남는다',async()=>{
+    for(const when of ['before','during'] as const){
+      const data=sourceStore(),base=data.store;
+      const store={...base,async searchDocuments(input:Parameters<typeof base.searchDocuments>[0]){const found=await base.searchDocuments(input);if(!found.ok)return found;return {...found,rows:found.rows.map(row=>({...row,internal_origins:row.internal_origins?.filter(origin=>origin.kind==='location'&&origin.location_id==='local-id')}))};}};
+      let entered!:()=>void,release!:()=>void;const inside=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});let urlCalls=0;
+      const files={...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){urlCalls++;entered();await gate;return {ok:true as const,url:'file:///removed'};}};
+      const {brain}=await kit({store,files});if(when==='before')data.setDeleted();
+      const pending=brain.recall.docs({query:'찾기'});
+      if(when==='during'){await inside;data.setDeleted();}release();
+      const result=await pending;expect(result).toMatchObject({ok:true,data:[{body,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE',origins:[{kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'}]}]});
+      expect(urlCalls).toBe(when==='during'?1:0);expect(JSON.stringify(result)).not.toContain('file:///removed');expect(JSON.stringify(result)).not.toContain('local-private');
+    }
+  });
+  it('삭제된 원본과 정상 동반 원본을 별도로 표시한다',async()=>{
+    const data=sourceStore();let entered!:()=>void,release!:()=>void;const inside=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});
+    const files={...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){entered();await gate;return {ok:true as const,url:'file:///removed'};}};
+    const drive=driveDeps('expected-root',async()=>({ok:true,url:'https://example.invalid/live'}));
+    const {brain}=await kit({store:data.store,files,drive});const pending=brain.recall.docs({query:'찾기'});await inside;data.setDeleted();release();
+    const result=await pending;expect(result).toMatchObject({ok:true,data:[{body,source_unreachable:false,origins:[{kind:'location',source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'},{kind:'location',source_unreachable:false,source_url:'https://example.invalid/live'}]}]});
+    if(result.ok)expect(result.data[0]).not.toHaveProperty('warning');expect(JSON.stringify(result)).not.toContain('file:///removed');
+  });
+  it('SDK는 Drive 원본이 붙은 report의 확장 메타데이터를 보존한다',async()=>{
+    const {extensionPublicProjection}=await import('../src/index.js');const data=sourceStore();const base=data.store;
+    const reportStore={...base,async searchDocuments(input:Parameters<typeof base.searchDocuments>[0]){const found=await base.searchDocuments(input);if(!found.ok)return found;return {...found,rows:found.rows.map(r=>({...r,report_provenance:true,source_file_id:'source-id',internal_origins:[...(r.internal_origins??[]),{kind:'drive' as const,source_file_id:'source-id',source_remote_id:'safe-id',display_name:'원격',source_path:'경로',index_status:'indexed' as const,source_unreachable:false,current_version:'1',completed_version:'1',stale:false}]}))};},async listExtensionInventory(){return {ok:true as const,names:[]};},async getExtensionPublicStatus(name:string){return {ok:true as const,status:extensionPublicProjection(name,null,null,0,0)};}};
+    const {brain}=await kit({store:reportStore,files:{...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){return {ok:true as const,url:'file:///local'};}}});
+    const result=await brain.recall.docs({query:'찾기'});expect(result).toMatchObject({ok:true,data:[{source:'fixture',source_file_id:'source-id'}],meta:{extensions:[{source:'fixture'}]}});expect(JSON.stringify(result)).not.toContain('report_provenance');
+  });
+  it('큰 names는 잘라 숨기지 않고 예산 초과를 보고한다',async()=>{
+    const data=sourceStore(['가'.repeat(9000)]),files={...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){return {ok:true as const,url:'file:///local'};}};
+    const {brain}=await kit({store:data.store,files});expect(await brain.recall.docs({query:'찾기'})).toMatchObject({ok:false,code:'INVALID_ARGUMENT'});
+  });
+  it('root 조회의 DB 실패는 원본 불가로 오인하지 않는다',async()=>{
+    const data=sourceStore(),drive=driveDeps('expected-root',async()=>({ok:true,url:'https://example.invalid'}));drive.store={...drive.store,async readDriveLocationRoot(){return {ok:false,code:'DB_LOCKED',message:'locked'};}};
+    const {brain}=await kit({store:data.store,files:{...memoryFileStore(),async exists(){return {ok:true as const,exists:true};},async url(){return {ok:true,url:'file:///local'};}},drive});expect(await brain.recall.docs({query:'찾기'})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  });
 });

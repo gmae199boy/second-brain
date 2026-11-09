@@ -279,12 +279,13 @@ describe('the registry of the ways out', () => {
     const probe = {
       texts: [`키는 ${SECRET} 이고 비밀번호 Tiger2024`, 'password: Pa!ss2024'],
       toolNotes: [{ tool: 'Bash', target: 'OPENAI_API_KEY=xyz123 node run.js' }],
-      documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret' }],
+      documents: [{ body: 'password=docsecret', display_name: 'password=namesecret', chunk_locator: 'password=locsecret', source_path: 'password=pathsecret', source_url: 'https://drive.google.com/file/d/password=linksecret/view', source: 'password=sourcesecret', report_date: 'password=datesecret', names: ['password=aliassecret', '안전별칭'], current_version: 'password=versionsecret', completed_version: 'password=completedsecret', origins: [{ kind: 'drive' as const, source_unreachable: false, display_name:'password=originsecret', source_path:'password=originpathsecret', source_url:'https://drive.google.com/file/d/password=originlinksecret/view', current_version:'password=originversionsecret', completed_version:'password=origindonesecret' }] }],
     };
 
     for (const codec of OUTPUT_CODECS) {
       const rendered = codec.render(probe);
-      for (const secret of [SECRET, 'Tiger2024', 'Pa!ss2024', 'xyz123', 'docsecret', 'namesecret', 'locsecret']) {
+      expect(rendered).toContain('안전별칭');
+      for (const secret of [SECRET, 'Tiger2024', 'Pa!ss2024', 'xyz123', 'docsecret', 'namesecret', 'locsecret', 'pathsecret', 'linksecret', 'sourcesecret', 'datesecret', 'aliassecret', 'versionsecret', 'completedsecret', 'originsecret', 'originpathsecret', 'originlinksecret', 'originversionsecret', 'origindonesecret']) {
         expect(rendered, `${secret} came out of the ${codec.name} codec`).not.toContain(secret);
       }
     }

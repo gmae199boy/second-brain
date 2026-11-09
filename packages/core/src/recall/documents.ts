@@ -4,7 +4,7 @@ import type { ExtensionStore } from '../ports/store.js';
 import { contentHash } from '../domain/sha256.js';
 import { decodeChunkLocator, type ChunkLocator } from '../domain/chunk-locator.js';
 import { maskOutputText, maskOutputValue } from '../output/mask.js';
-import type { DocumentRecallStore, DocumentRow } from '../ports/document-recall-store.js';
+import type { DocumentRecallStore, DocumentRow, DocumentOrigin, DocumentSearchOrigin } from '../ports/document-recall-store.js';
 import { documentContext } from './document-context.js';
 import { literalLikePattern } from './text-query.js';
 import { boundedResults } from './results.js';
@@ -18,36 +18,66 @@ export function documentSearchText(rows: readonly DocumentRow[]): string[] {
 const corrupt = () => ({ ok: false as const, code: 'SEARCH_FAILED' as const, message: '저장된 문서 문맥을 읽을 수 없습니다' });
 const invalid = (message: string) => ({ ok: false as const, code: 'INVALID_ARGUMENT' as const, message });
 const safe = (value: string) => maskOutputText(value) === value && !value.includes('\0');
-export async function searchDocuments(store: DocumentRecallStore, input: DocumentSearchInput, statusStore?: Pick<ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>) {
+export type DocumentLocationResolver = (fileId:string, origin:Extract<DocumentSearchOrigin,{kind:'location'}>) => Promise<{ok:true;url:string|null;unreachable?:boolean}|{ok:false;code:'FILES_UNAVAILABLE'|'REDACTED'|'DB_UNAVAILABLE'|'DB_LOCKED';message:string}>;
+export async function searchDocuments(store: DocumentRecallStore, input: DocumentSearchInput, statusStore?: Pick<ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>, resolveLocation?:DocumentLocationResolver) {
   const limit = input.limit ?? 5;
   if (typeof input.query !== 'string' || !input.query || !Number.isInteger(limit) || limit < 1 || limit > 200) return invalid('검색어와 1~200 사이의 개수가 필요합니다');
   const found = await store.searchDocuments({ query: input.query.replaceAll('\0', '�'), pattern: literalLikePattern(input.query), limit: limit + 1 });
   if (!found.ok) return { ...found, message: maskOutputText(found.message) };
   const rows: DocumentRow[] = [];
+  const reportSources: string[] = [];
   const contexts = new Map<string, ReturnType<typeof documentContext>>();
   for (const context of found.contexts) {
     if (contexts.has(context.extraction_id)) return corrupt();
     contexts.set(context.extraction_id, documentContext(context.pieces));
   }
-  for (const { ordinal, source_remote_id, ...row } of found.rows.slice(0, limit)) {
-    const url=source_remote_id===undefined?undefined:driveSourceUrl(source_remote_id);
-    if(source_remote_id!==undefined && (!url || !row.source_file_id || !safe(row.source_file_id)))continue;
-    if(row.extraction_id===null || row.chunk_locator===null || ordinal===null){
-      if(row.extraction_id!==null||row.chunk_locator!==null||ordinal!==null||!row.source_file_id) return corrupt();
-      rows.push({...row,...(url?{source_url:url}:{}),...(row.source_unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{})});continue;
+  for (const raw of found.rows.slice(0, limit)) {
+    const {ordinal,ordinals,report_provenance,source_remote_id,internal_origins,file_status,source_file_id,source_path,source_url,index_status,current_version,completed_version,stale,warning,origins:_ignored,...row}=raw;
+    if(report_provenance ?? !source_file_id) reportSources.push(row.source);
+    const origins:DocumentOrigin[]=[];
+    for(const origin of internal_origins ?? []) {
+      if(origin.kind==='drive') {
+        const url=driveSourceUrl(origin.source_remote_id);
+        if(!url||!safe(origin.source_file_id)) return invalid('가려지거나 잘못된 source 출처입니다');
+        origins.push({kind:'drive',source_file_id:origin.source_file_id,display_name:origin.display_name,source_path:origin.source_path,source_url:url,index_status:origin.index_status,source_unreachable:origin.source_unreachable,current_version:origin.current_version,completed_version:origin.completed_version,stale:origin.stale,...(origin.source_unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{})});
+      } else if(row.file_id && resolveLocation) {
+        const resolved=await resolveLocation(row.file_id,origin);
+        if(!resolved.ok) {
+          if(resolved.code!=='FILES_UNAVAILABLE')return {ok:false as const,code:resolved.code==='REDACTED'?'FILES_UNAVAILABLE' as const:resolved.code,message:maskOutputText(resolved.message)};
+          origins.push({kind:'location',display_name:origin.display_name,source_unreachable:true,warning:'FILE_SOURCE_UNREACHABLE'});
+        } else if(resolved.url!==null||resolved.unreachable)origins.push({kind:'location',display_name:origin.display_name,...(resolved.url!==null?{source_url:resolved.url}:{}),source_unreachable:!!resolved.unreachable,...(resolved.unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{})});
+      }
     }
-    const whole=contexts.get(row.extraction_id),position=whole?.positioned.find(p=>p.piece.ordinal===ordinal);
-    if(!whole||!position||position.piece.chunk_locator!==row.chunk_locator)return corrupt();
-    rows.push({...row,...(url?{source_url:url}:{}),...(row.source_file_id&&row.source_unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{}),body:whole.project(position.start,position.end)});
+    // Older store implementations have a single source reference.
+    if(!internal_origins && source_remote_id && source_file_id) {
+      const url=driveSourceUrl(source_remote_id);if(!url||!safe(source_file_id))continue;
+      origins.push({kind:'drive',source_file_id,display_name:row.display_name,source_path,source_url:url,index_status,source_unreachable:row.source_unreachable,current_version,completed_version,stale,...(row.source_unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{})});
+    }
+    const representative=origins.find(o=>o.kind==='drive');
+    const legacy=representative?{source_file_id:representative.source_file_id,source_path:representative.source_path,source_url:representative.source_url,index_status:representative.index_status,current_version:representative.current_version,completed_version:representative.completed_version,stale:representative.stale}:{};
+    const unreachable=internal_origins && resolveLocation ? (origins.length ? origins.every(o=>o.source_unreachable) : row.source_unreachable) : row.source_unreachable;
+    const projected={...row,...legacy,source_unreachable:unreachable,...(unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{}),...(file_status?{file_status}:{}),...(internal_origins||origins.length?{origins}:{})};
+    if(row.extraction_id===null || row.chunk_locator===null || ordinal===null){
+      if(row.extraction_id!==null||row.chunk_locator!==null||ordinal!==null||(!row.file_id&&!representative)) return corrupt();
+      rows.push(projected);continue;
+    }
+    const whole=contexts.get(row.extraction_id);
+    const selected=ordinals ?? [ordinal];
+    if(!whole||!selected.length||new Set(selected).size!==selected.length)return corrupt();
+    const positions=selected.map(n=>whole.positioned.find(p=>p.piece.ordinal===n));
+    if(positions.some(p=>!p||p.piece.chunk_locator!==row.chunk_locator))return corrupt();
+    const emitted=new Set<number>();
+    let covered = -1;
+    rows.push({...projected,body:positions.map(p=>{ const start=Math.max(p!.start,covered); covered=Math.max(covered,p!.end); return whole.project(Math.min(start,p!.end),p!.end,emitted); }).filter(Boolean).join('\n')});
   }
   if(rows.some(r => (r.file_id!==null&&!safe(r.file_id)) || (r.chunk_locator!==null&&(!safe(r.chunk_locator)||!decodeChunkLocator(r.chunk_locator).ok)) || (r.extraction_id!==null&&!safe(r.extraction_id)))) return invalid('가려지거나 잘못된 문서 출처는 사용할 수 없습니다');
-  const metadata = statusStore ? await withExtensionMetadata(statusStore, { ok:true as const }, [...(input.sources ?? []), ...rows.filter(row => !row.source_file_id).map(row => row.source)]) : undefined;
+  const metadata = statusStore ? await withExtensionMetadata(statusStore, { ok:true as const }, [...(input.sources ?? []), ...reportSources]) : undefined;
   if (metadata && !metadata.ok) return metadata;
   return boundedResults(rows, { get: r => r.body, set: (r, body) => ({ ...r, body }) }, budget => {
     const next = budget.nextIndex === null ? undefined : rows[budget.nextIndex];
     return { warnings: budget.truncated ? ['RESULT_TRUNCATED' as const] : [], meta: { ...(metadata?.meta ?? {}), count: budget.data.length, has_more: found.rows.length > limit,
       ...(rows.length ? {} : { hint: '일치하는 결과가 없습니다' }),
-      ...(next ? { omitted: { count: budget.omitted, reason: '결과 크기 한도' }, next: { ns: 'files', verb: 'show', args: { ...(next.file_id&&next.chunk_locator?{file_id:next.file_id}:{}), ...(next.source_file_id?{source_file_id:next.source_file_id}:{}), ...(next.chunk_locator?{chunk_locator:next.chunk_locator}:{}), ...(next.extraction_id?{extraction_id:next.extraction_id}:{}) } } } : {}) } };
+      ...(next ? { omitted: { count: budget.omitted, reason: '결과 크기 한도' }, next: { ns: 'files', verb: 'show', args: { ...(next.file_id?{file_id:next.file_id}:{}), ...(next.source_file_id&&(!next.file_id||next.chunk_locator)?{source_file_id:next.source_file_id}:{}), ...(next.chunk_locator?{chunk_locator:next.chunk_locator}:{}), ...(next.extraction_id?{extraction_id:next.extraction_id}:{}) } } } : {}) } };
   }, documentSearchText);
 }
 function overlaps(a: ChunkLocator, b: ChunkLocator): boolean {
@@ -67,11 +97,18 @@ export async function showDocument(store: DocumentRecallStore, input: ShowDocume
     const publicSource=maskOutputValue({...rawSource,...(rawSource.source_unreachable?{warning:'FILE_SOURCE_UNREACHABLE' as const}:{})});
     if(Array.from(JSON.stringify(publicSource)).length>6000)return invalid('source 출처가 너무 큽니다');
     if(input.chunk_locator==null){
-      if(input.file_id!=null||input.extraction_id!=null||input.offset!==undefined||input.fingerprint!==undefined)return invalid('이름 출처의 문맥 입력이 올바르지 않습니다');
+      if(input.extraction_id!=null||input.offset!==undefined||input.fingerprint!==undefined||input.before!==undefined||input.after!==undefined)return invalid('이름 출처의 문맥 입력이 올바르지 않습니다');
       return {ok:true as const,data:[] as {chunk_locator:string;body:string}[],warnings:[] as ('RESULT_TRUNCATED')[],meta:{count:0,has_more:false,generation_changed:false,source_unreachable:source.source_unreachable,next:undefined,extraction_id:null,source_file:{...publicSource,source_url:url}}};
     }
     if(!source.file_id)return invalid('본문이 없는 source입니다');
     return showFileDocument(store,{...input,file_id:source.file_id,chunk_locator:input.chunk_locator},undefined,{...publicSource,source_url:url});
+  }
+  if(typeof input.file_id==='string' && input.chunk_locator==null) {
+    if(!safe(input.file_id)||!input.file_id||input.extraction_id!=null||input.offset!==undefined||input.fingerprint!==undefined||input.before!==undefined||input.after!==undefined)return invalid('파일 출처가 올바르지 않습니다');
+    const read=await store.readDocument(input.file_id);if(!read.ok)return {...read,message:maskOutputText(read.message)};
+    if(!read.snapshot)return {...invalid('파일이 없습니다'),status:'not_found' as const};
+    if(read.snapshot.redacted)return {...invalid('가린 파일입니다'),status:'redacted' as const};
+    return {ok:true as const,data:[] as {chunk_locator:string;body:string}[],warnings:[] as ('RESULT_TRUNCATED')[],meta:{count:0,has_more:false,generation_changed:false,source_unreachable:read.snapshot.source_unreachable,next:undefined,extraction_id:read.snapshot.extraction_id,file_status:read.snapshot.status??'pending'}};
   }
   if(typeof input.file_id!=='string'||typeof input.chunk_locator!=='string')return invalid('파일과 조각 위치가 필요합니다');
   return showFileDocument(store,{...input,file_id:input.file_id,chunk_locator:input.chunk_locator},original);

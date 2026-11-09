@@ -1,3 +1,4 @@
+import { isExternalLocator } from './domain/file.js';
 import { DOCUMENT_EXTRACTOR_VERSION } from './files/extractors.js';
 import { SOURCE_SYNC_KIND, sourceSyncHandler, cleanupSourceTemps } from './sources/sync.js';
 import type { SourceStore } from './ports/source-store.js';
@@ -372,6 +373,43 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     url: location => location.storeKind === 'drive' && drive ? drive.files.url(location) : files.url(location),
     delete: location => location.storeKind === 'drive' && drive ? drive.files.delete(location) : files.delete(location),
   };
+  const resolveDocumentLocation: import('./recall/documents.js').DocumentLocationResolver = async (fileId, origin) => {
+    const check=async () => {
+      const state=await store.readFileExtractionState(fileId);
+      if(!state.ok)return {ok:false as const,code:state.code==='DB_LOCKED'?'DB_LOCKED' as const:'DB_UNAVAILABLE' as const,message:state.message};
+      if(state.redactedAt!==null)return {ok:false as const,code:'REDACTED' as const,message:'가린 파일입니다'};
+      const locations=await store.listFileLocations(fileId);
+      if(!locations.ok)return locations;
+      return {ok:true as const,unreachable:state.sourceUnreachableAt!==null,valid:locations.locations.some(l=>l.id===origin.location_id&&l.fileId===fileId&&l.deletedAt===null&&l.storeKind===origin.store_kind&&l.ownership===origin.ownership&&l.locator===origin.locator)};
+    };
+    const before=await check();if(!before.ok)return before;if(!before.valid)return {ok:true,url:null,unreachable:true};
+    const location={storeKind:origin.store_kind,ownership:origin.ownership,locator:origin.locator};
+    let url:string|null=null, unreachable=false;
+    if(location.storeKind==='local'&&location.ownership==='external') {
+      if(before.unreachable)unreachable=true;
+      else if(isExternalLocator(location.locator))url=location.locator;
+    } else if(location.ownership==='brain') {
+      let mayResolve=true;
+      if(location.storeKind==='drive') {
+        if(!drive) {unreachable=true;mayResolve=false;}
+        else {
+          const binding=await drive.store.readDriveLocationRoot(origin.location_id);
+          if(!binding.ok)return binding;
+          if(binding.rootFolderId!==drive.rootFolderId) {unreachable=true;mayResolve=false;}
+        }
+      }
+      if(mayResolve && location.storeKind==='local' && before.unreachable) {unreachable=true;mayResolve=false;}
+      if(mayResolve) {
+        const present=await sourceFiles.exists(location);
+        if(!present.ok||!present.exists)unreachable=true;
+        else {const resolved=await sourceFiles.url(location);if(resolved.ok)url=resolved.url;else unreachable=true;}
+      }
+    }
+    const after=await check();if(!after.ok)return after;
+    if(!after.valid)return {ok:true,url:null,unreachable:true};
+    if(location.storeKind==='local' && after.unreachable)return {ok:true,url:null,unreachable:true};
+    return {ok:true,url,unreachable};
+  };
   const driveDeps = drive ? {onProgress:dependencies.onWorkProgress,store:drive.store,uploads:drive.uploads,local:files,drive:drive.files,settings:{store,schemaVersions,clock},rootFolderId:drive.rootFolderId,sourceFence:drive.sourceFence,clock,idGen} : undefined;
   // The kinds Core owns, and then the caller's. `session_ingest` is Core's own
   // because what it does is a use case and the ports it needs are the ones this
@@ -516,7 +554,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       if(!result.complete)return authFailure??{ok:false,code:'SOURCE_SYNC_INCOMPLETE',message:'source 동기화 또는 추출 작업이 완료되지 않았습니다'};
       return {ok:true,sourceId,workId:added.item.id,created:added.created};
     }},
-    recall: { docs: async input => { const result = await searchDocuments(store, input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
+    recall: { docs: async input => { const result = await searchDocuments(store, input, store, resolveDocumentLocation); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
     ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { show: input => showDocument(store, input, async (fileId, extractionId) => {

@@ -68,3 +68,11 @@ it('source-only files show exposes status and a safe Drive link without a locato
 });
 
 it('guide probe sees the optional positional file and source-specific option',()=>{expect(filesShowCommand.arguments).toEqual(['[fileId]']);expect(filesShowCommand.options?.map(option=>option.flags)).toContain('--source-file-id <id>');expect(selectedCommand([filesShowCommand],['files','show','--source-file-id','synthetic'])).toBe(filesShowCommand);});
+
+it('첨부 이름의 file ID만으로 show에 실제 색인 상태를 표시한다',async()=>{
+  const pending:DocumentRecallStore={...store,async readDocument(){return {ok:true,snapshot:{redacted:false,source_unreachable:false,extraction_id:null,status:'unsupported',pieces:[]}};}};
+  const custom={...brain,files:{show:(input:Parameters<typeof showDocument>[1])=>showDocument(pending,input)}};
+  const result=await show.run({...context(['file-1'],{}),brain:custom as unknown as CommandContext['brain']});
+  expect(result).toMatchObject({ok:true,meta:{file_status:'unsupported'}});
+  expect(result.ok&&result.text?.join('\n')).toContain('unsupported');
+});
