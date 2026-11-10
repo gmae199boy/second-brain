@@ -305,11 +305,12 @@ def copy(conn, capture, entries, verified, settings, seam=None):
         _copy_locked(conn, capture, entries, verified, settings, seam)
 
 
-def verify(conn, capture, entries, verified, settings):
+def verify(conn, capture, entries, verified, settings, *, progress=lambda: None):
     """Read-only native checkpoint, selected row, mapping and order verification."""
     user, timezone = envelope(settings)
     profiles = {}
     for entry in entries:
+        progress()
         info = account(verified[entry['dataset']]['snapshot'])
         if not info['confirmed']: return False
         profiles[entry['dataset']] = info['account']
@@ -341,6 +342,7 @@ def verify(conn, capture, entries, verified, settings):
             rows=list(zip(table['rows'],table['rowids'] or [None]*len(table['rows']),strict=True))
             rows.sort(key=lambda pair: pair[1] if name=='exercise_log' else _source_key(table,pair[0]))
             for row,rowid in rows:
+                progress()
                 key=_source_key(table,row); native_key=_native_key(table,row); identity=(connection,name,native_key)
                 payload=canonical({k:encoded(v) for k,v in row.items()}); hashed=hashlib.sha256(payload.encode()).hexdigest()
                 if identity in selected:

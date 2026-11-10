@@ -205,7 +205,8 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
     const counts=await fixture.db.rows(`select (select count(*)::int from garmin.native_import_mapping) mappings,(select count(*)::int from brain.file_requests where source='garmin') requests,(select count(*)::int from garmin.evaluation_revisions) revisions`);
     await run('import');
     expect(await fixture.db.rows(`select (select count(*)::int from garmin.native_import_mapping) mappings,(select count(*)::int from brain.file_requests where source='garmin') requests,(select count(*)::int from garmin.evaluation_revisions) revisions`)).toEqual(counts);
-    await run('import-verify');
+    const verifyWork=await run('import-verify');
+    expect((await fixture.db.rows(`select last_progress_at from brain.work_attempts where work_item_id='${verifyWork}'`))[0]?.last_progress_at).toBeTruthy();
     const selectedMetric=await fixture.db.rows(`select user_id,connection_id,day_key,steps from garmin.daily_metric where user_id='${self}' and day_key='2026-01-01'`);
     expect(selectedMetric).toHaveLength(1);
     const metric=selectedMetric[0]!;
