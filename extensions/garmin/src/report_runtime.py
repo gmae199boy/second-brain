@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from garmin_pipeline import config, store
 from scheduled_date import scheduled_date
-from supervised_input import canonical_uuid as _uuid, decode_envelope
+from supervised_input import decode_envelope
 
 
 class InvalidReportInput(Exception):
@@ -18,7 +18,6 @@ def envelope(env):
     try:
         account, values = decode_envelope(env, work_kinds=('garmin.report', 'garmin.report_regenerate'),
                                           reject_duplicate_keys=True)
-        _uuid(values['garmin.channel_conversation_id'])
         # Collect shares settings validation but does not require an analysis model.
         model = values['garmin.analysis_model']
         if not model.strip():
@@ -42,18 +41,13 @@ def envelope(env):
         raise InvalidReportInput('invalid supervised report input') from exc
 
 
-def validate_account(conn, account, cfg, conversation=None):
+def validate_account(conn, account, cfg):
     """Check selected ownership and timezone under the store's attempt fence."""
     with store.transaction(conn):
         row = conn.execute('select timezone from garmin.account_connections where user_id=%s and connection_id=%s',
                            (account.user_id, account.connection_id)).fetchone()
         if not row or row[0] != cfg.timezone:
             raise InvalidReportInput('account timezone mismatch')
-        if conversation is not None:
-            valid = conn.execute('select brain.extension_channel_conversation_valid(%s,%s,%s)',
-                                 (account.work_id, account.attempt_token, conversation)).fetchone()
-            if not valid or not valid[0]:
-                raise InvalidReportInput('invalid channel configuration')
 
 
 def install_skills(cfg):
@@ -79,8 +73,7 @@ def run(env=None, *, writer=None):
     regenerate = actual['BRAIN_WORK_KIND'] == 'garmin.report_regenerate'
     with store.supervised_account(account), store.report_session(cfg, blocking=not regenerate):
         with store.write_session(cfg) as conn:
-            conversation = _uuid(json.loads(actual['BRAIN_SETTINGS_SNAPSHOT'])['values']['garmin.channel_conversation_id'])
-            validate_account(conn, account, cfg, conversation)
+            validate_account(conn, account, cfg)
         install_skills(cfg)
         if writer is None:
             import body_runtime

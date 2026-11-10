@@ -6,9 +6,10 @@ from garmin_pipeline import store
 
 
 _STRING_SETTINGS = {'garmin.timezone', 'garmin.connection_id', 'garmin.tokenstore', 'garmin.capture_manifest',
-                    'garmin.legacy_conversation_id', 'garmin.channel_conversation_id', 'garmin.analysis_agent',
+                    'garmin.legacy_conversation_id', 'garmin.analysis_agent',
                     'garmin.analysis_model', 'garmin.analysis_reasoning_effort'}
-_ALLOWED = _STRING_SETTINGS | {'garmin.analysis_timeout_minutes'}
+# 하위 호환 설정은 허용만 하고 분석·수집 입력으로 검증하거나 사용하지 않는다.
+_ALLOWED = _STRING_SETTINGS | {'garmin.analysis_timeout_minutes', 'garmin.channel_conversation_id'}
 
 
 def validate_settings(values):

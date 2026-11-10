@@ -2,32 +2,28 @@
 import hashlib
 import json
 import os
-from uuid import UUID
-from garmin_pipeline import errors, ports, report, store
+from garmin_pipeline import dates, errors, ports, report, store
 
 
 def _key(*parts):
     return 'garmin:' + hashlib.sha256(json.dumps(parts, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
 
 
-def _conversation(env):
-    values = json.loads(env['BRAIN_SETTINGS_SNAPSHOT'])['values']
-    value = values['garmin.channel_conversation_id']
-    parsed = UUID(value)
-    if str(parsed) != value:
-        raise ValueError('invalid channel conversation')
-    return parsed
+def _submit(conn, env, key, purpose, revision, summary, document=None, albums=None):
+    return conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
+        (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.report', key, purpose, revision, summary,
+         document, None if albums is None else json.dumps(albums, separators=(',', ':')), None)).fetchone()[0]
 
 
-def _submit(conn, env, conversation, key, purpose, revision, summary, document=None, albums=None):
-    return conn.execute('select brain.extension_channel_publish(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)',
-        (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], conversation, key, purpose, revision, summary,
-         document, None if albums is None else json.dumps(albums, separators=(',', ':')))).fetchone()[0]
+def _should_send(cfg, day, env, regenerate=False):
+    # 예약 분석의 과거 자료는 보관만 하고, 사람의 재생성 요청은 지정 날짜를 보낸다.
+    return regenerate or env.get('BRAIN_WORK_KIND') == 'garmin.report_regenerate' or day == dates.today(cfg)
 
 
-def success(cfg, day, revisions, document, env=None):
+def success(cfg, day, revisions, document, env=None, *, regenerate=False):
     env = os.environ if env is None else env
-    conversation = _conversation(env)
+    if not _should_send(cfg, day, env, regenerate):
+        return
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             summaries = {}
@@ -52,16 +48,18 @@ def success(cfg, day, revisions, document, env=None):
                 else: raise ValueError('invalid graph group')
                 groups[index].append({'request_id': str(request), 'filename': name})
             albums = [group[start:start + 10] for group in groups for start in range(0, len(group), 10)]
-            identity = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report')
             version = _key(*[f'{scope}:{revisions[scope]}' for scope in ('day','7d','30d','all')])
-            _submit(conn, env, conversation, identity, 'report', version, summary, document, albums)
+            # 새 revision은 새 발신이고, 같은 revision의 재시도는 같은 요청이다.
+            identity = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report', version)
+            return _submit(conn, env, identity, 'report', version, summary, document, albums)
 
 
 def failure(cfg, day, env=None):
     env = os.environ if env is None else env
-    conversation = _conversation(env)
+    if not _should_send(cfg, day, env):
+        return
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             key = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report_failed')
             text = ports.notice_text(day, errors.NotifyEvent.REPORT_FAILED, 'analysis_failed')
-            _submit(conn, env, conversation, key, 'report_failed', None, text)
+            return _submit(conn, env, key, 'report_failed', None, text)

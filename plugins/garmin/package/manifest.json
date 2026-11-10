@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -193,8 +193,7 @@
       "manual": "report",
       "required_settings": [
         "garmin.timezone",
-        "garmin.analysis_model",
-        "garmin.channel_conversation_id"
+        "garmin.analysis_model"
       ],
       "missed": "latest"
     },
@@ -206,8 +205,7 @@
       "manual": "report-regenerate",
       "required_settings": [
         "garmin.timezone",
-        "garmin.analysis_model",
-        "garmin.channel_conversation_id"
+        "garmin.analysis_model"
       ]
     }
   ],

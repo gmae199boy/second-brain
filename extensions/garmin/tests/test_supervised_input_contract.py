@@ -180,7 +180,7 @@ class SupervisedInputContractTest(unittest.TestCase):
     def test_each_string_setting_rejects_non_strings(self):
         keys = ('garmin.timezone', 'garmin.connection_id', 'garmin.tokenstore',
                 'garmin.capture_manifest', 'garmin.legacy_conversation_id',
-                'garmin.channel_conversation_id', 'garmin.analysis_agent',
+                'garmin.analysis_agent',
                 'garmin.analysis_model', 'garmin.analysis_reasoning_effort')
         for kind in KINDS:
             for key in keys:
@@ -249,13 +249,12 @@ class SupervisedInputContractTest(unittest.TestCase):
                     self.assert_rejected_before_io(kind, env)
             if kind != 'garmin.collect':
                 for value in (None, 'bad', 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'):
-                    with self.subTest(kind=kind, channel=value):
-                        env = make_env(kind)
-                        edit_snapshot(env, lambda s: s['values'].update({'garmin.channel_conversation_id': value}))
-                        self.assert_rejected_before_io(kind, env)
+                    env = make_env(kind)
+                    edit_snapshot(env, lambda s: s['values'].update({'garmin.channel_conversation_id': value}))
+                    report_runtime.envelope(env)
                 env = make_env(kind)
-                edit_snapshot(env, lambda s: s['values'].pop('garmin.channel_conversation_id'))
-                self.assert_rejected_before_io(kind, env)
+                edit_snapshot(env, lambda s: s['values'].pop('garmin.channel_conversation_id', None))
+                report_runtime.envelope(env)
         # The collect builder omits both report-only required settings.
         _, cfg = collect_runtime.envelope(make_env('garmin.collect'))
         self.assertIsNone(cfg.report_model)
