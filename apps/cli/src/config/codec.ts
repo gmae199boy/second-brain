@@ -2,14 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
-import { errorLine, isTimeZone, TIMEZONE_SETTING, type WarningCode } from 'second_brain';
+import { errorLine, isTimeZone, TIMEZONE_SETTING, type WarningCode, type SettingsDependencies, getSetting } from 'second_brain';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { configFilePath, envFilePath } from './paths.js';
 
 /**
  * The one place configuration is read and written, installer included (AD-18).
  * `config.toml` holds machine settings; connection secrets live in `.env` at
- * mode 0600. URL resolution uses process values before the home `.env`.
+ * mode 0600. Telegram 사용자 설정은 DB를 우선하며 `.env`는 fallback이다.
+ * URL resolution uses process values before the home `.env`.
  *
  * Nothing here runs at import time (AD-3): a command calls `readConfig`, and
  * until it does, no file is touched.
@@ -818,11 +819,19 @@ export async function extensionDatabaseUrl(home: string, name: string, runtimeUr
   return url.toString();
 }
 
-/** 채널 자격 증명은 이 설정 경계에서만 읽는다. */
-export async function resolveTelegramConfig(home: string, env: NodeJS.ProcessEnv): Promise<{ token: string; chatId: string } | null> {
+/** DB 사용자 설정을 우선하고 키별 미설정 값만 기존 환경에서 읽는다. */
+export async function resolveTelegramConfig(home: string, env: NodeJS.ProcessEnv, settings?: SettingsDependencies): Promise<{ token: string; chatId: string } | null> {
+  const read = async (key: string, envKey: string): Promise<string | undefined> => {
+    if (settings) {
+      const result = await getSetting(settings, { key });
+      if (!result.ok) throw new Error('Telegram DB 설정을 읽을 수 없습니다');
+      if (result.value) return result.value;
+    }
+    return resolveStoreUrl(home, envKey, env);
+  };
   const [token, chatId] = await Promise.all([
-    resolveStoreUrl(home, 'BRAIN_TELEGRAM_BOT_TOKEN', env),
-    resolveStoreUrl(home, 'BRAIN_TELEGRAM_CHAT_ID', env),
+    read('telegram.bot_token', 'BRAIN_TELEGRAM_BOT_TOKEN'),
+    read('telegram.chat_id', 'BRAIN_TELEGRAM_CHAT_ID'),
   ]);
   return token && chatId ? { token, chatId } : null;
 }

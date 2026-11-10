@@ -1,3 +1,4 @@
+import { registerTelegramChannel } from './channels/register.js';
 import { isExternalLocator } from './domain/file.js';
 import { DOCUMENT_EXTRACTOR_VERSION } from './files/extractors.js';
 import { SOURCE_SYNC_KIND, sourceSyncHandler, cleanupSourceTemps } from './sources/sync.js';
@@ -280,6 +281,7 @@ export interface BrainExt {
 }
 type ChannelSdkError = ChannelFailure | { ok: false; code: ChannelResendCode | 'INVALID_ARGUMENT'; message: string };
 export interface BrainChannels {
+  add(input: { kind: string }): Promise<{ ok: true; conversationId: string } | ChannelFailure | { ok: false; code: 'CONFIG_INVALID' | 'USER_MISSING' | 'SCHEMA_MISMATCH'; message: string }>;
   list(): Promise<{ ok: true; requests: ChannelPublicStatus[] } | ChannelFailure>;
   status(input: { id: string }): Promise<{ ok: true; request: ChannelPublicStatus } | ChannelSdkError>;
   resend(input: { id: string }): Promise<{ ok: true; workItemId: string } | ChannelSdkError>;
@@ -516,6 +518,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
     channels: {
+      add: async ({ kind }) => kind === 'telegram' ? registerTelegramChannel({ store, schemaVersions, clock }) : { ok: false, code: 'CONFIG_INVALID', message: '지원하는 채널은 telegram입니다' },
       list: async () => {
         const result = await store.listChannelStatuses();
         return result.ok ? result : { ...result, message: maskOutputText(result.message) };

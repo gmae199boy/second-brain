@@ -1285,3 +1285,22 @@ recall 검색 행동 평가는 `pnpm eval:recall prepare search-two <새-임시-
 검색 실행계획 실측은 개발이 끝난 후 독립적인 합성 환경에서 `pnpm build`를 마친 다음 `node tooling/recall-eval/explain.mjs --out <새-출력-파일.json>`으로 수행한다. 도구는 공식 `postgres:18` 이미지로 임의 이름·loopback 임의 포트·tmpfs를 사용하는 전용 컨테이너와 시험 DB를 만들고 합성 자료만 넣는다. 결과는 이미지 digest·OS·DB locale/provider/encoding·pg_trgm 버전·다섯 expression index·100/10,000행과 선택도 및 필터별 `EXPLAIN (ANALYZE, BUFFERS)`를 담는다. 실행계획은 강제하지 않는다. `BRAIN_TEST_PG_RESOURCE_LOG=<전용-로그>`를 지정해 생성 및 삭제된 컨테이너 ID를 보존하고 출력의 cleanup 필드와 Docker inspect로 해당 ID 부재를 확인한다. 예외로 자원 삭제에 실패하면 로그의 정확한 자기 소유 ID만 확인해 정리하며 다른 컨테이너·볼륨·운영 DB는 건드리지 않는다. 생성 결과·종료 코드와 실제 출력은 실행자가 계획에 보존한다.
 
 이 실행계획 도구는 대화 조각·도구 메모·문서 조각의 **단일 표 검색 조건 probe**만 측정한다. 제품 검색 SQL의 join·정렬·현재 리포트 세대 판별·전체 문맥 수집 비용은 포함하지 않으므로 제품 전체 쿼리의 성능이나 실행계획으로 해석하지 않는다. 다섯 색인 가운데 `log_entries_text_idx`와 `file_names_text_idx`는 정의만 기록하며 로그·파일명 검색은 이 실측 범위 밖이다. 수집 또는 각 정리 단계가 실패하면 오류와 정리 상태를 결과 JSON에 남기고 실패 종료한다. 결과 파일 저장까지 실패하면 stderr의 recovery_record와 전용 자원 로그를 보존하고 그 안의 정확한 소유 컨테이너 ID만 확인해 수동 정리한다.
+
+### Telegram 설정과 대화 등록
+
+Telegram은 DB 사용자 설정을 우선하며 기존 `.env`/환경 변수는 DB 값이 없을 때만 사용합니다.
+토큰을 셸 기록에 남기지 않도록 비밀 관리자 등의 출력을 stdin으로 연결합니다.
+
+```sh
+# 비밀 관리자의 토큰 출력을 다음 명령의 stdin에 연결
+brain config set telegram.bot_token -
+brain config set telegram.chat_id <chat-id>
+brain channels add telegram
+brain config set garmin.channel_conversation_id <출력된-conversation-id>
+brain daemon stop
+brain daemon start
+```
+
+`channels add telegram`은 등록만 하며 메시지를 보내지 않습니다. 재실행해도 같은 대화 ID를 반환합니다.
+`config get/set telegram.bot_token`은 텍스트·JSON 모두 설정 여부만 출력합니다. 빈 값은 미설정이며 기존 환경 설정이 있으면 fallback을 사용합니다.
+감독자는 시작할 때 Telegram 설정을 읽으므로 변경 후 daemon을 재시작합니다. Garmin 설정은 해당 확장을 설치한 뒤 지정합니다.

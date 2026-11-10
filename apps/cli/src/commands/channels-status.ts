@@ -18,3 +18,15 @@ export const channelsResendCommand: CommandSpec = {
   examples: ['brain channels resend <request-id> --json'], output: '재전송 일감 ID', risk: 'write', writes: true, drain: false, hook: false, dryRun: false,
   async run({ brain, args }) { const r = await brain.channels.resend({ id: args[0]! }); if (!r.ok) return r; return { ok: true, data: { workItemId: r.workItemId }, text: ['재전송을 접수했습니다. 상태를 다시 확인하세요.'] }; },
 };
+
+export const channelsAddCommand: CommandSpec = {
+  ns: 'channels', verb: 'add', nsDescription: description, usedFor: '설정된 Telegram 대화를 발신 없이 등록합니다',
+  required: ['kind'], arguments: ['<kind>'], examples: ['brain channels add telegram --json'],
+  output: '등록한 conversation id', risk: 'write', writes: true, drain: false, hook: false, dryRun: false,
+  preflight({ args }) { return args[0] === 'telegram' ? undefined : { ok: false, code: 'CONFIG_INVALID', message: '지원하는 채널은 telegram입니다', exit: 2 }; },
+  async run({ brain, args }) {
+    const result = await brain.channels.add({ kind: args[0]! });
+    if (!result.ok) return result;
+    return { ok: true, data: { conversationId: result.conversationId }, text: [result.conversationId] };
+  },
+};
