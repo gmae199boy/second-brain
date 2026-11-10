@@ -18,7 +18,6 @@ def report_env(kind='garmin.report'):
     env = environment()
     env['BRAIN_WORK_KIND'] = kind
     setting(env, 'garmin.analysis_model', 'synthetic-model')
-    setting(env, 'garmin.channel_conversation_id', str(UUID(int=7)))
     return env
 
 
@@ -51,12 +50,24 @@ class ReportEnvelopeTest(unittest.TestCase):
                 env['BRAIN_WORK_KIND'] = 'garmin.collect'
                 collect_runtime.envelope(env)
 
-    def test_invalid_channel_uuid_never_enters_report(self):
-        for value in ('bad', 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA', None):
-            env = report_env(); setting(env, 'garmin.channel_conversation_id', value)
-            with patch.object(store, 'report_session') as session:
-                with self.assertRaises(runtime.InvalidReportInput): runtime.run(env, writer='fake')
-                session.assert_not_called()
+    def test_legacy_channel_setting_is_ignored(self):
+        for kind in ('garmin.report', 'garmin.report_regenerate'):
+            for value in ('bad', 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA', None):
+                env = report_env(kind); setting(env, 'garmin.channel_conversation_id', value)
+                self.assertEqual(runtime.envelope(env)[1].report_model, 'synthetic-model')
+
+    def test_run_without_channel_setting_validates_only_account_and_completes(self):
+        env = report_env()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(store, 'supervised_account', return_value=contextlib.nullcontext()))
+            stack.enter_context(patch.object(store, 'report_session', return_value=contextlib.nullcontext()))
+            stack.enter_context(patch.object(store, 'write_session', return_value=contextlib.nullcontext('connection')))
+            valid = stack.enter_context(patch.object(runtime, 'validate_account'))
+            stack.enter_context(patch.object(runtime, 'install_skills'))
+            runner = stack.enter_context(patch('garmin_pipeline.report.run_supervised', return_value={'status': 'success', 'scopes': 4}))
+            self.assertEqual(json.loads(runtime.run(env, writer='synthetic')), {'status': 'success', 'scopes': 4})
+            self.assertEqual(len(valid.call_args.args), 3)
+            self.assertFalse(runner.call_args.kwargs['regenerate'])
 
     def test_manifest_requires_model_for_both_report_kinds(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())
@@ -64,6 +75,7 @@ class ReportEnvelopeTest(unittest.TestCase):
             declaration = next(item for item in manifest['work'] if item['kind'] == kind)
             self.assertIn('garmin.analysis_model', declaration['required_settings'])
             self.assertIn('garmin.timezone', declaration['required_settings'])
+            self.assertNotIn('garmin.channel_conversation_id', declaration['required_settings'])
 
     def test_typed_settings_and_collect_coexist(self):
         env = report_env()
@@ -79,7 +91,7 @@ class ReportEnvelopeTest(unittest.TestCase):
         for key, value in [('garmin.analysis_agent', 'other'), ('garmin.analysis_model', ''),
                            ('garmin.analysis_reasoning_effort', 'invalid'), ('garmin.analysis_timeout_minutes', True),
                            ('garmin.analysis_timeout_minutes', 0), ('garmin.analysis_timeout_minutes', 1.5),
-                           ('garmin.analysis_timeout_minutes', '20'), ('garmin.channel_conversation_id', 'bad'), ('garmin.unknown', 'x'), ('garmin.timezone', 'invalid/timezone')]:
+                           ('garmin.analysis_timeout_minutes', '20'), ('garmin.unknown', 'x'), ('garmin.timezone', 'invalid/timezone')]:
             with self.subTest(key=key, value=value):
                 env = report_env(); setting(env, key, value)
                 with self.assertRaises(runtime.InvalidReportInput): runtime.envelope(env)

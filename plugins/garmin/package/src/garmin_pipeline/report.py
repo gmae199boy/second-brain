@@ -1217,7 +1217,7 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
         import report_publish
         document = report_publish.publish_and_wait(cfg, today, recorded)
         import report_channel
-        report_channel.success(cfg, today, recorded, document)
+        report_channel.success(cfg, today, recorded, document, regenerate=regenerate)
         return {'status': 'noop', 'scopes': 0}
     failed = False
     try:
@@ -1280,5 +1280,5 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     import report_publish
     document = report_publish.publish_and_wait(cfg, today, recorded)
     import report_channel
-    report_channel.success(cfg, today, recorded, document)
+    report_channel.success(cfg, today, recorded, document, regenerate=regenerate)
     return {'status': 'success', 'scopes': len(remaining)}

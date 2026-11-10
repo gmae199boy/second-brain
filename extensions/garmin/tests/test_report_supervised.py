@@ -220,11 +220,12 @@ class SupervisedReportTest(unittest.TestCase):
 
 
 class RuntimeBindingTest(unittest.TestCase):
-    def test_invalid_channel_stops_before_model(self):
+    def test_account_timezone_mismatch_stops_before_model(self):
         env = report_env()
         class Conn:
             def execute(self, sql, args):
-                return SimpleNamespace(fetchone=lambda: ('UTC',) if 'account_connections' in sql else (False,))
+                assert 'account_connections' in sql
+                return SimpleNamespace(fetchone=lambda: ('Asia/Seoul',))
         scope = lambda *args, **kwargs: contextlib.nullcontext(Conn())
         with patch.object(store, 'supervised_account', scope), patch.object(store, 'report_session', scope), \
              patch.object(store, 'write_session', scope), patch.object(store, 'transaction', scope), \
@@ -245,7 +246,7 @@ class RuntimeBindingTest(unittest.TestCase):
         @contextlib.contextmanager
         def write_session(cfg):
             states.append(('write-enter',)); yield 'conn'; states.append(('write-exit',))
-        def validate(conn, account, cfg, conversation): states.append(('validate', conn))
+        def validate(conn, account, cfg): states.append(('validate', conn))
         def analysis(cfg, writer, regenerate):
             states.append(('analysis', regenerate))
             return {'status': 'success', 'scopes': 4}
