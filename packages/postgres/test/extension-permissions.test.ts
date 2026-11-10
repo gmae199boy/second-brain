@@ -240,3 +240,40 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
     await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
   }
 });
+
+it('topic 접수는 확장 소유 attempt·접두사·파일 권한을 검증하고 예약을 생산자 종료 뒤 인계한다', async () => {
+  const db=await database(),name='x'+randomBytes(5).toString('hex'),role='brain_ext_'+name,password=randomBytes(24).toString('hex');
+  const admin=new pg.Client({connectionString:db.url}),store=postgresStore({databaseUrl:db.appUrl});
+  let client:pg.Client|undefined;
+  try {
+    await admin.connect(); await store.ensureSelfUser(sampleSelfUserInput()); await provisionExtension(db.url,name,password);
+    const url=new URL(db.url);url.username=role;url.password=password;client=new pg.Client({connectionString:url.toString()});await client.connect();
+    await admin.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values($1,'1',now(),true,now())",[name]);
+    const kind=name+'.report',work=randomUUID(),attempt=randomUUID(),m=randomUUID(),c=randomUUID();
+    await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values($1,$2)',[name,kind]);
+    await store.addWork({id:work,kind,targetKind:'report',targetId:'synthetic',createdAt:clock.now(),nextAttemptAt:clock.now()});
+    await store.claimSupervisedWork({now:clock.now(),kinds:[kind],claimedBy:'test',attemptToken:attempt});
+    await store.ensureChannel({id:m,kind:'telegram',botRef:'legacy'});await store.ensureChannelConversation({id:c,channelId:m,userId:sampleSelfUserInput().id,externalRef:'synthetic',threadRef:null});
+    const send='select brain.extension_channel_send($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz) as id';
+    const args=[work,attempt,name+'.report','one','report',null,'summary',null,null,null];
+    const first=(await client.query(send,args)).rows[0].id;
+    expect((await client.query(send,[...args.slice(0,6),'changed',null,null,null])).rows[0].id).toBe(first);
+    expect(await store.readChannelStatus(first)).toMatchObject({request:{delivery:'unrouted'}});
+    for(const table of ['messenger_credentials','channel_routes','channel_dispatches']) await expect(client.query(`select * from brain.${table}`)).rejects.toMatchObject({code:'42501'});
+    await expect(client.query(send,[work,attempt,'other.report','wrong','report',null,'summary',null,null,null])).rejects.toMatchObject({code:'42501'});
+    await expect(client.query(send,[work,randomUUID(),name+'.report','wrong','report',null,'summary',null,null,null])).rejects.toMatchObject({code:'42501'});
+    await expect(client.query(send,[work,attempt,name+'.report','file','report',null,'summary',randomUUID(),'[]',null])).rejects.toThrow('invalid document');
+    expect(await store.channelControl!.route({action:'set',topic:name+'.report',messengerId:m,channelId:c})).toMatchObject({ok:true});
+    expect(await store.listUnhandedChannelRequests(clock.now())).toEqual({ok:true,requestIds:[]});
+    const due=new Date(clock.now().getTime()+60000);
+    const scheduled=(await client.query(send,[work,attempt,name+'.report','scheduled','report','garmin:synthetic','scheduled',null,null,due.toISOString()])).rows[0].id;
+    await store.settleSupervisedAttempt({id:work,attemptToken:attempt,now:clock.now(),outcome:'died'});
+    await expect(client.query(send,args)).rejects.toMatchObject({code:'42501'});
+    expect(await store.listUnhandedChannelRequests(clock.now())).toEqual({ok:true,requestIds:[]});
+    expect(await store.listUnhandedChannelRequests(due)).toEqual({ok:true,requestIds:[scheduled]});
+    expect(await store.readChannelRequest(scheduled)).toMatchObject({request:{revision:'garmin:synthetic'},channel:{id:m},conversation:{id:c}});
+    expect(await store.channelControl!.sendPending({topic:name+'.report',id:first,now:due})).toEqual({ok:true,count:1});
+    expect(await store.channelControl!.sendPending({topic:name+'.report',id:first,now:due})).toEqual({ok:true,count:0});
+    await provisionExtension(db.url,name,password);
+  }finally{await client?.end();await store.close();await admin.query(`drop owned by "${role}";drop role if exists "${role}"`).catch(()=>{});await admin.end();await db.drop();}
+});

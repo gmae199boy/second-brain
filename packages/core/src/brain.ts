@@ -1,3 +1,4 @@
+import { channelManagement } from './channels/manage.js';
 import { registerTelegramChannel } from './channels/register.js';
 import { isExternalLocator } from './domain/file.js';
 import { DOCUMENT_EXTRACTOR_VERSION } from './files/extractors.js';
@@ -85,6 +86,7 @@ import {
 import { replaySpool, type SpoolReplayHandlers } from './spool/replay.js';
 
 export interface BrainDependencies {
+  legacyTelegramChatId?: () => Promise<string | undefined>;
   onWorkProgress?: import('./queue/progress.js').WorkProgressSink;
   documentExtractors?: readonly import('./files/extractors.js').DocumentExtractor[];
   cron?: import('./ports/cron.js').CronCalculator;
@@ -280,7 +282,7 @@ export interface BrainExt {
   disable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
 }
 type ChannelSdkError = ChannelFailure | { ok: false; code: ChannelResendCode | 'INVALID_ARGUMENT'; message: string };
-export interface BrainChannels {
+export interface BrainChannels extends ReturnType<typeof channelManagement> {
   add(input: { kind: string }): Promise<{ ok: true; conversationId: string } | ChannelFailure | { ok: false; code: 'CONFIG_INVALID' | 'USER_MISSING' | 'SCHEMA_MISMATCH'; message: string }>;
   list(): Promise<{ ok: true; requests: ChannelPublicStatus[] } | ChannelFailure>;
   status(input: { id: string }): Promise<{ ok: true; request: ChannelPublicStatus } | ChannelSdkError>;
@@ -518,7 +520,8 @@ export function createBrain(dependencies: BrainDependencies): Brain {
   const readTimeZone = () => getSetting({ store, schemaVersions, clock }, { key: 'timezone' });
   return {
     channels: {
-      add: async ({ kind }) => kind === 'telegram' ? registerTelegramChannel({ store, schemaVersions, clock }) : { ok: false, code: 'CONFIG_INVALID', message: '지원하는 채널은 telegram입니다' },
+      ...channelManagement(store, clock, idGen),
+      add: async ({ kind }) => kind === 'telegram' ? registerTelegramChannel({ store, schemaVersions, clock, fallbackChatId: dependencies.legacyTelegramChatId }) : { ok: false, code: 'CONFIG_INVALID', message: '지원하는 채널은 telegram입니다' },
       list: async () => {
         const result = await store.listChannelStatuses();
         return result.ok ? result : { ...result, message: maskOutputText(result.message) };
@@ -582,6 +585,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     doctor: {
       run: () =>
         runDoctor(store, {
+          ...(store.channelControl ? { channelControl: store.channelControl } : {}),
           schemaVersions,
           extensionStore: store,
           ...(dependencies.extensions?.packages.readObservation ? { readPackageObservation: dependencies.extensions.packages.readObservation } : {}),

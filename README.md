@@ -1304,3 +1304,31 @@ brain daemon start
 `channels add telegram`은 등록만 하며 메시지를 보내지 않습니다. 재실행해도 같은 대화 ID를 반환합니다.
 `config get/set telegram.bot_token`은 텍스트·JSON 모두 설정 여부만 출력합니다. 빈 값은 미설정이며 기존 환경 설정이 있으면 fallback을 사용합니다.
 감독자는 시작할 때 Telegram 설정을 읽으므로 변경 후 daemon을 재시작합니다. Garmin 설정은 해당 확장을 설치한 뒤 지정합니다.
+
+### 메신저·채널과 topic 발신
+
+메신저는 자격 증명을 가진 봇/계정이고, 채널은 그 메신저 안의 목적지입니다. 같은 종류의 봇을 여러 개 등록할 수 있으며 한 봇에 여러 목적지를 둘 수 있습니다. 토큰은 DB에 메신저별로 저장하며 CLI는 설정 여부만 표시합니다. stdin으로 토큰을 입력하면 명령 인자에 비밀을 남기지 않습니다.
+
+```sh
+brain messengers add telegram --name personal --token -
+brain messengers add telegram --name work --token -
+brain channels add --messenger personal --name reports --chat <chat-id>
+brain channels add --messenger work --name reports --chat <chat-id>
+brain messengers list --json
+brain channels route set garmin.report --messenger personal --channel reports
+brain channels route list
+brain channels route remove garmin.report
+brain channels send --topic garmin.report --text -
+brain channels send --messenger work --channel reports --file ./message.txt
+brain channels send --topic garmin.report --file ./message.txt --at 2026-12-01T09:00:00+09:00
+brain channels send-pending --topic garmin.report --date 2026-11-10
+brain channels send-pending --topic garmin.report --id <request-id>
+```
+
+채널 별칭은 메신저 안에서만 유일합니다. UUID도 사용할 수 있습니다. 지정한 채널이 해당 메신저 소속이 아니면 거부합니다. `channels send`는 topic 또는 메신저·채널 쌍 중 하나만 받습니다. `--key`를 지정하면 같은 topic(직접 발신은 같은 목적지)과 키의 재접수는 기존 요청 ID를 반환합니다. 메신저 토큰 갱신은 `messengers add telegram --id <messenger-id> --token -`, 목적지 갱신은 `channels add --messenger <messenger-id> --id <channel-id> --chat <chat-id>`를 사용합니다. Telegram thread는 `--thread <id>`로 지정합니다.
+
+지금 발신은 접수 시의 topic 경로를 사용합니다. 예약은 데몬이 시각 도래를 확인할 때 topic 경로를 찾습니다. 직접 예약은 지정한 메신저·채널로 갑니다. 경로가 없으면 오류 없이 `unrouted`로 보관하고, 나중에 경로를 추가해도 자동 발신하지 않습니다. 사람이 `send-pending`으로 선택한 요청만 발신 대기열에 넣습니다. 날짜는 UTC 접수일이며 `--date`와 `--id`는 함께 쓸 수 없습니다. 진행 중이거나 이미 보낸 요청과 미래 예약은 제외하고 닫힌 실패는 재개합니다. 실제 전송은 데몬과 기존 채널 재시도 큐가 담당합니다.
+
+`channels list/status`는 메신저와 채널 ID, 발신 상태를 함께 표시합니다. 미경로·topic 예약의 대상은 경로 확정 전까지 미확정입니다. `doctor run`은 메신저 자격 증명 설정 수, 경로·예약·미경로 수를 비밀 없이 표시합니다. 기존 `telegram.*` DB 설정과 `BRAIN_TELEGRAM_*` 환경 설정은 기본 단일 메신저로 호환되며 `channels add telegram`도 유지합니다. 새 메신저의 자격 증명이 전역 설정에 섞이지 않습니다.
+
+확장은 대상이나 비밀 없이 `brain.extension_channel_send(work,attempt,topic,key,purpose,revision,summary,document,albums,send_at)`를 호출합니다. topic은 확장 이름 접두사를 가져야 합니다. `revision`은 nullable text이며 본문·첨부의 검증은 기존 `extension_channel_publish`와 같습니다. 같은 `(topic,key)`는 한 번만 접수합니다. 세부 결정은 [채널 발신 결정 기록](_bmad-output/personal-brain/channel-delivery-decision.md)을 참조하세요.

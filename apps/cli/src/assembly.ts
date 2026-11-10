@@ -17,6 +17,7 @@ import {
   type Store,
   type WorkHandlers,
 } from 'second_brain';
+import { resolveStoreUrl } from './config/codec.js';
 import type { ReadConfigResult } from './config/codec.js';
 import { spoolPath } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
@@ -84,6 +85,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
   const { home, env, config, store, clock, idGen, workHandlers } = assembly;
   return {
     store,
+    legacyTelegramChatId: () => resolveStoreUrl(home, 'BRAIN_TELEGRAM_CHAT_ID', env),
     onWorkProgress:assembly.onWorkProgress,
     documentExtractors: runtimeDocumentExtractors,
     ...(assembly.sourceControl ? {sourceControl:assembly.sourceControl} : {}),
