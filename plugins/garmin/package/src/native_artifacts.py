@@ -54,17 +54,19 @@ def _bytes(value):
     raise ValueError('IMPORT_INVALID')
 
 
-def plan(capture, entries, verified):
+def plan(capture, entries, verified, *, progress=lambda: None):
     """Read/stage inputs outside DB transactions; candidate keys are provenance only."""
     specs=[]; unassigned=[]
     by_original={e['dataset_label'] or e['dataset']:e for e in entries}
     evaluations={}
     selected_evaluations=set(); seen_evaluations=set()
     for entry in entries:
+        progress()
         dataset=entry['dataset']; table=verified[dataset]['snapshot']['tables'].get('evaluation')
+        profile=account(verified[dataset]['snapshot']) if table and table['rows'] else None
         for row in table['rows'] if table else []:
+            progress()
             key=_source_key(table,row); day,scope=_date_scope(str(row['report_date']),str(row['scope']))
-            profile=account(verified[dataset]['snapshot'])
             if not profile['confirmed']: raise ValueError('IMPORT_INVALID')
             selection=(profile['account'],_native_key(table,row))
             if selection not in seen_evaluations:
@@ -80,6 +82,7 @@ def plan(capture, entries, verified):
         for spec in specs: spec['candidates'] = [c for c in spec['candidates'] if c in selected_evaluations]
         classifications=classify_files(capture['private']['files'])['files']
         for artifact, classification in zip(capture['private']['files'],classifications,strict=True):
+            progress()
             if classification['category'] not in ('report','facts','image'): continue
             data,_=read_relative(capture['private']['root'],artifact['snapshot'],artifact['bytes'])
             if data is None: raise ValueError('IMPORT_INVALID')
@@ -90,8 +93,12 @@ def plan(capture, entries, verified):
                           'media':'image/png' if category=='image' else 'application/json' if source.endswith('.json') else 'text/markdown',
                           'metadata':{'kind':'graph' if category=='image' else 'report','report_date':None,'scope':None,'original_path_hash':path_hash},'candidates':[]})
         return specs,unassigned
+    evaluation_metadata={}
+    for (dataset,day,scope),key in evaluations.items():
+        evaluation_metadata.setdefault((dataset,key),set()).add((day,scope))
     items={(a['dataset'],a['artifact_key']):a for a in capture['private']['files']}
     for artifact in capture['private']['files']:
+        progress()
         category=classify(artifact)
         if category not in ('report','facts','image'): continue
         data,_=read_relative(capture['private']['root'],artifact['snapshot'],artifact['bytes'])
@@ -110,7 +117,7 @@ def plan(capture, entries, verified):
         # A relation may supply metadata only if every evidenced target agrees.
         inferred=set()
         for _,key in candidates:
-            inferred.update((d,s) for (ds,d,s),k in evaluations.items() if ds==dataset and k==key)
+            inferred.update(evaluation_metadata.get((dataset,key),()))
         if day is None and scope is None and len(inferred)==1: day,scope=next(iter(inferred))
         if inferred and any((day is not None and pair[0] != day) or (scope is not None and pair[1] != scope) for pair in inferred):
             raise PlanConflict(dataset,encode_identity(artifact['artifact_key']))
@@ -284,12 +291,13 @@ def _publish_one(conn,capture,verified,user,connections,spec):
         conflict(conn,dataset,request_batch,spec['table'],spec['key'],'native_file_conflict')
 
 
-def verify(conn,capture,entries,verified,settings,planned=None):
+def verify(conn,capture,entries,verified,settings,planned=None, *, progress=lambda: None):
     """Check the same request fingerprint, result, and selected revision links."""
     from psycopg.rows import tuple_row
-    user,timezone=envelope(settings); specs = planned if planned is not None else plan(capture,entries,verified)[0]; connections={}
+    user,timezone=envelope(settings); specs = planned if planned is not None else plan(capture,entries,verified,progress=progress)[0]; connections={}
     cur=conn.cursor(row_factory=tuple_row)
     for entry in entries:
+        progress()
         dataset=entry['dataset']; info=account(verified[dataset]['snapshot'])
         if not info['confirmed']: return False,len(specs)
         cur.execute('select connection_id,timezone from garmin.account_connections where user_id=%s and external_identity=%s',(user,info['account']))
@@ -303,6 +311,7 @@ def verify(conn,capture,entries,verified,settings,planned=None):
             cur.execute('select original_table,original_key from garmin.import_mapping where dataset=%s and batch=%s and target_kind=%s', (dataset,batch_id(capture,dataset),KIND))
             if any((dataset,table,key) not in wanted for table,key in cur.fetchall()): return False,len(specs)
     for spec in specs:
+        progress()
         mapping=_mapping(cur,capture,user,spec)
         if not mapping or mapping[1]!=_fingerprint(spec): return False,len(specs)
         request=mapping[0]

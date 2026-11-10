@@ -3,6 +3,7 @@ import json
 from decimal import Decimal
 import os
 import sys
+import time
 import sqlite3
 from uuid import UUID
 
@@ -19,7 +20,24 @@ def emit(kind, **values):
     print(json.dumps({'abi': 1, 'type': kind, **values}), flush=True)
 
 
+class VerifyProgress:
+    """Cooperative progress: stalled code still receives the supervisor guard."""
+    def __init__(self, emit_event=emit, monotonic=time.monotonic, interval=5):
+        self.emit_event = emit_event
+        self.monotonic = monotonic
+        self.interval = interval
+        self.next_at = float('-inf')
+
+    def __call__(self):
+        now = self.monotonic()
+        if now >= self.next_at:
+            self.emit_event('progress')
+            self.next_at = now + self.interval
+
+
 def main():
+    progress = VerifyProgress()
+    progress()
     settings = json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])
     if settings.get('version') != 1 or settings.get('extension') != 'garmin': raise ValueError('IMPORT_INVALID')
     work = str(UUID(os.environ['BRAIN_WORK_ID'])); token = str(UUID(os.environ['BRAIN_ATTEMPT_TOKEN']))
@@ -39,7 +57,7 @@ def main():
         try:
             full_capture = load_capture(settings['values']['garmin.capture_manifest'], secure=True)
             capture = selected_capture(full_capture)
-            details = compare(capture, stored, file_results, conversation)
+            details = compare(capture, stored, file_results, conversation, progress=progress)
             from native_import import verify as verify_native
             from capture_manifest import ROLES
             from preflight import ORDER
@@ -49,6 +67,7 @@ def main():
             entries = sorted(capture['private']['datasets'], key=lambda e: ORDER.index(ROLES[e['source']]))
             verified = {}
             for entry in entries:
+                progress()
                 original = entry['dataset']; dataset = dataset_ref(original)
                 path = capture['datasets'][ROLES[entry['source']]]
                 data, hashed, source_token = read_source(path, reject_wal=True)
@@ -59,17 +78,19 @@ def main():
             validate_sources(normalized, verified, settings, fixed4=capture['private']['version'] == 3)
             entries = [{**entry, 'dataset': dataset_ref(entry['dataset']), 'dataset_label': entry['dataset'] if dataset_ref(entry['dataset']) != entry['dataset'] else None} for entry in entries]
             from native_artifacts import plan as plan_files, verify as verify_files
-            planned_files, _ = plan_files(capture, entries, verified)
+            progress()
+            planned_files, _ = plan_files(capture, entries, verified, progress=progress)
             with conn.transaction():
                 conn.execute('set transaction isolation level repeatable read read only')
-                if not verify_native(conn, capture, entries, verified, settings):
+                if not verify_native(conn, capture, entries, verified, settings, progress=progress):
                     details['differences']['checkpoints'].append('native_incomplete')
                     details['counts']['mismatches'] += 1
-                files_ok, file_count = verify_files(conn, capture, entries, verified, settings, planned_files)
+                files_ok, file_count = verify_files(conn, capture, entries, verified, settings, planned_files, progress=progress)
                 details['counts']['file_requests'] = file_count
                 if not files_ok:
                     details['differences']['files'].append('native_files_incomplete')
                     details['counts']['mismatches'] += 1
+            progress()
             recheck_capture(settings['values']['garmin.capture_manifest'], full_capture)
             if capture['private']['version'] == 3:
                 details['selection_receipt'] = capture['private']['selection_receipt']
@@ -89,9 +110,10 @@ def main():
     emit('result')
 
 
-try:
-    main()
-except Exception as exc:
-    code = 'EXTENSION_REPORT_NOT_READY' if str(exc) == 'EXTENSION_REPORT_NOT_READY' else 'IMPORT_INVALID'
-    emit('error', code=code, retryable=False)
-    sys.exit(1)
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as exc:
+        code = 'EXTENSION_REPORT_NOT_READY' if str(exc) == 'EXTENSION_REPORT_NOT_READY' else 'IMPORT_INVALID'
+        emit('error', code=code, retryable=False)
+        sys.exit(1)

@@ -2,6 +2,7 @@
 from import_scope import batch_id
 import hashlib
 from decimal import Decimal
+from collections import defaultdict
 from batch_import import VERSION, canonical, contract_fingerprint, encoded
 from capture_manifest import ROLES
 from preflight import ORDER, account
@@ -32,13 +33,62 @@ def public_projection(details):
     if any(type(counts.get(k)) is not int or not 0 <= counts[k] <= 9007199254740991 for k in COUNTS): raise ValueError('IMPORT_INVALID')
     return {'counts': {k:counts[k] for k in COUNTS}, 'checks': {k:not bool(details['differences'][k]) for k in CHECKS}}
 
-def compare(capture, stored, file_results, conversation, *, preserve_artifacts=False):
+class StoredLookup:
+    """Lazy snapshot indexes; buckets retain every row in original order."""
+    def __init__(self, stored, progress=lambda: None):
+        self.stored = stored
+        self.indexes = {}
+        self.progress = progress
+
+    def find(self, name, **fields):
+        keys = tuple(sorted(fields))
+        identity = (name, keys)
+        if identity not in self.indexes:
+            index = defaultdict(list)
+            for row in self.stored[name]:
+                self.progress()
+                index[tuple(str(row.get(k)) for k in keys)].append(row)
+            self.indexes[identity] = index
+        # Missing and explicit None both stringify to "None", as before.
+        return self.indexes[identity].get(tuple(str(fields[k]) for k in keys), [])
+
+
+class RawLookup:
+    """Use restored TEXT equality (including invalid bytes), never display text."""
+    fields = ('scope', 'original_key', 'endpoint')
+
+    def __init__(self, rows, progress=lambda: None):
+        self.rows = rows
+        self.by_dataset = None
+        self.indexes = {}
+        self.progress = progress
+
+    def find(self, dataset, row):
+        if self.by_dataset is None:
+            self.by_dataset = defaultdict(list)
+            for value in self.rows:
+                self.progress()
+                self.by_dataset[value['dataset']].append(value)
+        if dataset not in self.indexes:
+            index = defaultdict(list)
+            for value in self.by_dataset.get(dataset, []):
+                self.progress()
+                key = tuple(restore(value[f], value[f+'_raw'], value[f+'_encoding']) for f in self.fields)
+                index[key].append(value)
+            self.indexes[dataset] = index
+        return self.indexes[dataset].get((row['scope'], row['key'], row['endpoint']), [])
+
+
+def compare(capture, stored, file_results, conversation, *, preserve_artifacts=False, progress=lambda: None):
     differences={k:[] for k in CHECKS}; counts={k:0 for k in COUNTS}
     def fail(group, detail): differences[group].append(detail)
-    def find(name, **fields): return [r for r in stored[name] if all(str(r.get(k)) == str(v) for k,v in fields.items())]
+    find = StoredLookup(stored, progress).find
+    raw_find = RawLookup(stored['raw_payloads'], progress).find
+    progress()
     entries=sorted(capture['private']['datasets'],key=lambda e:ORDER.index(ROLES[e['source']])); counts['datasets']=len(entries)
     fingerprint=contract_fingerprint(capture['private']['fingerprint']); wanted=set(); legacy_wanted=set(); raw_wanted=set(); batches={}; snapshots={}
     for entry in entries:
+        progress()
         original=entry['dataset']; dataset=dataset_ref(original); path=capture['datasets'][ROLES[entry['source']]]
         data, digest, token=read_source(path,reject_wal=True); source=read_snapshot_bytes(data); snapshots[dataset]=source
         batch=batch_id(capture, dataset); batches[dataset]=batch
@@ -56,6 +106,7 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
             if not table['keys'] or len(schema)!=1 or schema[0]['schema_version']!=source['schema'] or not json_equal(schema[0]['columns_json'],table['column_metadata']) or not json_equal(schema[0]['keys_json'],table['keys']): fail('schemas',[dataset,name]); continue
             counts['source_rows']+=len(table['rows'])
             for row in sorted(table['rows'],key=lambda r:canonical([encoded(r[k]) for k in table['keys']])):
+                progress()
                 key=canonical([encoded(row[k]) for k in table['keys']]); last=(name,key); payload={k:encoded(v) for k,v in row.items()}; hashed=hashlib.sha256(canonical(payload).encode()).hexdigest(); wanted.add((dataset,name,key))
                 mapping=find('import_mapping',dataset=dataset,original_table=name,original_key=key,target_kind='preserved'); target=find('preserved_rows',dataset=dataset,original_table=name,original_key=key)
                 if len(mapping)!=1 or mapping[0]['content_hash']!=hashed: fail('mappings',[dataset,name,key])
@@ -74,7 +125,7 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
                     conv=find('legacy_conversations',dataset=dataset,original_table=name,original_key=key)
                     if len(legacy)!=1 or legacy[0]['content_hash']!=hashed or len(conv)!=1 or str(conv[0]['conversation_id'])!=conversation: fail('legacy',[dataset,name,key])
                 if name=='raw_response':
-                    rid=canonical([encoded(row[k]) for k in ('scope','key','endpoint')]); raw_wanted.add((dataset,rid)); found=[v for v in stored['raw_payloads'] if v['dataset']==dataset and all(restore(v[f],v[f+'_raw'],v[f+'_encoding'])==value for f,value in [('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint'])])]; counts['raw_rows']+=1
+                    rid=canonical([encoded(row[k]) for k in ('scope','key','endpoint')]); raw_wanted.add((dataset,rid)); found=raw_find(dataset,row); counts['raw_rows']+=1
                     if len(found)!=1 or found[0]['raw_identity']!=rid or any(original_text(restore(found[0][f],found[0][f+'_raw'],found[0][f+'_encoding']))!=original_text(v) for f,v in [('account',acct['account']),('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint']),('library_version',row['library_version']),('body',row['raw'])]) or found[0]['fetched_at_ms']!=row['fetched_at'] or found[0]['checked_at_ms']!=row['checked_at']: fail('raw',[dataset,key])
         if cp and (cp[0]['original_table'],cp[0]['original_key']) != (last or (None,None)): fail('checkpoints',[dataset,'position'])
         recheck_source(path,(digest,token))
@@ -124,6 +175,7 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
             if not result or result['status']!='completed' or result['file_id'] is None: fail('files',[dataset,table,key,'result'])
             return request
         for artifact in capture['private']['files']:
+            progress()
             data,hashed=read_relative(capture['private']['root'],artifact['snapshot'],artifact['bytes'])
             if capture['private']['version']==1: continue
             dataset=dataset_ref(artifact['dataset']); key=encode_identity(artifact['artifact_key']); category=classify(artifact); reason=None
@@ -151,17 +203,21 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
                     _,analysis_id=published[(artifact['dataset'],relation['analysis_key'])]
                     reason='source_excluded' if request is None else 'analysis_unavailable' if analysis_id is None else None
                     if len(rows)!=1 or (str(rows[0]['request_id']) if rows[0]['request_id'] else None)!=request or (str(rows[0]['analysis_id']) if rows[0]['analysis_id'] else None)!=analysis_id or rows[0]['reason']!=reason: fail('inventory',[dataset,key,target,role])
+        inventory={}
+        for item in capture['private']['inventory']:
+            inventory.setdefault((item['dataset'],item['category']),item)
         for entry in entries:
             dataset=dataset_ref(entry['dataset']); table=snapshots[dataset]['tables'].get('evaluation')
             if table:
                 for row in table['rows']:
+                    progress()
                     key=canonical([encoded(row[k]) for k in table['keys']]); data=original_bytes(row['report_md'])
                     if len(data)<=MAX_BYTES: expected_file(dataset,'evaluation',key,'report',data,{'source':'evaluation.md'},row)
                     else:
                         invkey='evaluation:'+key; expected_inventory.add((dataset,'evaluation',invkey)); rows=find('artifact_inventory',dataset=dataset,original_table='evaluation',artifact_key=invkey)
                         if len(rows)!=1 or rows[0]['content_hash']!=hashlib.sha256(data).hexdigest() or rows[0]['size_bytes']!=len(data) or rows[0]['exclusion_reason']!='too_large' or rows[0]['request_id'] is not None or rows[0]['analysis_id'] is not None or rows[0]['unlinked_reason'] is not None or not metadata_equal(rows[0],{'original_table':'evaluation','original_key':key}): fail('inventory',[dataset,invkey])
             for category in ('body','profile','inbox'):
-                item=next((x for x in capture['private']['inventory'] if x['dataset']==entry['dataset'] and x['category']==category),None)
+                item=inventory.get((entry['dataset'],category))
                 state=item['state'] if item else 'unknown'
                 metadata={'fields':item['metadata'],'source_files':[{'artifact_key':k,'request_id':published[(entry['dataset'],k)][0]} for k in item['source_files']]} if item else None
                 rows=find('input_inventory',dataset=dataset,category=category)
