@@ -103,6 +103,7 @@ export type DoctorReadStore = Pick<WorkStore, 'listFailures' | 'readWorkAttemptH
   Pick<import('../ports/store.js').SessionStore, 'countUntaggedSessions'>;
 
 export interface DoctorOptions {
+  channelControl?: Pick<import('../channels/control.js').ChannelControlStore, 'health'>;
   extensionStore?: Pick<import('../ports/store.js').ExtensionStore, 'listExtensionInventory' | 'getExtensionPublicStatus'>;
   readPackageObservation?: (name: string) => Promise<{ name: string; version: string; pluginVersion: string; digest: string } | null>;
   modelWorkKinds?: readonly string[];
@@ -165,7 +166,7 @@ export async function runDoctor(
     if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
   }
   if (failedPrerequisite !== undefined) {
-    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : [])]) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
     for (const source of options.checks ?? []) checks.push(await registered(source));
     return { checks, summary: summarise(checks) };
   }
@@ -175,7 +176,7 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : [])]) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
@@ -183,6 +184,10 @@ export async function runDoctor(
     checks.push(...health.source.probes.map(probeCheck));
     checks.push(await schemaCheck(store, options.schemaVersions));
     checks.push(await failuresCheck(options.store));
+    if (options.channelControl) {
+      const channels = await options.channelControl.health();
+      checks.push(channels.ok ? { id: 'channels', status: channels.unrouted ? 'warn' : 'ok', detail: `메신저 ${channels.channels}, 메신저 자격 증명 설정 ${channels.configured}, 경로 ${channels.routes}, 예약 ${channels.scheduled}, 미경로 ${channels.unrouted}${channels.unrouted ? ' (channels send-pending으로 명시적 발신)' : ''}` } : { id: 'channels', status: 'fail', code: channels.code, detail: channels.message });
+    }
     const untagged = await options.store.countUntaggedSessions();
     checks.push(untagged.ok
       ? { id: 'untagged', status: 'ok', detail: `${String(untagged.count)}건` }

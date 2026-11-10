@@ -7,7 +7,7 @@
 | 2026-10-31 | epic 15 · 15.2 escalation | 보존 ref와 소유 경로 patch, 가역적 기준 준비 후 엔진 restore-patch로 복원·리뷰·검증한다 | 기존 구현은 HEAD에 있고 엔진이 자기 계획만 바뀐 재시도를 거부; 전체 검증·기존 구현 보존 |
 | 2026-10-28 | epic 12 · 12.12 | 이 Mac 확인을 에이전트가 로컬 설치본으로 하고 증거를 plan에 남긴다(`hitl = false`). 원격 push가 있어야 하면 `operator_actions`로 남긴다 | 이니셔티브 Notes 2026-10-28 위임 |
 | 2026-10-28 | epic 14 · C6 | 기준 소스와 충돌 처리는 epic 14를 쪼갤 때 preflight 증거로 추천 규칙을 정하고, 반입은 에이전트 스토리로 한다 | 사용자 위임, AD-36 |
-| 2026-10-28 | epic 15 · Telegram | 옛 Garmin 봇 token·chat id가 이 Mac에 있으면 Brain `.env`로 옮겨 쓴다. 없으면 그 스토리만 `awaiting-operator` | 사용자 위임 |
+| 2026-10-28 | epic 15 · Telegram | 옛 Garmin 봇 token·chat id가 이 Mac에 있으면 Brain 설정으로 옮겨 쓴다(2026-11-10 사용자 지시로 DB 우선, `.env`는 하위 호환 fallback). 없으면 그 스토리만 `awaiting-operator` | 사용자 위임 |
 | 2026-10-28 | epic 16 · Garmin 로그인 | 옛 Garmin tokenstore(기본 `~/.garmin-pipeline/tokens`)가 유효하면 그것으로 로그인한다. MFA가 필요하면 그 스토리만 `awaiting-operator` | 사용자 위임 |
 | 2026-10-28 | 루프 설정 | `gates.mode = "none"`: 에픽 경계에서 멈추지 않는다 | 사람 개입 없이 끝까지 |
 | 2026-10-28 | epic 13 · 명령 | `brain ext install|list|status|enable|disable <name>`. 설치 대상은 앱에 함께 오는 `extensions/<name>/`만, 사용자용 `--from <경로>` 없음 | spine 패키지 표, 서드파티 코드 범위 밖 |
@@ -19,7 +19,7 @@
 | 2026-10-28 | epic 13 · 설치본 확인 | testext·가짜 로그인은 격리된 Brain 홈에서만 켜지는 시험용 resolver·harness로. 13.10은 격리 홈에서 확인하고, 운영 설치본은 버전·스킬 발견만 확인 | 세트 검증 F1 |
 | 2026-10-28 | epic 13 · risk | 스토리별 risk와 이유 표를 에픽 Notes에 | 세트 검증 F5 |
 | 2026-10-28 | epic 15 · 실행 분류 | `channel_send`는 `supervised`(core Node worker, ABI v1). hook·기회적 drain은 발신하지 않음 | hook이 Harness를 막지 않게 |
-| 2026-10-28 | epic 15 · 비밀 키 | `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`. 옛 `telegram.json`을 찾으면 옮김. 기본 tokenstore에는 없었음 | 코드 조사 7절 |
+| 2026-10-28 | epic 15 · 비밀 키 | DB `telegram.bot_token`·`telegram.chat_id` 우선, `.env`/환경 변수 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`는 값이 없을 때만 fallback(2026-11-10 사용자 지시로 대체). 옛 `telegram.json`을 찾으면 옮김. 기본 tokenstore에는 없었음 | 코드 조사 7절 |
 | 2026-10-28 | epic 15 · 결과 분류 | `sent`·`definite_failed`(요청 전 실패)·`unknown`(요청 뒤 응답 유실) | 옛 `network` 합침을 나눔 |
 | 2026-10-28 | epic 15 · 묶음 | 재시작 때 `sent` 항목은 건너뜀, 4096 넘는 텍스트는 나누지 않고 `too_large` | 옛 동작 |
 | 2026-10-28 | epic 15 · 순서 | 1~5 한 줄, 15.1은 13.9를 기다림. epic 11~13 쪽에 인계 문장을 더하지 않음(명시적 예외) | 같은 파일, 선례 |

@@ -19,11 +19,18 @@ async function run(): Promise<void> {
     };
     const read = await store.readChannelRequest(env[PROCESS_ABI_ENV.targetId]!);
     if (!read.ok) throw Error('채널 요청 조회 실패');
-    const configured = !!env['BRAIN_TELEGRAM_BOT_TOKEN'] && !!env['BRAIN_TELEGRAM_CHAT_ID'] &&
-      read.channel?.kind === 'telegram' && read.conversation?.externalRef === env['BRAIN_TELEGRAM_CHAT_ID'];
-    const sent = await sendChannelRequest({ store, sender: configured ? telegramSender(env['BRAIN_TELEGRAM_BOT_TOKEN']!,
-      env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {}) :
-      { async sendMessage() { return { ok: false, outcome: 'definite_failed', code: 'CHANNEL_CONFIG_INVALID', retryable: false }; } },
+    const credential = read.channel ? await store.channelControl!.credentials(read.channel.id) : null;
+    if (credential && !credential.ok) throw Error('채널 자격 증명 조회 실패');
+    // A channel credential is authoritative. Only pre-existing legacy channels use
+    // global DB/.env config, and their conversation must still match that config.
+    const token = credential?.ok ? credential.token : null;
+    const legacy = !token && !read.channel?.botRef.startsWith('messenger:') &&
+      read.conversation?.externalRef === env['BRAIN_TELEGRAM_CHAT_ID'];
+    const resolvedToken = token ?? (legacy ? env['BRAIN_TELEGRAM_BOT_TOKEN'] : undefined);
+    const sender = read.channel?.kind === 'telegram' && resolvedToken
+      ? telegramSender(resolvedToken, env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {})
+      : { async sendMessage() { return { ok: false as const, outcome: 'definite_failed' as const, code: 'CHANNEL_CONFIG_INVALID', retryable: false }; } };
+    const sent = await sendChannelRequest({ store, sender,
       ...(env['BRAIN_CHANNEL_FILES_PATH'] ? { files: localFileStore({ root: env['BRAIN_CHANNEL_FILES_PATH'] }) } : {}),
       requestId: env[PROCESS_ABI_ENV.targetId]!, workItemId: env[PROCESS_ABI_ENV.workId]!,
       attemptToken: env[PROCESS_ABI_ENV.attemptToken]!, now: () => new Date(), beforeFinish: () => barrier('before-finish') });

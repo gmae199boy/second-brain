@@ -1,3 +1,4 @@
+import { postgresChannelControl } from './channel-control.js';
 import { CHANNEL_REQUEST_TARGET, CHANNEL_SEND_KIND, type ChannelStore, type ChannelRequest, type ChannelLegacyInput, type ChannelLegacyRecord } from '@second-brain/core';
 import { sql } from 'kysely';
 import { databaseFailure, type PgConnect } from './connect.js';
@@ -31,13 +32,22 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
       left join lateral (select outcome from brain.channel_attempt_results x where x.request_id=r.id order by x.sequence desc limit 1) a on true
       where (${id ?? null}::uuid is null or r.id=${id ?? null}::uuid)
       union all
+      select id,false,created_at,state,'unhanded',0,send_at,0,false from brain.channel_dispatches where state<>'queued' and (${id ?? null}::uuid is null or id=${id ?? null}::uuid)
+      union all
       select id,true,at,'legacy','legacy',0,null,0,false from brain.channel_legacy_notifications where (${id ?? null}::uuid is null or id=${id ?? null}::uuid)
       union all
       select id,true,at,'legacy','legacy',0,null,0,false from brain.channel_legacy_deliveries where (${id ?? null}::uuid is null or id=${id ?? null}::uuid)
       order by "createdAt" desc,id`.execute(opened.connection.db);
-    return rows.rows.map(row => ({ ...row, createdAt: new Date(row.createdAt), nextAttemptAt: row.nextAttemptAt ? new Date(row.nextAttemptAt) : null, resendEligible: row.resendEligible ?? false }));
+    const addresses = await sql<{ id: string; messengerId: string | null; channelId: string | null; topic: string | null }>`
+      select r.id,c.channel_id as "messengerId",c.id as "channelId",d.topic from brain.channel_requests r join brain.channel_conversations c on c.id=r.conversation_id left join brain.channel_dispatches d on d.id=r.id
+      union all select d.id,c.channel_id,c.id,d.topic from brain.channel_dispatches d left join brain.channel_conversations c on c.id=d.direct_conversation_id where d.state<>'queued'
+      union all select r.id,c.channel_id,c.id,null from brain.channel_legacy_notifications r join brain.channel_conversations c on c.id=r.conversation_id
+      union all select r.id,c.channel_id,c.id,null from brain.channel_legacy_deliveries r join brain.channel_conversations c on c.id=r.conversation_id`.execute(opened.connection.db);
+    const targets = new Map(addresses.rows.map(row => [row.id, row]));
+    return rows.rows.map(row => ({ ...row, ...targets.get(row.id), createdAt: new Date(row.createdAt), nextAttemptAt: row.nextAttemptAt ? new Date(row.nextAttemptAt) : null, resendEligible: row.resendEligible ?? false }));
   };
   return {
+    channelControl: postgresChannelControl(connect),
     async listChannelStatuses() { try { return { ok: true, requests: await statuses() }; } catch (error) { return databaseFailure(error); } },
     async readChannelStatus(id) { try { return { ok: true, request: (await statuses(id))[0] ?? null }; } catch (error) { return databaseFailure(error); } },
     async resendChannelRequest(input) {
@@ -180,10 +190,15 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
       });
       return written.ok ? { ok: true, outcome: written.value } : written;
     },
-    async listUnhandedChannelRequests() {
+    async listUnhandedChannelRequests(now = new Date()) {
       try {
         const opened = connect();
         if (!opened.ok) throw Error(opened.message);
+        const routed = await withWrite(opened.connection, async held => {
+          const due = await sql<{ id: string }>`select id from brain.channel_dispatches where state='scheduled' and (send_at is null or send_at<=${now.toISOString()}::timestamptz) order by send_at nulls first,id for update skip locked`.execute(held);
+          for (const row of due.rows) await sql`select brain.route_channel_dispatch(${row.id}::uuid,${now.toISOString()}::timestamptz)`.execute(held);
+        });
+        if (!routed.ok) return routed;
         const result = await sql<{ id: string }>`select id from brain.channel_requests
           where work_item_id is null order by created_at,id`.execute(opened.connection.db);
         return { ok: true, requestIds: result.rows.map(row => row.id) };

@@ -39,7 +39,7 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 - E15-1 (R13): 채널 identity — channel(adapter 종류, 비밀 아닌 봇 참조), conversation(외부 대화 참조), 선택 thread, provenance를 core가 소유한다. 외부 message id는 응답에 있을 때만 남기고 지어내지 않는다. 옛 Garmin 봇·채팅은 하나의 conversation이고, 이전된 옛 이력과 새 발신이 그 대화에 함께 속한다. 수신 처리는 만들지 않지만, 이후 답장·스레드·선제 메시지를 이을 식별자는 지금 남긴다. (AD-35)
 - E15-2 (R13): 발신 요청 — 요청 표의 의미 키 `(생산 결과 식별자, conversation, 목적, 개정)`이 UNIQUE다(NULL로 우회되지 않는 정규형, 요청 UUID와 별도). 생산자 출처와 생산 결과 참조를 남긴다. core가 미인계 요청을 다시 찾아 요청 id 대상 일감 생성과 인계 표식을 한 트랜잭션에 확정하므로, 요청 INSERT 뒤 crash해도 복구된다. 최초 시도 gate는 첫 발신 직전 짧은 트랜잭션에서 한 번 저장한다. 재시도는 같은 요청의 attempt이고 gate를 다시 만들지 않는다. (AD-30·35)
 - E15-3 (R13): 실행 분류 — 발신 일감 `channel_send`는 실행 분류 `supervised`이고, core가 내보내는 Node worker가 프로세스 ABI v1(epic 12)로 돈다. hook과 기회적 drain은 발신하지 않는다. 외부 호출 동안 DB 쓰기 트랜잭션을 잡지 않는다. (AD-7·33)
-- E15-4 (R13): Telegram adapter — Core 채널 port의 구현이고 Runtime이 조립한다. sendMessage·sendPhoto·sendMediaGroup·sendDocument를 쓴다. 비밀은 `.env`의 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`를 설정 코덱이 읽는다. 나가는 텍스트·캡션은 출력 코덱으로 가린다(DB 원문은 그대로). 크기 상한(텍스트 UTF-16 4096, 사진 10MiB, 문서 50MiB, 앨범 2~10장)을 넘으면 영구 오류 `too_large`다. (AD-11·18)
+- E15-4 (R13): Telegram adapter — Core 채널 port의 구현이고 Runtime이 조립한다. sendMessage·sendPhoto·sendMediaGroup·sendDocument를 쓴다. 설정 코덱이 DB 사용자 설정 `telegram.bot_token`·`telegram.chat_id`를 먼저 읽고, 값이 없을 때만 기존 `.env`/환경 변수 `BRAIN_TELEGRAM_BOT_TOKEN`·`BRAIN_TELEGRAM_CHAT_ID`를 읽는다(2026-11-10 사용자 지시, AD-18 갱신). 나가는 텍스트·캡션은 출력 코덱으로 가린다(DB 원문은 그대로). 크기 상한(텍스트 UTF-16 4096, 사진 10MiB, 문서 50MiB, 앨범 2~10장)을 넘으면 영구 오류 `too_large`다. (AD-11·18)
 - E15-5 (R13): 결과와 재시도 — attempt 결과는 `sent` | `definite_failed`(이유 코드) | `unknown`이다. 확실한 일시 실패(요청 전 네트워크 오류, 429, 5xx)와 `unknown`은 지수 간격(AD-21)으로 다시 보낸다. 429는 `retry_after` 이상 기다린다. 10번 실패하면 `failures`에 남기고 doctor에 보인다. 영구 오류(429가 아닌 4xx, `too_large`, 설정 없음)는 첫 실패에서 `failures`로 간다. 발신 실패는 생산자의 결과를 지우거나 되돌리지 않는다. (AD-21·35, 사용자 결정 2026-10-28)
 - E15-6 (R13; R12의 발신 부분): 결과 묶음 — 요약 → 앨범 → 전문 순서의 항목과 항목별 결과를 둔다. 다시 시작하면 `sent`가 확인된 항목은 다시 보내지 않고, `unknown`·실패 항목만 보낸다(중복 가능성은 받아들인 결정). 묶음을 만드는 일은 epic 18이다.
 - E15-7 (R13, R7): legacy 이력과 확장 쓰기 — 옛 Garmin `notification`(최초 시도 gate)과 `delivery`(전송 결과)를 각자의 legacy 표에 출처(dataset, 원래 표, 원래 키, import batch)와 함께 받는다. 이 행들은 인계되지 않고, 보내지지 않으며, resend가 거부한다. 확장 role(13.4)은 요청 표와 legacy 표에 INSERT만 한다: 출처를 role에 결합한 RLS, UPDATE·DELETE 없음, 12.3의 attempt 확인 trigger. 넣는 일은 epic 14다. (AD-30·36)
@@ -47,7 +47,7 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 
 ## Constraints
 
-- bot token은 `.env`에 두고(AD-18), 나가는 텍스트는 Core 출력 코덱으로 가린다(AD-11).
+- bot token은 DB 사용자 설정을 우선하고 `.env`는 하위 호환 fallback으로 두며(2026-11-10 사용자 지시, AD-18), 나가는 텍스트는 Core 출력 코덱으로 가린다(AD-11).
 - 새 core 마이그레이션은 epic 11~13 뒤의 다음 번호다(AD-31).
 - 시험은 로컬 가짜 Telegram 서버와 fake adapter로 한다. 실계정 발신은 마지막 이 Mac 확인에서 한 번만 한다.
 - 양방향 대화·수신 처리는 범위 밖이다(이니셔티브 Boundaries).
@@ -64,7 +64,7 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 다음은 이 에픽 밖이다.
 - Slack·Telegram 양방향 에이전트 대화와 수신 처리.
 - Garmin 결과 bundle을 만드는 일은 epic-health-analysis다.
-- Must not change: bot token은 `.env`에 두고(AD-18), 나가는 텍스트는 Core 출력 코덱으로 가린다(AD-11).
+- Must not change: bot token은 DB 사용자 설정을 우선하고 `.env`는 하위 호환 fallback으로 두며(2026-11-10 사용자 지시, AD-18), 나가는 텍스트는 Core 출력 코덱으로 가린다(AD-11).
 
 ## References
 
@@ -117,3 +117,5 @@ Brain의 어떤 기능이든 같은 채널 계약으로 메시지를 보내고, 
 - Decision(2026-10-31, 추천으로 정함, 15.2 escalation 해소): 정식 실패와 정리된 기존 Dispatch를 보존하고 DNS 회복을 확인한 뒤 엔진의 새 generation에서 3단계 계획을 재추진한다. 재귀 워크플로와 Orca 회로 차단 우회는 금지하며 재시도 제어 제한이 지속되면 별도 복구 과업으로 분할한다.
 
 - Decision(2026-10-31, 추천으로 정함, 15.2 escalation 해소): 별도 테스트 정리 훅 시간 초과 뒤 현재 HEAD 전체 검증이 통과했으므로 기존 구현과 계약을 보존해 엔진 검증을 재추진한다. 재발하면 원인을 조사하며 검증을 생략하지 않는다.
+
+- Decision(2026-11-10, 사용자): Telegram 비밀 저장 결정을 갱신한다. `brain.settings`의 user scope `telegram.bot_token`·`telegram.chat_id`를 우선하고 기존 `.env`/환경 변수는 값이 없을 때만 fallback으로 읽는다. 2026-10-28의 `.env` 이전 결정은 이 결정으로 대체된다. `brain channels add telegram`은 self 사용자와 설정된 chat id의 대화만 멱등 등록하고 conversation id를 출력하며 발신하지 않는다. 토큰 get/set 출력은 설정 여부만 보이고 `config set telegram.bot_token -`로 stdin 입력을 지원한다.

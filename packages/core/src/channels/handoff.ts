@@ -4,7 +4,7 @@ import type { IdGen } from '../ports/id-gen.js';
 
 /** 미인계 요청을 일감으로 옮긴다. 각 요청의 생성과 표식은 Store가 함께 확정한다. */
 export async function handoffChannelRequests(store: ChannelStore, clock: Clock, idGen: IdGen): Promise<{ ok: true; count: number } | { ok: false; code: string; message: string }> {
-  const pending = await store.listUnhandedChannelRequests();
+  const pending = await store.listUnhandedChannelRequests(clock.now());
   if (!pending.ok) return pending;
   let count = 0;
   for (const requestId of pending.requestIds) {

@@ -179,6 +179,7 @@ const calls = {
   readDriveRetention: s => s.readDriveRetention(id),
   withDriveLocalDelete: s => s.withDriveLocalDelete({workId:id,localLocationId:id,claimedBy:id,claimedAt:now,attempts:1,now},async()=>null),
   commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now,migrationClaim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now,nowAtLock:()=>now}}),
+  channelControl: s => s.channelControl!.health(),
 } satisfies Record<Exclude<keyof PostgresStore, 'close' | 'imports' | 'driveUploads'>, (store: PostgresStore) => Promise<unknown>>;
 
 it.each(['refused', 'terminated', 'missing-schema', 'missing-database', 'missing-role', 'authentication'] as const)('every store verb answers DB_UNAVAILABLE when %s', async kind => {

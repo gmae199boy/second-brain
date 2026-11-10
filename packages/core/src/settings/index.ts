@@ -31,7 +31,24 @@ export const DRIVE_ROOT_FOLDER_ID: SettingDefinition = {key:'drive.root_folder_i
 export const DRIVE_WATCH_FOLDERS:SettingDefinition={key:'drive.watch_folders',scope:'user',defaultValue:'[]',normalize(raw){try{const value:unknown=JSON.parse(raw);if(!Array.isArray(value)||value.length>1000||value.some(v=>typeof v!=='string'||!/^[A-Za-z0-9_-]+$/.test(v)||/[^A-Za-z0-9_-]/.test(v)))throw Error();return {ok:true,value:JSON.stringify([...new Set(value)].sort())};}catch{return {ok:false,message:'Drive 감시 폴더는 ID 문자열 배열이어야 합니다'};}}};
 export const DRIVE_SYNC_INTERVAL:SettingDefinition={key:'drive.sync_interval_minutes',scope:'user',defaultValue:'30',normalize(raw){if(!/^[1-9][0-9]*$/.test(raw)||/[^0-9]/.test(raw)||!Number.isSafeInteger(Number(raw))||Number(raw)>525600)return {ok:false,message:'Drive 동기화 간격은 1~525600분 정수여야 합니다'};return {ok:true,value:String(Number(raw))};}};
 export const DRIVE_ACCOUNT_ID:SettingDefinition={key:'drive.account_id',scope:'user',defaultValue:'',normalize(raw){return raw===''||/^[A-Za-z0-9_-]{1,256}$/.exec(raw)?.[0]===raw?{ok:true,value:raw}:{ok:false,message:'Drive 계정 식별자가 올바르지 않습니다'};}};
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS, DRIVE_ROOT_FOLDER_ID, DRIVE_WATCH_FOLDERS, DRIVE_SYNC_INTERVAL, DRIVE_ACCOUNT_ID];
+/** 선택 설정은 빈 값으로 해제하며 오류에 입력값을 넣지 않는다. */
+export const TELEGRAM_BOT_TOKEN: SettingDefinition = {
+  key: 'telegram.bot_token', scope: 'user', defaultValue: '',
+  normalize(raw) {
+    return raw === '' || /^[1-9][0-9]*:[A-Za-z0-9_-]{35}$/.exec(raw)?.[0] === raw
+      ? { ok: true, value: raw }
+      : { ok: false, message: 'Telegram 봇 토큰 형식이 올바르지 않습니다' };
+  },
+};
+export const TELEGRAM_CHAT_ID: SettingDefinition = {
+  key: 'telegram.chat_id', scope: 'user', defaultValue: '',
+  normalize(raw) {
+    return raw === '' || /^-?[1-9][0-9]*$/.exec(raw)?.[0] === raw && Number.isSafeInteger(Number(raw))
+      ? { ok: true, value: raw }
+      : { ok: false, message: 'Telegram chat id는 0이 아닌 정수여야 합니다' };
+  },
+};
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS, DRIVE_ROOT_FOLDER_ID, DRIVE_WATCH_FOLDERS, DRIVE_SYNC_INTERVAL, DRIVE_ACCOUNT_ID];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));

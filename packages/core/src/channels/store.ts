@@ -18,11 +18,13 @@ export type ChannelLegacyRecord = Omit<ChannelLegacyInput, 'localDate' | 'event'
 } & ({ type: 'notification'; event: LegacyOriginalText; detail: LegacyOriginalText } | { type: 'delivery'; originalId: LegacyOriginalText; kind: LegacyOriginalText; event: LegacyOriginalText | null; ok: boolean; reason: LegacyOriginalText | null });
 export type ChannelResendCode = 'CHANNEL_REQUEST_NOT_FOUND' | 'CHANNEL_ALREADY_SENT' | 'CHANNEL_LEGACY_NOT_RESENDABLE' | 'CHANNEL_REQUEST_IN_PROGRESS' | 'CHANNEL_NOT_RESENDABLE';
 export interface ChannelPublicStatus {
-  id: string; legacy: boolean; createdAt: Date; delivery: 'pending' | 'sent' | 'definite_failed' | 'unknown' | 'legacy';
+  messengerId?: string | null; channelId?: string | null; topic?: string | null;
+  id: string; legacy: boolean; createdAt: Date; delivery: 'unrouted' | 'scheduled' | 'pending' | 'sent' | 'definite_failed' | 'unknown' | 'legacy';
   workState: 'unhanded' | 'waiting' | 'running' | 'closed' | 'legacy'; attempts: number; nextAttemptAt: Date | null;
   unresolvedFailures: number; resendEligible: boolean;
 }
 export interface ChannelStore {
+  channelControl?: import('./control.js').ChannelControlStore;
   listChannelStatuses(): Promise<{ ok: true; requests: ChannelPublicStatus[] } | ChannelFailure>;
   readChannelStatus(id: string): Promise<{ ok: true; request: ChannelPublicStatus | null } | ChannelFailure>;
   resendChannelRequest(input: { requestId: string; workId: string; now: Date }): Promise<{ ok: true; workItemId: string } | ChannelFailure | { ok: false; code: ChannelResendCode; message: string }>;
@@ -36,7 +38,7 @@ export interface ChannelStore {
   listChannelItemResults(requestId: string): Promise<{ ok: true; items: ChannelItemResult[] } | ChannelFailure>;
   recordChannelItemResult(input: { requestId: string; workItemId: string; attemptToken: string; index: number; result: ChannelAttemptResult; now: Date }): Promise<{ ok: true; outcome: 'done' | 'lost' } | ChannelFailure>;
   handoffChannelRequest(input: { requestId: string; workId: string; now: Date }): Promise<{ ok: true; workItemId: string | null } | ChannelFailure>;
-  listUnhandedChannelRequests(): Promise<{ ok: true; requestIds: string[] } | ChannelFailure>;
+  listUnhandedChannelRequests(now?: Date): Promise<{ ok: true; requestIds: string[] } | ChannelFailure>;
   gateChannelAttempt(input: { requestId: string; workItemId: string; attemptToken: string; now: Date }): Promise<{ ok: true; outcome: 'won' | 'already' | 'sent' | 'lost' } | ChannelFailure>;
   finishChannelAttempt(input: { requestId: string; workItemId: string; attemptToken: string; now: Date } & ({ result: ChannelAttemptResult } | { externalMessageId: string | null })): Promise<{ ok: true; outcome: 'done' | 'lost' } | ChannelFailure>;
   recoverChannelAttempt(input: { requestId: string; workItemId: string; attemptToken: string; now: Date }): Promise<{ ok: true; outcome: 'lost' } | { ok: true; outcome: 'ready'; result: ChannelAttemptResult | null } | ChannelFailure>;

@@ -39,7 +39,8 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
     const opened = await openBrainStore({ home: options.home, env: options.env, config, path: 'drain', createStore: options.createStore });
     try {
       const url = config.ok ? await resolveStoreUrl(options.home, config.config.storeUrlEnv, options.env).catch(() => undefined) : undefined;
-      const telegram = await resolveTelegramConfig(options.home, options.env).catch(() => null);
+      // 설정 조회 실패는 Telegram만 비활성화하며 self/schema 오류는 기존 일감 준비 단계에서 처리한다.
+      const telegram = await resolveTelegramConfig(options.home, options.env, { store: opened.store, schemaVersions: opened.expected, clock: options.clock }).catch(() => null);
       const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
       const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
       const installed = await opened.store.listExtensions();

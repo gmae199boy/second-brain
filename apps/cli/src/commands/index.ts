@@ -1,9 +1,11 @@
+import { messengersAddCommand, messengersListCommand } from './messengers-add.js';
+import { channelsRouteCommand, channelsSendCommand, channelsSendPendingCommand } from './channels-control.js';
 import { sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesDisconnectCommand } from './sources-control.js';
 import { sourcesSyncCommand } from './sources-sync.js';
 import { recallDocsCommand } from './recall-docs.js';
 import { filesShowCommand } from './files-show.js';
 import { mcpServeCommand } from './mcp-serve.js';
-import { channelsListCommand, channelsStatusCommand, channelsResendCommand } from './channels-status.js';
+import { channelsAddCommand, channelsListCommand, channelsStatusCommand, channelsResendCommand } from './channels-status.js';
 import { extEnableCommand, extDisableCommand } from './ext-activation.js';
 import { recallChunksCommand } from './recall-chunks.js';
 import { recallToolsCommand } from './recall-tools.js';
@@ -60,7 +62,8 @@ import { setupRun } from './setup-run.js';
  */
 export const commands: readonly CommandSpec[] = [
   mcpServeCommand,
-  channelsListCommand, channelsStatusCommand, channelsResendCommand,
+  messengersAddCommand, messengersListCommand, channelsRouteCommand, channelsSendCommand, channelsSendPendingCommand,
+  channelsAddCommand, channelsListCommand, channelsStatusCommand, channelsResendCommand,
   recallChunksCommand, recallToolsCommand, recallDocsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,
   extRunCommand,

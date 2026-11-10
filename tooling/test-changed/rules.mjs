@@ -1,6 +1,9 @@
 // Python integration uses the daemon, its real store, extension runtime and
 // subprocesses; these paths have effects beyond Vitest's TS import graph.
 const rules = [
+  { prefix:'apps/cli/src/commands/messengers-', reason:'messenger credential CLI used by channel workers' },
+  { prefix:'apps/cli/src/workers/channel-send.ts', reason:'channel adapter credential selection child process' },
+  { prefix:'apps/cli/src/commands/channels-', reason:'core channel CLI and dispatch integration' },
   // Includes Garmin native SQL, pinned SQLite oracle, Python fixtures and subprocess readers.
   { prefix:'extensions/', reason:'extension runtime, Garmin native SQL, Python oracle and subprocess fixtures' },
   { prefix:'plugins/testext/', reason:'extension plugin package and launcher' },

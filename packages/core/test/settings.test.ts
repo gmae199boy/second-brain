@@ -155,3 +155,18 @@ it('fake uncertain delete barrier rejects retention writes and preserves prior s
   expect(await store.refreshDriveRetention()).toMatchObject({ok:false,code:'DB_LOCKED'});
   expect(await store.getSetting({userId,key:'drive.keep_local_days'})).toMatchObject({ok:true,setting:{value:'30'}});
 });
+
+it('Telegram 사용자 설정은 빈 값으로 해제하고 토큰·chat id 형식을 검사한다', async () => {
+  const { brain } = kit();
+  const token = '123456789:' + 'A'.repeat(35);
+  for (const [key, value] of [['telegram.bot_token', token], ['telegram.chat_id', '-1001234567890'], ['telegram.chat_id', '123456789']]) {
+    expect(await brain.config.set({ key: key!, value: value! })).toMatchObject({ ok: true, value, scope: 'user' });
+    expect(await brain.config.set({ key: key!, value: '' })).toMatchObject({ ok: true, value: '' });
+  }
+  for (const value of ['invalid', token + '\n', token + '!', '123:', ':' + 'A'.repeat(35)]) {
+    const result = await brain.config.set({ key: 'telegram.bot_token', value });
+    expect(result).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+    expect(JSON.stringify(result)).not.toContain(value);
+  }
+  for (const value of ['0', '-0', '1.2', '+1', '-100x', '1\n', '9007199254740992']) expect(await brain.config.set({ key: 'telegram.chat_id', value })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
+});
