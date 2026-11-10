@@ -16,6 +16,14 @@ def _invalid():
     raise ValueError('PREFLIGHT_INVALID')
 
 
+def _unique_object(pairs):
+    value = {}
+    for key, child in pairs:
+        if key in value: _invalid()
+        value[key] = child
+    return value
+
+
 def _safe_file(root, value, secure=False):
     if not isinstance(value, str) or not value or '\\' in value or '\0' in value:
         _invalid()
@@ -54,8 +62,8 @@ def load_capture(manifest_path, secure=False):
                     _invalid()
             raw = path.read_bytes()
             manifest_token = None
-        value = json.loads(raw)
-        if not isinstance(value, dict) or set(value) != ({'version', 'capture_id', 'datasets', 'files'} if value.get('version') == 1 else {'version', 'capture_id', 'datasets', 'files', 'inventory'}) or type(value['version']) is not int or value['version'] not in (1, 2) or not isinstance(value['capture_id'], str) or not value['capture_id'].strip() or not isinstance(value['datasets'], list) or not isinstance(value['files'], list):
+        value = json.loads(raw, object_pairs_hook=_unique_object)
+        if not isinstance(value, dict) or set(value) != ({'version', 'capture_id', 'datasets', 'files'} if value.get('version') == 1 else ({'version', 'capture_id', 'datasets', 'files', 'inventory', 'selection'} if value.get('version') == 3 else {'version', 'capture_id', 'datasets', 'files', 'inventory'})) or type(value['version']) is not int or value['version'] not in (1, 2, 3) or not isinstance(value['capture_id'], str) or not value['capture_id'].strip() or not isinstance(value['datasets'], list) or not isinstance(value['files'], list):
             _invalid()
         datasets, names, snapshots = {}, set(), set()
         for entry in value['datasets']:
@@ -74,14 +82,14 @@ def load_capture(manifest_path, secure=False):
         artifact_keys = set()
         for entry in value['files']:
             required = {'source', 'snapshot', 'bytes'} if value['version'] == 1 else {'source', 'snapshot', 'bytes', 'dataset', 'artifact_key', 'category'}
-            allowed = required | ({'relations', 'report_date', 'scope', 'model', 'created_at'} if value['version'] == 2 else set())
+            allowed = required | ({'relations', 'report_date', 'scope', 'model', 'created_at'} if value['version'] >= 2 else set())
             if not isinstance(entry, dict) or not required <= set(entry) or not set(entry) <= allowed or not isinstance(entry['source'], str) or not entry['source'].strip() or type(entry['bytes']) is not int or entry['bytes'] < 0 or entry['snapshot'] in snapshots:
                 _invalid()
             target = _safe_file(path.parent, entry['snapshot'], secure)
             if (inspect_file(target)[1][2] if secure else target.stat().st_size) != entry['bytes']:
                 _invalid()
             snapshots.add(entry['snapshot'])
-            if value['version'] == 2:
+            if value['version'] >= 2:
                 key = entry['artifact_key']
                 if entry['dataset'] not in names or not isinstance(key, str) or not key.strip() or '\0' in key or (entry['dataset'], key) in artifact_keys or entry['category'] not in ('report','facts','image','input','log','config','unknown'):
                     _invalid()
@@ -106,12 +114,18 @@ def load_capture(manifest_path, secure=False):
             identity = (item['dataset'],item['category'])
             if identity in inventory_keys or any(not isinstance(k,str) or (item['dataset'],k) not in artifact_keys for k in item['source_files']): _invalid()
             inventory_keys.add(identity)
-        if value['version'] == 2:
+        if value['version'] >= 2:
             for entry in files:
                 for relation in entry.get('relations', []):
                     if (entry['dataset'],relation['analysis_key']) not in artifact_keys: _invalid()
+        if value['version'] == 3:
+            from import_scope import validate_selection
+            validate_selection(value)
         fingerprint = hashlib.sha256(safe_dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
         private = {'capture_id': value['capture_id'], 'fingerprint': fingerprint, 'datasets': value['datasets'], 'files': files, 'inventory': inventory, 'version': value['version'], 'root': str(path.parent)}
+        if value['version'] == 3:
+            from import_scope import capture_receipt
+            private.update(capture_receipt(value, path.parent))
         if secure: private['manifest_token'] = manifest_token
         return {'datasets': datasets, 'private': private}
     except (OSError, TypeError, KeyError, UnicodeError, json.JSONDecodeError):

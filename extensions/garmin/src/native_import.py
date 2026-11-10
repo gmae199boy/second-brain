@@ -1,4 +1,5 @@
 """Copy preserved SQLite rows to account-scoped native tables in fenced units."""
+from import_scope import batch_id
 import hashlib
 import contextlib
 from garmin_pipeline.store import account_write_lock_key
@@ -111,23 +112,61 @@ def _copy_row(cur, user, connection, name, table, row, provenance):
             cur.execute('insert into garmin.exercise_log_order(user_id,connection_id,activity_id,exercise,source_order,source_dataset,source_batch,source_rowid) select %s,%s,%s,%s,coalesce(max(source_order),0)+1,%s,%s,%s from garmin.exercise_log_order where user_id=%s and connection_id=%s', (user,connection,clean(row['activity_id']),clean(row['exercise']),dataset,batch,rowid,user,connection))
 
 
+def validate_sources(entries, verified, settings=None, *, fixed4=False):
+    """Validate every selected account/schema/value before the first durable write."""
+    if settings is not None: envelope(settings)
+    profiles = set()
+    for entry in entries:
+        snapshot = verified[entry['dataset']]['snapshot']
+        info = account(snapshot)
+        if not info['confirmed']: raise ValueError('IMPORT_INVALID')
+        profile = clean(info['account'])
+        if not isinstance(profile, str) or not profile: raise ValueError('IMPORT_INVALID')
+        profiles.add(profile)
+        expected = os.environ.get('BRAIN_ACCOUNT')
+        if expected is not None and expected != profile: raise ValueError('IMPORT_INVALID')
+        expected_tables = BY_VERSION.get(snapshot['schema'])
+        if expected_tables is None or set(expected_tables) - set(snapshot['tables']):
+            raise ValueError('IMPORT_INVALID')
+        for name, table in snapshot['tables'].items():
+            if not table['keys']: raise ValueError('IMPORT_INVALID')
+            if name in expected_tables and set(expected_tables[name]) - set(table['columns']):
+                raise ValueError('IMPORT_INVALID')
+            if name == 'activity_recovery': continue
+            if name not in ORDER or set(table['columns']) - set(COLUMNS[name]):
+                raise ValueError('IMPORT_INVALID')
+            for row in table['rows']:
+                for column in table['columns']: clean(row[column])
+    if fixed4 and len(profiles) != 1: raise ValueError('IMPORT_INVALID')
+    return profiles
+
+
 @contextlib.contextmanager
 def account_locks(conn, capture, entries, verified, settings):
     """Serialize the complete native import and file-link stage with writers."""
     user, timezone = envelope(settings)
+    if capture['private'].get('version') == 3:
+        profiles = validate_sources(entries, verified, settings, fixed4=True)
+        # Check every existing connection before creating any account connection.
+        with conn.transaction():
+            cur = conn.cursor(); check(cur)
+            for profile in sorted(profiles):
+                cur.execute('select timezone from garmin.account_connections where user_id=%s and external_identity=%s', (user, profile))
+                existing = cur.fetchone()
+                if existing is not None and existing[0] != timezone: raise ValueError('IMPORT_CONFLICT')
     connections = set()
     for entry in entries:
         info = account(verified[entry['dataset']]['snapshot'])
         if not info['confirmed']: raise ValueError('IMPORT_INVALID')
         expected = os.environ.get('BRAIN_ACCOUNT')
         if expected is not None and expected != info['account']:
-            batch = hashlib.sha256(canonical([capture['private']['capture_id'],entry['dataset']]).encode()).hexdigest()
+            batch = batch_id(capture, entry['dataset'])
             conflict(conn,entry['dataset'],batch,None,None,'native_account_mismatch')
         try:
             connections.add(_connect_account(conn,user,info['account'],timezone))
         except ValueError as exc:
             if str(exc) == 'IMPORT_CONFLICT':
-                batch = hashlib.sha256(canonical([capture['private']['capture_id'],entry['dataset']]).encode()).hexdigest()
+                batch = batch_id(capture, entry['dataset'])
                 conflict(conn,entry['dataset'],batch,None,None,'native_account_mismatch')
             raise
     held = []
@@ -169,7 +208,7 @@ def _copy_locked(conn, capture, entries, verified, settings, seam=None):
         profiles[dataset] = info['account']
         expected_account = os.environ.get('BRAIN_ACCOUNT')
         if expected_account is not None and expected_account != info['account']:
-            batch = hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest()
+            batch = batch_id(capture, dataset)
             conflict(conn,dataset,batch,None,None,'native_account_mismatch')
     connections = {}
     for entry in entries:
@@ -179,12 +218,12 @@ def _copy_locked(conn, capture, entries, verified, settings, seam=None):
             connections[profile] = _connect_account(conn, user, profile, timezone)
         except ValueError as exc:
             if str(exc) == 'IMPORT_CONFLICT':
-                batch = hashlib.sha256(canonical([capture['private']['capture_id'], dataset]).encode()).hexdigest()
+                batch = batch_id(capture, dataset)
                 conflict(conn, dataset, batch, None, None, 'native_account_mismatch')
             raise
     fingerprint = hashlib.sha256(canonical([VERSION, capture['private']['fingerprint'], str(user), timezone,
         [(e['dataset'], verified[e['dataset']]['sha256'], profiles[e['dataset']]) for e in entries]]).encode()).hexdigest()
-    batches = {e['dataset']: hashlib.sha256(canonical([capture['private']['capture_id'],e['dataset']]).encode()).hexdigest() for e in entries}
+    batches = {e['dataset']: batch_id(capture, e['dataset']) for e in entries}
     for entry in entries:
         dataset = entry['dataset']; data = verified[dataset]; connection = connections[profiles[dataset]]; batch = batches[dataset]
         expected = (data['sha256'], data['snapshot']['schema'], VERSION, fingerprint)
@@ -288,9 +327,10 @@ def verify(conn, capture, entries, verified, settings):
     selected = {}
     last_order = {}
     selected_order = {}
+    wanted_mappings = set()
     for entry in entries:
         dataset=entry['dataset']; data=verified[dataset]; connection=connections[profiles[dataset]]
-        batch=hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest()
+        batch=batch_id(capture, dataset)
         cur.execute('select source_hash,schema_version,importer_version,manifest_fingerprint,completed from garmin.native_import_checkpoints where batch=%s and dataset=%s and user_id=%s and connection_id=%s', (batch,dataset,user,connection))
         if cur.fetchone() != (data['sha256'],data['snapshot']['schema'],VERSION,fingerprint,True): return False
     for name in ORDER:
@@ -307,6 +347,7 @@ def verify(conn, capture, entries, verified, settings):
                     if name in LOCAL_ID and selected[identity]!=hashed: return False
                     continue
                 selected[identity]=hashed
+                wanted_mappings.add((dataset, name, key, connection))
                 cur.execute('select native_key,content_hash from garmin.native_import_mapping where dataset=%s and original_table=%s and original_key=%s and user_id=%s and connection_id=%s', (dataset,name,key,user,connection))
                 if cur.fetchone() != (native_key,hashed): return False
                 target='evaluation_revisions' if name=='evaluation' else name
@@ -318,9 +359,14 @@ def verify(conn, capture, entries, verified, settings):
                 if name=='exercise_log':
                     cur.execute('select source_order,source_dataset,source_batch,source_rowid from garmin.exercise_log_order where user_id=%s and connection_id=%s and activity_id=%s and exercise=%s',(user,connection,clean(row['activity_id']),clean(row['exercise'])))
                     order = cur.fetchone()
-                    if order is None or order[1:] != (dataset,hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest(),rowid) or order[0] <= last_order.get(connection, -9223372036854775809): return False
+                    if order is None or order[1:] != (dataset,batch_id(capture, dataset),rowid) or order[0] <= last_order.get(connection, -9223372036854775809): return False
                     last_order[connection] = order[0]
                     selected_order.setdefault(connection, []).append((clean(row['activity_id']),clean(row['exercise'])))
+    if capture['private'].get('version') == 3:
+        for entry in entries:
+            dataset = entry['dataset']
+            cur.execute('select original_table,original_key,connection_id from garmin.native_import_mapping where user_id=%s and dataset=%s and batch=%s', (user,dataset,batch_id(capture,dataset)))
+            if any((dataset, name, key, connection) not in wanted_mappings for name,key,connection in cur.fetchall()): return False
     for connection, expected in selected_order.items():
         cur.execute('select activity_id,exercise from garmin.exercise_log_order where user_id=%s and connection_id=%s order by source_order limit %s', (user,connection,len(expected)))
         if cur.fetchall() != expected: return False

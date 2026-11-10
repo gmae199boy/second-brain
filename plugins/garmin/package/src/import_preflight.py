@@ -6,7 +6,8 @@ import sys
 import psycopg
 from preflight import analyze, readiness, public_report, classify_files, estimate_candidates
 from reports import write_reports
-from capture_manifest import load_capture
+from capture_manifest import load_capture, ROLES
+from import_scope import selected_capture, recheck_capture
 from role_probe import probe_role, safely
 
 
@@ -18,12 +19,21 @@ def main():
     settings = json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])
     if settings.get('version') != 1 or settings.get('extension') != 'garmin':
         raise ValueError('PREFLIGHT_INVALID')
-    capture = load_capture(settings['values']['garmin.capture_manifest'])
+    manifest = settings['values']['garmin.capture_manifest']
+    full_capture = load_capture(manifest, secure=True)
+    capture = selected_capture(full_capture)
     def digest(path):
         with path.open('rb') as stream:
             return hashlib.file_digest(stream, 'sha256').hexdigest()
     hashes = {role: digest(path) for role, path in capture['datasets'].items()}
-    report = analyze(capture['datasets'])
+    report = analyze(capture['datasets'], fixed4=capture['private']['version'] == 3)
+    if capture['private']['version'] == 3:
+        from native_import import validate_sources
+        from reader import read_snapshot
+        entries = capture['private']['datasets']
+        verified = {e['dataset']: {'snapshot': read_snapshot(capture['datasets'][ROLES[e['source']]])} for e in entries}
+        validate_sources(entries, verified, fixed4=True)
+    recheck_capture(manifest, full_capture)
     after = {role: digest(path) for role, path in capture['datasets'].items()}
     if hashes != after:
         raise ValueError('PREFLIGHT_INVALID')

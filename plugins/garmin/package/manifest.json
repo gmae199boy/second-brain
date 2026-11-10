@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -740,6 +740,7 @@
     "src/garmin_pipeline/store/__init__.py",
     "src/import.py",
     "src/import_preflight.py",
+    "src/import_scope.py",
     "src/import_verify.py",
     "src/metadata_codec.py",
     "src/native_artifacts.py",
@@ -768,5 +769,5 @@
     "min": "0.0.0",
     "max_exclusive": "1.0.0"
   },
-  "plugin_version": "0.1.4"
+  "plugin_version": "0.1.5"
 }

@@ -9,7 +9,7 @@ const captureMethods = [
   'test_report_hashes_and_bidirectional_difference', 'test_publish_race_preserves_directory',
   'test_parent_replaced_before_publish', 'test_destination_parent_swap_during_database_backup',
   'test_deep_permissions', 'test_case_collision', 'test_path_replaced_after_inspection',
-  'test_keyboard_interrupt_redacted_and_cleaned',
+  'test_keyboard_interrupt_redacted_and_cleaned', 'test_fixed_four_capture_keeps_excluded_database_and_file',
 ];
 function captureOutcomes(output: string): void {
   const matches = [...output.matchAll(/^(test_\w+) \([^\n]+\) \.\.\. (ok|skipped '[^'\n]*')$/gm)];
@@ -45,6 +45,6 @@ it('runs the synthetic Garmin capture Python tests', () => {
   if (result.stderr) process.stderr.write(result.stderr);
   expect(result.error, result.error?.message).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout + result.stderr).toMatch(/Ran 13 tests in /);
+  expect(result.stdout + result.stderr).toMatch(/Ran 14 tests in /);
   captureOutcomes(result.stdout + result.stderr);
 });

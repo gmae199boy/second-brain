@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import set_json_loads
 from capture_manifest import load_capture
+from import_scope import selected_capture, recheck_capture
 from reports import write_reports
 from verify_compare import compare, public_projection
 
@@ -23,7 +24,7 @@ def main():
     if settings.get('version') != 1 or settings.get('extension') != 'garmin': raise ValueError('IMPORT_INVALID')
     work = str(UUID(os.environ['BRAIN_WORK_ID'])); token = str(UUID(os.environ['BRAIN_ATTEMPT_TOKEN']))
     conversation = None
-    names = ('datasets','import_batches','import_mapping','import_conflicts','import_checkpoints','source_schemas','preserved_rows','raw_payloads','legacy_conversations','artifact_inventory','artifact_relations','input_inventory')
+    names = ('datasets','import_batches','import_mapping','import_conflicts','import_checkpoints','source_schemas','preserved_rows','raw_payloads','legacy_conversations','artifact_inventory','artifact_relations','input_inventory','native_import_mapping','native_import_checkpoints')
     with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500', row_factory=dict_row) as conn:
         with conn.transaction():
             current = conn.execute('select garmin.attempt_valid(%s::uuid,%s::uuid) as current', (work,token)).fetchone()
@@ -36,7 +37,8 @@ def main():
                 stored = {name: cursor.execute('select * from garmin.' + name).fetchall() for name in names}
                 file_results = cursor.execute('select * from brain.file_request_results_public_v1').fetchall()
         try:
-            capture = load_capture(settings['values']['garmin.capture_manifest'], secure=True)
+            full_capture = load_capture(settings['values']['garmin.capture_manifest'], secure=True)
+            capture = selected_capture(full_capture)
             details = compare(capture, stored, file_results, conversation)
             from native_import import verify as verify_native
             from capture_manifest import ROLES
@@ -52,6 +54,9 @@ def main():
                 data, hashed, source_token = read_source(path, reject_wal=True)
                 verified[dataset] = {'snapshot': read_snapshot_bytes(data), 'sha256': hashed}
                 recheck_source(path, (hashed, source_token))
+            from native_import import validate_sources
+            normalized = [{**e, 'dataset': dataset_ref(e['dataset'])} for e in entries]
+            validate_sources(normalized, verified, settings, fixed4=capture['private']['version'] == 3)
             entries = [{**entry, 'dataset': dataset_ref(entry['dataset']), 'dataset_label': entry['dataset'] if dataset_ref(entry['dataset']) != entry['dataset'] else None} for entry in entries]
             from native_artifacts import plan as plan_files, verify as verify_files
             planned_files, _ = plan_files(capture, entries, verified)
@@ -65,6 +70,9 @@ def main():
                 if not files_ok:
                     details['differences']['files'].append('native_files_incomplete')
                     details['counts']['mismatches'] += 1
+            recheck_capture(settings['values']['garmin.capture_manifest'], full_capture)
+            if capture['private']['version'] == 3:
+                details['selection_receipt'] = capture['private']['selection_receipt']
             if (lambda final: (final['fingerprint'], final['manifest_token']) != (capture['private']['fingerprint'], capture['private']['manifest_token']))(load_capture(settings['values']['garmin.capture_manifest'], secure=True)['private']):
                 details['differences']['source_unchanged'].append('manifest_changed')
                 details['counts']['mismatches'] += 1

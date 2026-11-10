@@ -319,5 +319,27 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual(logs[0].stat().st_mode & 0o777, 0o600)
         self.assertIn('private-marker', logs[0].read_text())
 
+    def test_fixed_four_capture_keeps_excluded_database_and_file(self):
+        manifest = self.value['manifest']
+        manifest['version'] = 3
+        manifest['inventory'] = []
+        manifest['selection'] = {'version':1, 'include':['data0','data1','data3','data4'],
+                                 'exclude':[{'dataset':'data2','reason':'unconfirmed-account'}]}
+        manifest['files'][0].update(dataset='data2',artifact_key='excluded',category='report')
+        self.save()
+        output = self.root / 'fixed4'
+        capture.create(self.descriptor, output)
+        full = capture.load_capture(str(output/'manifest.json'))
+        from import_scope import selected_capture
+        selected = selected_capture(full)
+        self.assertEqual(len(full['datasets']), 5)
+        self.assertEqual(len(selected['datasets']), 4)
+        self.assertEqual(selected['private']['files'], [])
+        self.assertTrue((output/'db/2.sqlite').is_file())
+        self.assertEqual((output/'files/file').read_bytes(), b'private-marker')
+        receipt = json.loads((output/'private-report.json').read_text())['selection_receipt']
+        self.assertEqual(receipt['table_counts']['data2'], {'records':1})
+        self.assertIn('db/2.sqlite',receipt['sha256'])
+
 
 if __name__ == '__main__': unittest.main()

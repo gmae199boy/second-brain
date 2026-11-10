@@ -1,4 +1,5 @@
 """capture 원본과 확장 소유 반입 장부를 읽기 전용으로 대조한다."""
+from import_scope import batch_id
 import hashlib
 from decimal import Decimal
 from batch_import import VERSION, canonical, contract_fingerprint, encoded
@@ -40,7 +41,7 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
     for entry in entries:
         original=entry['dataset']; dataset=dataset_ref(original); path=capture['datasets'][ROLES[entry['source']]]
         data, digest, token=read_source(path,reject_wal=True); source=read_snapshot_bytes(data); snapshots[dataset]=source
-        batch=hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest(); batches[dataset]=batch
+        batch=batch_id(capture, dataset); batches[dataset]=batch
         cp=find('import_checkpoints',dataset=dataset,batch=batch)
         expected={'source_hash':digest,'schema_version':source['schema'],'importer_version':VERSION,'manifest_fingerprint':fingerprint,'source_role':entry['source']}
         if cp and cp[0]['source_hash'] != digest: fail('source_unchanged',[dataset,'checkpoint_hash'])
@@ -77,6 +78,15 @@ def compare(capture, stored, file_results, conversation, *, preserve_artifacts=F
                     if len(found)!=1 or found[0]['raw_identity']!=rid or any(original_text(restore(found[0][f],found[0][f+'_raw'],found[0][f+'_encoding']))!=original_text(v) for f,v in [('account',acct['account']),('scope',row['scope']),('original_key',row['key']),('endpoint',row['endpoint']),('library_version',row['library_version']),('body',row['raw'])]) or found[0]['fetched_at_ms']!=row['fetched_at'] or found[0]['checked_at_ms']!=row['checked_at']: fail('raw',[dataset,key])
         if cp and (cp[0]['original_table'],cp[0]['original_key']) != (last or (None,None)): fail('checkpoints',[dataset,'position'])
         recheck_source(path,(digest,token))
+    if capture['private']['version'] == 3:
+        receipt = capture['private']['selection_receipt']
+        excluded = receipt['selection']['exclude'][0]['dataset']
+        excluded_batch = batch_id(capture, excluded)
+        for name, rows in stored.items():
+            for row in rows:
+                batch = row.get('id') if name == 'import_batches' else row.get('batch')
+                if batch == excluded_batch:
+                    fail('checkpoints', [excluded, name, 'excluded_dataset_leak'])
     counts['preserved_rows']=len(wanted)
     all_preserved={(r['dataset'],r['original_table'],r['original_key']) for r in stored['import_mapping'] if r['target_kind']=='preserved'}
     current_preserved={(r['dataset'],r['original_table'],r['original_key']) for r in stored['import_mapping'] if r['target_kind']=='preserved' and batches.get(r['dataset'])==r['batch']}

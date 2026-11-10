@@ -249,3 +249,48 @@ Garmin 시험과 경로 분류를 포함해 `pnpm test` 다음 `pnpm test:python
 순차 실행한다. 실패별 최소 수정과 관련 재검증을 수행하고 기준 SHA, 자원
 소유권, 명령·종료 코드·로그·실패 처분 및 재검증을 기록한다. 미실행 시험이나
 미해결 실패가 있으면 21.8 built 및 21.7 시작은 금지한다.
+
+## 전체5 capture에서 확인된4 반입
+
+manifest v1/v2는 기존대로 다섯 source role 전체를 요구한다. v3도 전체5 snapshot과
+소유 파일·inventory를 보관하며, 다음 고정 선택만 허용한다. 아래 ID는 합성 예시다.
+
+```json
+"selection": {
+  "version": 1,
+  "include": ["synthetic-D2", "synthetic-D1", "synthetic-D4", "synthetic-D5"],
+  "exclude": [{"dataset": "synthetic-D3", "reason": "unconfirmed-account"}]
+}
+```
+
+v3는 v2의 필드에 `selection`을 추가한다. include는 production, development,
+production-pre-epic5, production-before-history-start의 dataset ID 네 개와 정확히
+일치해야 하고 development-before-change만 위 사유로 제외한다. 입력 순서는 권위에
+영향을 주지 않으며 D2→D1→D4→D5 순서를 유지한다. 부분 role·단일 dataset·추가 archive·
+다른 제외 사유·중복·unknown ID는 거부한다. 계정을 입력하거나 미확인 profile을
+합성하지 않는다. 선택된 모든 snapshot의 단일 동일 profile, schema와 값, 파일 계획을
+content/account/file 쓰기 전에 검사한다. 기존 user/attempt/계정 쓰기 락은 유지한다.
+
+`tooling/garmin-import/capture.py`의 descriptor에 v3 manifest를 명시하면 전체5를
+그대로 capture한다. private-report의 selection_receipt에는 전체 snapshot·파일의
+SHA-256과 dataset별 표 행수, 선택/제외 사유를 남긴다. D3와 소유 파일·inventory는
+preservation/native/file 반입과 검증 비교에서 제외한다. D3 보존은 Brain 계정 귀속이나
+DB 반입 성공을 의미하지 않는다. 별도로 보관한 추가 archive는 이 manifest에 넣지 않는다.
+
+preflight/import/verify는 같은 selected view를 사용한다. 기존 `datasets`/`rows` 집계는
+선택 반입 범위이며 전체 capture 처분은 private selection_receipt로 확인한다. v3의
+fingerprint는 전체5 및 제외 파일 바이트·선택/제외 사유를 모두 결합한다. capture ID와
+고정 role로 만든 batch anchor와 기존 checkpoint를 session lock 안에서 비교한다.
+선택4의 dataset session lock을 모두 잡고 기존 account/confirmed/label과 source_schemas를
+전부 검사한 뒤, dataset/import_batch/checkpoint 네 role을 한 transaction으로 확정한다.
+이 최초 receipt보다 account 연결 transaction이 먼저 확정되지 않으므로 그 사이에
+종료되어도 같은 capture의 dataset ID나 profile을 전부 바꿔 재개 guard를 피할 수 없다.
+충돌 입력에는 최초 receipt도 생성하지 않는다. ingest 내부의 기존 재검사와 선택4 락은
+파일 발행까지 유지한다. v1/v2의 batch와
+fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest가 실행 중 바뀌거나
+재개 입력이 기존 checkpoint와 다르면 거부한다. 기존 native hash/LOCAL_ID 충돌도 거부한다.
+
+운영 반입은 writer를 정지한 후 만든 새 capture를 최초 입력으로 사용한다. report/facts는
+기존 native_artifacts 정책으로 중립 파일 보존하며 근거 없는 evaluation/revision을
+만들지 않는다. 제품 package는 공식 packaging 명령으로 재생성한다. 이 변경의 배포에는
+수정 commit 이후의 Garmin plugin release가 필요하며 app-ref 갱신은 별도 release 단계다.

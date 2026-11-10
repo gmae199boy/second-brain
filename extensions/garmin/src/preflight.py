@@ -81,20 +81,20 @@ def _ranges(name, table):
         return {'column': column, 'min': None, 'max': None, 'unsupported': True}
 
 
-def analyze(datasets):
-    if set(datasets) != set(ORDER):
+def analyze(datasets, *, fixed4=False):
+    if set(datasets) != (set(ORDER) - {'D3'} if fixed4 else set(ORDER)):
         raise ValueError('PREFLIGHT_INVALID')
-    return analyze_snapshots({role: read_snapshot(datasets[role]) for role in ORDER})
+    return analyze_snapshots({role: read_snapshot(datasets[role]) for role in ORDER if role in datasets}, fixed4=fixed4)
 
 
-def analyze_snapshots(snapshots):
-    if set(snapshots) != set(ORDER): raise ValueError('PREFLIGHT_INVALID')
-    result = {'datasets': {}, 'tables': {}, 'authority_order': list(ORDER), 'unselected_keys': 0, 'excluded_keys': 0, 'authority_version': 1, 'authority_scope': '표별 원래 키; 정수 이력은 dataset별'}
+def analyze_snapshots(snapshots, *, fixed4=False):
+    if set(snapshots) != (set(ORDER) - {'D3'} if fixed4 else set(ORDER)): raise ValueError('PREFLIGHT_INVALID')
+    result = {'datasets': {}, 'tables': {}, 'authority_order': [role for role in ORDER if role in snapshots], 'unselected_keys': 0, 'excluded_keys': 0, 'authority_version': 1, 'authority_scope': '표별 원래 키; 정수 이력은 dataset별'}
     for role, snapshot in snapshots.items():
         result['datasets'][role] = {'schema': snapshot['schema'], 'account': account(snapshot), 'tables': {name: {'count': len(table['rows']), 'columns': table['columns'], 'column_metadata': table['column_metadata'], 'keys': table['keys'], 'rows': _private_value(table['rows']), 'range': _ranges(name, table)} for name, table in snapshot['tables'].items()}}
     all_names = sorted(set().union(*(s['tables'] for s in snapshots.values())))
     for name in all_names:
-        tables = {role: snapshots[role]['tables'].get(name) for role in ORDER}
+        tables = {role: snapshots[role]['tables'].get(name) if role in snapshots else None for role in ORDER}
         indexed = {role: _index(table) if table else None for role, table in tables.items()}
         present = [role for role in ORDER if tables[role] is not None]
         usable = all(indexed[role] is not None for role in present)

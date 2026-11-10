@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create a private Garmin capture from an explicit descriptor.
 
-Descriptor JSON: {"manifest": <v1/v2 manifest>, "sources": {<snapshot>: <absolute source>}}.
+Descriptor JSON: {"manifest": <v1/v2/v3 manifest>, "sources": {<snapshot>: <absolute source>}}.
 Optionally supply --previous pointing to a previous normalized manifest.
 """
 import argparse
@@ -295,7 +295,7 @@ def create(descriptor, output, previous=None):
                 os.close(target_fd)
         check_stage()
         write_json(stage_fd, 'manifest.json', manifest)
-        load_capture(str(stage / 'manifest.json'))
+        captured = load_capture(str(stage / 'manifest.json'))
         hashes['manifest.json'] = digest_at(stage_fd, 'manifest.json')
         new = inventory(stage / 'manifest.json')
         check_stage()
@@ -305,6 +305,8 @@ def create(descriptor, output, previous=None):
                 raise ValueError('snapshot sidecar')
         report = {'sources': {k: str(v.path) for k, v in sources.items()}, 'sha256': hashes,
                   'current': new, 'previous': old}
+        if captured['private']['version'] == 3:
+            report['selection_receipt'] = captured['private']['selection_receipt']
         if old is not None:
             report['comparison'] = {'added': sorted(set(new['snapshots']) - set(old['snapshots'])),
                                     'removed': sorted(set(old['snapshots']) - set(new['snapshots'])),

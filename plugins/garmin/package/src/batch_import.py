@@ -1,5 +1,7 @@
 """읽기 전용 capture를 작은 원자 단위로 보존한다."""
+from import_scope import batch_id
 import base64
+import contextlib
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -9,6 +11,7 @@ from uuid import uuid7, UUID
 
 import psycopg
 from capture_manifest import load_capture, ROLES
+from import_scope import selected_capture, recheck_capture
 from preflight import account
 from reader import read_snapshot, SQLiteText, InvalidSQLiteText
 from raw_codec import dataset_ref, project, restore
@@ -155,7 +158,7 @@ def ingest(conn, capture, entry, conversation, *, native_mode=False):
     label_display, label_raw, label_encoding = project(label)
     path = capture['datasets'][ROLES[entry['source']]]
     if path.with_name(path.name + '-wal').exists():
-        batch = hashlib.sha256(canonical([capture['private']['capture_id'], dataset]).encode()).hexdigest()
+        batch = batch_id(capture, dataset)
         with conn.transaction():
             cur=conn.cursor(); check(cur)
             cur.execute('select 1 from garmin.import_checkpoints where batch=%s and dataset=%s',(batch,dataset))
@@ -168,7 +171,7 @@ def ingest(conn, capture, entry, conversation, *, native_mode=False):
     with path.open('rb') as f:
         if hashlib.file_digest(f, 'sha256').hexdigest() != source_hash or path.with_name(path.name + '-wal').exists():
             raise ValueError('IMPORT_INVALID')
-    batch = hashlib.sha256(canonical([capture['private']['capture_id'], dataset]).encode()).hexdigest()
+    batch = batch_id(capture, dataset)
     acct = account(snapshot)
     account_display, account_raw, account_encoding = project(acct['account'])
     with conn.transaction():
@@ -287,11 +290,84 @@ def ingest(conn, capture, entry, conversation, *, native_mode=False):
     return {'snapshot': snapshot, 'sha256': source_hash}
 
 
+@contextlib.contextmanager
+def fixed4_dataset_locks(conn, capture, entries):
+    """Keep every selected target stable from prevalidation through publication."""
+    held = []
+    try:
+        if capture['private']['version'] == 3:
+            for dataset in sorted(e['dataset'] for e in entries):
+                with conn.transaction():
+                    check(conn.cursor())
+                    conn.execute('select pg_advisory_lock(hashtextextended(%s,0))', (dataset,))
+                    held.append(dataset)
+        yield
+    finally:
+        pending = sys.exc_info()[0] is not None
+        if not conn.closed:
+            try:
+                from psycopg.pq import TransactionStatus
+                if conn.info.transaction_status == TransactionStatus.INERROR: conn.rollback()
+                for dataset in reversed(held):
+                    conn.execute('select pg_advisory_unlock(hashtextextended(%s,0))', (dataset,))
+                    conn.commit()
+            except psycopg.Error:
+                if not pending: raise
+
+
+def prepare_fixed4(conn, capture, entries, verified, settings, conversations):
+    """Validate all targets, then atomically anchor all roles before account commits.
+
+    Caller holds the capture session lock and every dataset session lock. Existing
+    dataset/batch/checkpoint rows are the receipt; source/content rows stay untouched.
+    """
+    if capture['private']['version'] != 3: return
+    from native_import import envelope
+    user, timezone_name = envelope(settings)
+    with conn.transaction():
+        cur = conn.cursor(); check(cur)
+        for entry in entries:
+            dataset = entry['dataset']; snapshot = verified[dataset]['snapshot']
+            info = account(snapshot); label = entry['dataset_label']
+            cur.execute('select account,account_confirmed,account_raw,account_encoding,dataset_label,dataset_label_raw,dataset_label_encoding from garmin.datasets where dataset=%s', (dataset,))
+            old = cur.fetchone()
+            if old is not None and (old[1] != info['confirmed'] or restore(old[0],old[2],old[3]) != info['account'] or restore(old[4],old[5],old[6]) != label):
+                raise ValueError('IMPORT_CONFLICT')
+            cur.execute('select original_table,schema_version,columns_json,keys_json from garmin.source_schemas where dataset=%s', (dataset,))
+            for name, version, columns, keys in cur.fetchall():
+                table = snapshot['tables'].get(name)
+                if table is None or (version,columns,keys) != (snapshot['schema'],json.loads(canonical(table['column_metadata'])),json.loads(canonical(table['keys']))):
+                    raise ValueError('IMPORT_CONFLICT')
+            batch = batch_id(capture,dataset)
+            cur.execute('select dataset from garmin.import_batches where id=%s', (batch,))
+            prior_batch = cur.fetchone()
+            if prior_batch is not None and prior_batch != (dataset,): raise ValueError('IMPORT_CONFLICT')
+            cur.execute('select dataset,source_hash,schema_version,importer_version,manifest_fingerprint,source_role,conversation_id from garmin.import_checkpoints where batch=%s', (batch,))
+            expected = (dataset,verified[dataset]['sha256'],snapshot['schema'],VERSION,capture['private']['fingerprint'],entry['source'],conversations.get(dataset))
+            if any(row != expected for row in cur.fetchall()): raise ValueError('IMPORT_CONFLICT')
+            cur.execute('select timezone from garmin.account_connections where user_id=%s and external_identity=%s', (user,info['account']))
+            connection = cur.fetchone()
+            if connection is not None and connection[0] != timezone_name: raise ValueError('IMPORT_CONFLICT')
+        # No durable write occurs until even the last selected target has passed.
+        check(cur)
+        for entry in entries:
+            dataset = entry['dataset']; data = verified[dataset]; info = account(data['snapshot'])
+            display,raw,encoding = project(info['account'])
+            label,label_raw,label_encoding = project(entry['dataset_label'])
+            batch = batch_id(capture,dataset)
+            cur.execute('insert into garmin.datasets(dataset,account,account_confirmed,account_raw,account_encoding,dataset_label,dataset_label_raw,dataset_label_encoding) values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict (dataset) do nothing', (dataset,display,info['confirmed'],raw,encoding,label,label_raw,label_encoding))
+            cur.execute('insert into garmin.import_batches values (%s,%s,%s) on conflict (id) do nothing', (batch,dataset,datetime.now(timezone.utc)))
+            cur.execute('insert into garmin.import_checkpoints(batch,dataset,source_hash,schema_version,importer_version,manifest_fingerprint,source_role,conversation_id) values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict (batch,dataset) do nothing', (batch,dataset,data['sha256'],data['snapshot']['schema'],VERSION,capture['private']['fingerprint'],entry['source'],conversations.get(dataset)))
+        check(cur)
+
+
 def run():
     try:
         settings=json.loads(os.environ['BRAIN_SETTINGS_SNAPSHOT'])
         if settings.get('version') != 1 or settings.get('extension') != 'garmin': raise ValueError('IMPORT_INVALID')
-        capture=load_capture(settings['values']['garmin.capture_manifest'])
+        manifest = settings['values']['garmin.capture_manifest']
+        full_capture = load_capture(manifest, secure=True)
+        capture = selected_capture(full_capture)
         for entry in capture['private']['datasets']:
             original = entry['dataset']; entry['dataset'] = dataset_ref(original)
             entry['dataset_label'] = original if original != entry['dataset'] else None
@@ -299,63 +375,102 @@ def run():
         conversation = None
         entries = capture['private']['datasets']
         ordered = sorted(entries, key=lambda e: ORDER.index(ROLES[e['source']]))
+        from native_import import validate_sources
+        from native_artifacts import plan as plan_files
+        from verify_source import read_source, recheck_source
+        from reader import read_snapshot_bytes
+        prepared = {}
+        for entry in ordered:
+            path = capture['datasets'][ROLES[entry['source']]]
+            data, hashed, token = read_source(path, reject_wal=True)
+            prepared[entry['dataset']] = {'snapshot': read_snapshot_bytes(data), 'sha256': hashed}
+            recheck_source(path, (hashed, token))
+        validate_sources(ordered, prepared, settings, fixed4=capture['private']['version'] == 3)
+        plan_files(capture, ordered, prepared)
+        recheck_capture(manifest, full_capture)
         with psycopg.connect(os.environ['BRAIN_DATABASE_URL'], options='-c transaction_timeout=2000 -c statement_timeout=1900 -c lock_timeout=1500') as conn:
             with conn.transaction():
                 cur=conn.cursor(); check(cur)
                 if not all(probe_role(conn).values()): raise ValueError('IMPORT_INVALID')
-            capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'])
-            # 권위 행보다 먼저 모든 기존 checkpoint의 입력을 확인한다.
-            prior_conversations = {}
-            for entry in ordered:
-                dataset=entry['dataset']; path=capture['datasets'][ROLES[entry['source']]]
-                batch=hashlib.sha256(canonical([capture['private']['capture_id'],dataset]).encode()).hexdigest()
+            if capture['private']['version'] == 3:
+                # Existing checkpoint rows are the immutable role anchors; no new ledger.
+                conn.execute('select pg_advisory_lock(hashtextextended(%s,0))', ('garmin:fixed4:' + capture['private']['capture_id'],))
+                conn.commit()
+            with fixed4_dataset_locks(conn, capture, ordered):
+                capture['private']['fingerprint'] = contract_fingerprint(capture['private']['fingerprint'])
+                # 권위 행보다 먼저 모든 기존 checkpoint의 입력을 확인한다.
+                prior_conversations = {}
+                for entry in ordered:
+                    dataset=entry['dataset']; path=capture['datasets'][ROLES[entry['source']]]
+                    batch=batch_id(capture, dataset)
+                    with conn.transaction():
+                        cur=conn.cursor(); check(cur)
+                        cur.execute('select source_hash,schema_version,importer_version,manifest_fingerprint,source_role,conversation_id from garmin.import_checkpoints where batch=%s and dataset=%s',(batch,dataset))
+                        old=cur.fetchone()
+                    if capture['private']['version'] == 3:
+                        with conn.transaction():
+                            cur = conn.cursor(); check(cur)
+                            cur.execute('select dataset,manifest_fingerprint from garmin.import_checkpoints where batch=%s', (batch,))
+                            anchors = cur.fetchall()
+                            if any(row != (dataset, capture['private']['fingerprint']) for row in anchors):
+                                raise ValueError('IMPORT_CONFLICT')
+                    # SQLite는 주 파일 외 WAL에서도 확정 행을 읽으므로 안전한 단일 파일만 받는다.
+                    if path.with_name(path.name + '-wal').exists():
+                        if old: conflict(conn,dataset,batch,None,None,'wal_present')
+                        raise ValueError('IMPORT_INVALID')
+                    with path.open('rb') as source: hashed=hashlib.file_digest(source,'sha256').hexdigest()
+                    if path.with_name(path.name + '-wal').exists():
+                        if old: conflict(conn,dataset,batch,None,None,'wal_present')
+                        raise ValueError('IMPORT_INVALID')
+                    if old: prior_conversations[dataset] = old[5]
+                    if old and (old[0] != hashed or old[2:5] != (VERSION,capture['private']['fingerprint'],entry['source'])):
+                        conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
+                    schema=read_snapshot(path)['schema']
+                    if old and old[1] != schema: conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
+                verified = prepared
+                from native_import import copy as copy_native, account_locks
+                def recheck_native_sources():
+                    for entry in ordered:
+                        path = capture['datasets'][ROLES[entry['source']]]
+                        if path.with_name(path.name + '-wal').exists():
+                            raise ValueError('IMPORT_INVALID')
+                        with path.open('rb') as source:
+                            if hashlib.file_digest(source, 'sha256').hexdigest() != verified[entry['dataset']]['sha256']:
+                                raise ValueError('IMPORT_INVALID')
+                recheck_capture(manifest, full_capture)
+                recheck_native_sources()
+                prepare_fixed4(conn, capture, ordered, verified, settings, prior_conversations)
+                recheck_capture(manifest, full_capture)
+                with account_locks(conn, capture, ordered, verified, settings):
+                    recheck_capture(manifest, full_capture)
+                    recheck_native_sources()
+                    for entry in ordered:
+                        ingested = ingest(conn,capture,entry,prior_conversations.get(entry['dataset']),native_mode=True)
+                        if ingested['sha256'] != prepared[entry['dataset']]['sha256']:
+                            raise ValueError('IMPORT_INVALID')
+                    copy_native(conn, capture, ordered, verified, settings)
+                    recheck_native_sources()
+                    from native_artifacts import publish
+                    publish(conn,capture,ordered,verified,settings)
+                    recheck_capture(manifest, full_capture)
+                from reports import write_reports
+                from metadata_codec import decode_metadata
+                scope_filter = ' where dataset=any(%s)' if capture['private']['version'] == 3 else ''
+                scope_args = ([e['dataset'] for e in ordered],) if scope_filter else ()
                 with conn.transaction():
                     cur=conn.cursor(); check(cur)
-                    cur.execute('select source_hash,schema_version,importer_version,manifest_fingerprint,source_role,conversation_id from garmin.import_checkpoints where batch=%s and dataset=%s',(batch,dataset))
-                    old=cur.fetchone()
-                # SQLite는 주 파일 외 WAL에서도 확정 행을 읽으므로 안전한 단일 파일만 받는다.
-                if path.with_name(path.name + '-wal').exists():
-                    if old: conflict(conn,dataset,batch,None,None,'wal_present')
-                    raise ValueError('IMPORT_INVALID')
-                with path.open('rb') as source: hashed=hashlib.file_digest(source,'sha256').hexdigest()
-                if path.with_name(path.name + '-wal').exists():
-                    if old: conflict(conn,dataset,batch,None,None,'wal_present')
-                    raise ValueError('IMPORT_INVALID')
-                if old: prior_conversations[dataset] = old[5]
-                if old and (old[0] != hashed or old[2:5] != (VERSION,capture['private']['fingerprint'],entry['source'])):
-                    conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
-                schema=read_snapshot(path)['schema']
-                if old and old[1] != schema: conflict(conn,dataset,batch,None,None,'checkpoint_mismatch')
-            verified = {entry['dataset']: ingest(conn,capture,entry,prior_conversations.get(entry['dataset']),native_mode=True) for entry in ordered}
-            from native_import import copy as copy_native, account_locks
-            def recheck_native_sources():
-                for entry in ordered:
-                    path = capture['datasets'][ROLES[entry['source']]]
-                    if path.with_name(path.name + '-wal').exists():
-                        raise ValueError('IMPORT_INVALID')
-                    with path.open('rb') as source:
-                        if hashlib.file_digest(source, 'sha256').hexdigest() != verified[entry['dataset']]['sha256']:
-                            raise ValueError('IMPORT_INVALID')
-            with account_locks(conn, capture, ordered, verified, settings):
-                recheck_native_sources()
-                copy_native(conn, capture, ordered, verified, settings)
-                recheck_native_sources()
-                from native_artifacts import publish
-                publish(conn,capture,ordered,verified,settings)
-            from reports import write_reports
-            from metadata_codec import decode_metadata
-            with conn.transaction():
-                cur=conn.cursor(); check(cur)
-                artifact_rows=cur.execute('select dataset,artifact_key,category,exclusion_reason,request_id,analysis_id,metadata,metadata_raw,unlinked_reason,original_table from garmin.artifact_inventory order by dataset,original_table,artifact_key').fetchall()
-                inventory_rows=cur.execute('select dataset,category,state,metadata,metadata_raw from garmin.input_inventory order by dataset,category').fetchall()
-                relation_rows=cur.execute('select dataset,artifact_key,analysis_key,role,request_id,analysis_id,reason from garmin.artifact_relations order by dataset,artifact_key,analysis_key,role').fetchall()
-            from artifacts import decode_identity
-            private={'artifacts':[{'dataset':r[0],'key':decode_identity(r[1]),'category':r[2],'reason':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'metadata':decode_metadata(r[6],r[7]),'unlinked_reason':r[8],'original_table':r[9]} for r in artifact_rows],
-                     'inventory':[{'dataset':r[0],'category':r[1],'state':r[2],'metadata':decode_metadata(r[3],r[4])} for r in inventory_rows],
-                     'relations':[{'dataset':r[0],'artifact_key':decode_identity(r[1]),'analysis_key':decode_identity(r[2]),'role':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'reason':r[6]} for r in relation_rows],
-                     'unassigned_files':[{'source':f['source'],'reason':'unknown_provenance'} for f in capture['private']['files']] if capture['private']['version']==1 else []}
-            public={'counts':{'artifacts':len(artifact_rows),'excluded':sum(1 for r in artifact_rows if r[3]),'unlinked':len({(r[0],r[1]) for r in relation_rows if r[6] and r[4] is not None} | {(r[0],r[1]) for r in artifact_rows if r[8]}),'unassigned':len(private['unassigned_files'])}}
-            write_reports(os.environ['BRAIN_EXTENSION_HOME'],os.environ['BRAIN_WORK_ID'],private,public)
+                    artifact_rows=cur.execute('select dataset,artifact_key,category,exclusion_reason,request_id,analysis_id,metadata,metadata_raw,unlinked_reason,original_table from garmin.artifact_inventory' + scope_filter + ' order by dataset,original_table,artifact_key', scope_args).fetchall()
+                    inventory_rows=cur.execute('select dataset,category,state,metadata,metadata_raw from garmin.input_inventory' + scope_filter + ' order by dataset,category', scope_args).fetchall()
+                    relation_rows=cur.execute('select dataset,artifact_key,analysis_key,role,request_id,analysis_id,reason from garmin.artifact_relations' + scope_filter + ' order by dataset,artifact_key,analysis_key,role', scope_args).fetchall()
+                from artifacts import decode_identity
+                private={'artifacts':[{'dataset':r[0],'key':decode_identity(r[1]),'category':r[2],'reason':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'metadata':decode_metadata(r[6],r[7]),'unlinked_reason':r[8],'original_table':r[9]} for r in artifact_rows],
+                         'inventory':[{'dataset':r[0],'category':r[1],'state':r[2],'metadata':decode_metadata(r[3],r[4])} for r in inventory_rows],
+                         'relations':[{'dataset':r[0],'artifact_key':decode_identity(r[1]),'analysis_key':decode_identity(r[2]),'role':r[3],'request_id':str(r[4]) if r[4] else None,'analysis_id':str(r[5]) if r[5] else None,'reason':r[6]} for r in relation_rows],
+                         'unassigned_files':[{'source':f['source'],'reason':'unknown_provenance'} for f in capture['private']['files']] if capture['private']['version']==1 else []}
+                if capture['private']['version'] == 3:
+                    private['selection_receipt'] = capture['private']['selection_receipt']
+                public={'counts':{'artifacts':len(artifact_rows),'excluded':sum(1 for r in artifact_rows if r[3]),'unlinked':len({(r[0],r[1]) for r in relation_rows if r[6] and r[4] is not None} | {(r[0],r[1]) for r in artifact_rows if r[8]}),'unassigned':len(private['unassigned_files'])}}
+                write_reports(os.environ['BRAIN_EXTENSION_HOME'],os.environ['BRAIN_WORK_ID'],private,public)
         print(json.dumps({'abi':1,'type':'result','summary':'이전 완료'}),flush=True)
     except Exception as exc:
         from native_artifacts import FilesPending, FilesFailed

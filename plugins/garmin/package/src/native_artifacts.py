@@ -1,4 +1,5 @@
 """Publish neutral native file requests and link only evidenced selected evaluations."""
+from import_scope import batch_id
 import hashlib
 import json
 import os
@@ -128,7 +129,7 @@ def _fingerprint(spec):
                             'metadata':spec['metadata'],'candidates':spec['candidates']}).encode())
 
 
-def _batch(capture,dataset): return _hash(canonical([capture['private']['capture_id'],dataset]).encode())
+def _batch(capture,dataset): return batch_id(capture, dataset)
 
 
 def _account_map(conn,settings,entries,verified):
@@ -295,6 +296,12 @@ def verify(conn,capture,entries,verified,settings,planned=None):
         row=cur.fetchone()
         if not row or row[1]!=timezone: return False,len(specs)
         connections[dataset]=row[0]
+    if capture['private'].get('version') == 3:
+        wanted = {(s['dataset'], s['table'], s['key']) for s in specs}
+        for entry in entries:
+            dataset = entry['dataset']
+            cur.execute('select original_table,original_key from garmin.import_mapping where dataset=%s and batch=%s and target_kind=%s', (dataset,batch_id(capture,dataset),KIND))
+            if any((dataset,table,key) not in wanted for table,key in cur.fetchall()): return False,len(specs)
     for spec in specs:
         mapping=_mapping(cur,capture,user,spec)
         if not mapping or mapping[1]!=_fingerprint(spec): return False,len(specs)
