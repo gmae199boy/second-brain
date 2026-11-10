@@ -148,6 +148,23 @@ it('enforces the role, public view and fenced provenance contracts over real con
     await expect(a.query(publish,[id,token,conversation,randomUUID(),'report','revision','synthetic',fileRequest,JSON.stringify([[{request_id:otherRequest,filename:'other.png'}]])])).rejects.toThrow('invalid photo');
     expect((await admin.query('select id,producer_result_id,body,bundle from brain.channel_requests order by id')).rows).toEqual(beforeRequests);
 
+    // The topic sender owns its authorization SQL independently of legacy publish.
+    const send = 'select brain.extension_channel_send($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz) as id';
+    const topic = `${names[0]}.report`;
+    const sendArgs = [id,token,topic,randomUUID(),'report','revision','synthetic',fileRequest,photoAlbums,null];
+    const accepted = (await a.query(send,sendArgs)).rows[0].id;
+    expect((await admin.query('select bundle from brain.channel_dispatches where id=$1',[accepted])).rows[0].bundle).toMatchObject({
+      document:{location:{locator:'synthetic',ownership:'brain'}},
+      albums:[{photos:[{filename:'01.png',location:{locator:'synthetic',ownership:'brain'}}]}],
+    });
+    const dispatches = (await admin.query('select * from brain.channel_dispatches order by id')).rows;
+    const requests = (await admin.query('select * from brain.channel_requests order by id')).rows;
+    await expect(b.query(send,[id,token,`${names[1]}.report`,randomUUID(),'report',null,'synthetic',null,null,null])).rejects.toMatchObject({code:'42501'});
+    await expect(a.query(send,[id,token,topic,randomUUID(),'report','revision','synthetic',otherRequest,'[]',null])).rejects.toThrow('invalid document');
+    await expect(a.query(send,[id,token,topic,randomUUID(),'report','revision','synthetic',fileRequest,JSON.stringify([[{request_id:otherRequest,filename:'other.png'}]]),null])).rejects.toThrow('invalid photo');
+    expect((await admin.query('select * from brain.channel_dispatches order by id')).rows).toEqual(dispatches);
+    expect((await admin.query('select * from brain.channel_requests order by id')).rows).toEqual(requests);
+
     await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
     await expect(a.query(validate, [id,token,conversation])).rejects.toMatchObject({code:'42501'});
     await expect(a.query(publish, args)).rejects.toMatchObject({ code: '42501' });

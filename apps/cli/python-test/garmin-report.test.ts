@@ -36,8 +36,7 @@ async function setup(startDaemon=true) {
   await store.setSetting({userId:self,key:'garmin.analysis_model',value:'synthetic',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_reasoning_effort',value:'medium',updatedAt:new Date()});
   const channel=ids.next(), conversation=ids.next();
-  await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}')`);
-  expect(await store.setSetting({userId:self,key:'garmin.channel_conversation_id',value:conversation,updatedAt:new Date()})).toMatchObject({ok:true});
+  await fixture.db.query(`insert into brain.channels values ('${channel}','telegram','synthetic'); insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}'); insert into brain.channel_routes(topic,conversation_id) values ('garmin.report','${conversation}')`);
   const account=ids.next(), other=ids.next();
   await fixture.db.query(`insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values ('${self}','${account}','fixture-a','UTC'),('${self}','${other}','fixture-b','UTC')`);
   for (const target of [account,other]) {

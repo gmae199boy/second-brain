@@ -1293,17 +1293,16 @@ Telegram은 DB 사용자 설정을 우선하며 기존 `.env`/환경 변수는 D
 
 ```sh
 # 비밀 관리자의 토큰 출력을 다음 명령의 stdin에 연결
-brain config set telegram.bot_token -
-brain config set telegram.chat_id <chat-id>
-brain channels add telegram
-brain config set garmin.channel_conversation_id <출력된-conversation-id>
+brain messengers add telegram --name personal --token -
+brain channels add --messenger personal --name reports --chat <chat-id>
+brain channels route set garmin.report --messenger personal --channel reports
 brain daemon stop
 brain daemon start
 ```
 
 `channels add telegram`은 등록만 하며 메시지를 보내지 않습니다. 재실행해도 같은 대화 ID를 반환합니다.
 `config get/set telegram.bot_token`은 텍스트·JSON 모두 설정 여부만 출력합니다. 빈 값은 미설정이며 기존 환경 설정이 있으면 fallback을 사용합니다.
-감독자는 시작할 때 Telegram 설정을 읽으므로 변경 후 daemon을 재시작합니다. Garmin 설정은 해당 확장을 설치한 뒤 지정합니다.
+감독자는 시작할 때 Telegram 설정을 읽으므로 변경 후 daemon을 재시작합니다. Garmin 보고서는 `garmin.report` 경로를 사용합니다. 경로 없이 보관된 요청은 경로를 등록한 뒤 `brain channels send-pending --topic garmin.report`로 명시적으로 발신합니다.
 
 ### 메신저·채널과 topic 발신
 

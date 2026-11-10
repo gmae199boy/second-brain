@@ -80,8 +80,8 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       insert into garmin.meta(user_id,connection_id,key,value) values ('${self}','${account}','history_start','${day}'),('${self}','${account}','normalize_version','${normalizeVersion}');
       insert into garmin.day_summary(user_id,connection_id,date,sleep_total_s) values ('${self}','${account}','${prior1}',24000),('${self}','${account}','${prior2}',25000);
       insert into brain.channels values ('${channel}','telegram','synthetic');
-      insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}')`);
-    for (const [key,value] of Object.entries({'garmin.timezone':'Asia/Seoul','garmin.connection_id':account,'garmin.analysis_model':'synthetic','garmin.channel_conversation_id':conversation}))
+      insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}'); insert into brain.channel_routes(topic,conversation_id) values ('garmin.report','${conversation}')`);
+    for (const [key,value] of Object.entries({'garmin.timezone':'Asia/Seoul','garmin.connection_id':account,'garmin.analysis_model':'synthetic'}))
       expect(await store.setSetting({userId:self,key,value,updatedAt:clock.now()})).toMatchObject({ok:true});
     await world.db.query(`update brain.schedules set next_run_at=case schedule_key when 'collect' then '${collectAt.toISOString()}'::timestamptz else '${reportAt.toISOString()}'::timestamptz end where extension='garmin'`);
     const originalCollectRuntime=await readFile(join(ext,'src/collect_runtime.py'));

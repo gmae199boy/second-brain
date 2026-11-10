@@ -114,9 +114,16 @@ capture_manifest(root,paths)`;
       expect(unready.body.data).toMatchObject({status:'failed',report:{checks:{extension_ready:false}}});
       expect(await fixture.db.rows("select error_code from brain.work_attempts order by started_at desc limit 1")).toEqual([{error_code:'EXTENSION_REPORT_NOT_READY'}]);
     } finally { await fixture.db.query(`update brain.schema_migrations set version=${latestVersion} where owner='garmin' and version=${futureVersion}`); }
+    // Legacy conversation validation is optional for the topic sender.
+    await fixture.db.query('revoke execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) from brain_ext_garmin');
+    try {
+      const compatible = await fixture.run(['ext','run','garmin','import-preflight','--json']);
+      expect(compatible.code, compatible.stdout + compatible.stderr).toBe(0);
+    } finally { await fixture.db.query('grant execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) to brain_ext_garmin'); }
     const roleCases = [
+      { alter: 'alter function brain.extension_channel_send(uuid,uuid,text,text,text,text,text,uuid,jsonb,timestamptz) rename to fixture_absent_channel_send', restore: 'alter function brain.fixture_absent_channel_send(uuid,uuid,text,text,text,text,text,uuid,jsonb,timestamptz) rename to extension_channel_send', key: 'send_execute', publicKey: 'role_ready' },
       { alter: 'revoke execute on function brain.extension_predecessor_results(uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_predecessor_results(uuid,uuid) to brain_ext_garmin', key: 'predecessor_execute', publicKey: 'role_ready' },
-      { alter: 'revoke execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) from brain_ext_garmin', restore: 'grant execute on function brain.extension_channel_conversation_valid(uuid,uuid,uuid) to brain_ext_garmin', key: 'conversation_execute', publicKey: 'role_ready' },
+      { alter: 'revoke execute on function brain.extension_channel_send(uuid,uuid,text,text,text,text,text,uuid,jsonb,timestamptz) from brain_ext_garmin', restore: 'grant execute on function brain.extension_channel_send(uuid,uuid,text,text,text,text,text,uuid,jsonb,timestamptz) to brain_ext_garmin', key: 'send_execute', publicKey: 'role_ready' },
       { alter: 'grant execute on function brain.redacted_text(text,jsonb) to brain_ext_garmin', restore: 'revoke execute on function brain.redacted_text(text,jsonb) from brain_ext_garmin', key: 'no_excess_functions', publicKey: 'role_ready' },
       { alter: 'revoke insert(metadata) on brain.file_requests from brain_ext_garmin', restore: 'grant insert(metadata) on brain.file_requests to brain_ext_garmin', key: 'required_inserts', publicKey: 'role_ready' },
       { alter: 'grant select on brain.file_requests to brain_ext_garmin', restore: 'revoke select on brain.file_requests from brain_ext_garmin', key: 'no_excess_tables', publicKey: 'role_ready' },

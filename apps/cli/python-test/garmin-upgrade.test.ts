@@ -100,7 +100,7 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   expect(upgraded.code,upgraded.stdout+upgraded.stderr).toBe(0);
   expect(await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'")).toEqual([{version:currentManifest.version,package_digest:currentDigest,plugin_version:currentManifest.plugin_version}]);
   expect(await saved()).toEqual(before);
-  expect(probe()).toMatchObject({no_excess_functions:true,conversation_execute:true});
+  expect(probe()).toMatchObject({no_excess_functions:true,send_execute:true});
   for(const path of ['src/role_probe.py','src/batch_import.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
  } finally {await store.close();await fixture.cleanup();await rm(temp,{recursive:true,force:true});}
 },120000);
