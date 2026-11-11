@@ -304,3 +304,5 @@ fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest�
 `brain ext garmin recent-period-evaluations --input '{"connection_id":"<connection-id>","timezone":"Asia/Seoul","limit":10}' --json`으로 전체 본문·근거·초점·기간·revision을 조회한다. 별도 요청은 새 revision, 같은 work 재시도는 저장된 revision을 재사용한다. 같은 연결의 열린 일감에 다른 입력을 겹쳐 접수하면 거부한다. 기존 일일 report의 day·7d·30d·all 평가와 발신은 그대로다.
 
 수동 report/report-regenerate/report-send가 진행 중 수집과 겹치면 기존 계정 쓰기 락에 의해 최대 60초 대기하거나 실패할 수 있다. 수집 상태 polling을 없앤 것이며 쓰기 락 구조는 변경하지 않는다. 수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(after_schedule)이 담당하고 report 코드 자체는 수집 상태를 기다리지 않는다.
+
+지난 날짜의 예약 따라잡기는 분석·저장만 하며 자동 발신 접수하지 않는다. 당일 예약·수동 report·재생성·report-send·기간 분석은 완료 후 항상 core에 발신 접수하며, 지난 리포트는 사용자 report-send 요청으로 발신한다.

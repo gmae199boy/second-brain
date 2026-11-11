@@ -30,3 +30,5 @@ description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 일일 
 기본 예약의 수집→분석 순서와 같은 날 수집 성공 조건은 core의 after_schedule이 담당한다. 수동 분석 프로세스 자체에는 수집 상태 대기가 없다. 현재 brain schedules CLI에는 after 의존 설정 옵션이 없으므로 지원한다고 안내하지 않는다.
 
 수동 report/report-regenerate/report-send가 진행 중 수집과 겹치면 기존 계정 쓰기 락에 의해 최대 60초 대기하거나 실패할 수 있다. 수집 상태 polling을 없앤 것이며 쓰기 락 구조는 변경하지 않는다. 수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(after_schedule)이 담당하고 report 코드 자체는 수집 상태를 기다리지 않는다.
+
+지난 날짜의 예약 따라잡기는 분석·저장만 하며 자동 발신 접수하지 않는다. 당일 예약·수동 report·재생성·report-send·기간 분석은 완료 후 항상 core에 발신 접수하며, 지난 리포트는 사용자 report-send 요청으로 발신한다.

@@ -25,3 +25,5 @@ Garmin 분석은 채널·대화 설정 없이 실행한다. 일일 report의 분
 설치 안내는 `brain-garmin-install`, 수집·이관·일일/기간 분석·리포트·조회는 `brain-garmin-operations` 스킬을 사용한다. 폴더명과 frontmatter name은 동일하다. Codex 연결은 저장소 루트 [CONNECTION.md](../../CONNECTION.md)의 공식 설치본 전체 symlink 절차를 따른다. package 내부 분석 스킬 3개는 감독 runtime 계약의 일부이므로 이름을 유지한다.
 
 Codex 절대 경로 전달 계약과 `ANALYSIS_AGENT_NOT_FOUND` 오류를 추가하면서 확장 manifest 버전을 `1.2.4`로 올렸다. `brain config set agent.codex_path <절대경로>`로 경로를 지정하며 설치 시 비어 있는 설정만 자동 탐지한다. `brain doctor run`으로 경로와 버전을 확인한다.
+
+지난 날짜의 예약 따라잡기는 분석·저장만 하며 자동 발신 접수하지 않는다. 당일 예약·수동 report·재생성·report-send·기간 분석은 완료 후 항상 core에 발신 접수하며, 지난 리포트는 사용자 report-send 요청으로 발신한다.
