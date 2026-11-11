@@ -50,7 +50,7 @@ it('비대화 core migration 중 새 hook과 옛 접속 실패 경로는 spool�
     expect(await k.db.rows("select count(*)::int as count from pg_stat_activity where datname=current_database() and usename='brain_app'")).toEqual([{ count: 0 }]);
   } });
   for (const client of clients) await client.end().catch(() => {});
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 46, offline_confirmation: { method: 'automatic', evidence: { runtime_backends: 0 } } } });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { method: 'automatic', evidence: { runtime_backends: 0 } } } });
   expect(await k.db.rows("select rolcanlogin from pg_roles where rolname='brain_app'")).toEqual([{ rolcanlogin: true }]);
   await expect(readFile(runtimeFencePath(k.home))).rejects.toMatchObject({ code: 'ENOENT' });
   for (const home of [k.home, oldHome]) {

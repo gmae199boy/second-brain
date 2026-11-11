@@ -57,6 +57,24 @@ export function postgresChannelControl(connect: PgConnect): ChannelControlStore 
         return { ok: true, routes: (await routes()).rows };
       } catch (error) { return privateFailure(error); }
     },
+    async subscribe(input) {
+      try {
+        if (input.action === 'set') {
+          const result = await sql`insert into brain.channel_subscriptions(event,conversation_id,deliver_at,time_zone)
+            select ${input.event!},c.id,${input.at === 'immediate' ? null : input.at ?? null},${input.timeZone ?? null}
+            from brain.channel_conversations c join brain.users u on u.id=c.user_id join brain.channels m on m.id=c.channel_id
+            left join brain.messenger_aliases mn on mn.messenger_id=m.id left join brain.channel_aliases cn on cn.conversation_id=c.id
+            where (m.id::text=${input.messengerId!} or mn.name=${input.messengerId!}) and (c.id::text=${input.channelId!} or cn.name=${input.channelId!}) and u.is_self=1
+            on conflict(event) do update set conversation_id=excluded.conversation_id,deliver_at=excluded.deliver_at,time_zone=excluded.time_zone returning id`.execute(db().db);
+          if (!result.rows.length) return { ok: false, code: 'INVALID_ARGUMENT', message: '자기 사용자의 대화가 없습니다' };
+        } else if (input.action === 'remove') await sql`delete from brain.channel_subscriptions where event=${input.event!}`.execute(db().db);
+        const result = await sql<import('@second-brain/core').ChannelSubscription>`select s.id,s.event,c.channel_id as "messengerId",c.id as "channelId",
+          coalesce(s.deliver_at,'immediate') as at,brain.subscription_zone(s.id) as "timeZone",
+          case when s.time_zone is null then 'user' else 'subscription' end as "timeZoneSource"
+          from brain.channel_subscriptions s join brain.channel_conversations c on c.id=s.conversation_id order by s.event`.execute(db().db);
+        return { ok: true, subscriptions: result.rows };
+      } catch (error) { return privateFailure(error); }
+    },
     async send(input) {
       try {
         const result = await withWrite(db(), async held => {
@@ -80,17 +98,29 @@ export function postgresChannelControl(connect: PgConnect): ChannelControlStore 
     async sendPending(input) {
       try {
         const result = await withWrite(db(), async held => {
-          const pending = await sql<{ id: string }>`select id from brain.channel_dispatches where topic=${input.topic} and state='unrouted'
-            and (${input.id ?? null}::uuid is null or id=${input.id ?? null}::uuid)
-            and (${input.date ?? null}::date is null or (created_at at time zone 'UTC')::date=${input.date ?? null}::date)
+          let created = 0;
+          if (input.event) {
+            const events = await sql<{ id: string }>`select id from brain.result_events where event=${input.event}
+              and (${input.date ?? null}::date is null or subject_date=${input.date ?? null}::date)
+              and (${input.id ?? null}::uuid is null or id=${input.id ?? null}::uuid)
+              order by created_at,id`.execute(held);
+            for (const event of events.rows) {
+              const sent = await sql<{ count: number }>`select brain.dispatch_result_event(${event.id}::uuid,${input.now.toISOString()}::timestamptz,true) as count`.execute(held);
+              created += sent.rows[0]!.count;
+            }
+            // 기존 요청의 닫힌 실패 재개는 topic과 동일한 경로를 따른다.
+          }
+          const pending = await sql<{ id: string }>`select id from brain.channel_dispatches where topic=${input.topic ?? input.event!} and state='unrouted'
+            and (${input.id ?? null}::uuid is null or (case when ${input.event ?? null}::text is null then id else event_id end)=${input.id ?? null}::uuid)
+            and (${input.date ?? null}::date is null or (case when ${input.event ?? null}::text is null then (created_at at time zone 'UTC')::date else (select subject_date from brain.result_events e where e.id=event_id) end)=${input.date ?? null}::date)
             order by created_at,id for update`.execute(held);
-          let count = 0;
+          let count = created;
           for (const row of pending.rows) { const routed = await sql<{ routed: boolean }>`select brain.route_channel_dispatch(${row.id}::uuid,${input.now.toISOString()}::timestamptz,true) as routed`.execute(held); if (routed.rows[0]?.routed) count++; }
           // Closed failures are operator retries; waiting/running/sent rows remain untouched.
           const failed = await sql<{ id: string }>`select r.id from brain.channel_dispatches d join brain.channel_requests r on r.id=d.id join brain.work_items w on w.id=r.work_item_id
-            where d.topic=${input.topic} and d.state='queued' and r.status='pending' and w.completed_at is not null
-              and (${input.id ?? null}::uuid is null or r.id=${input.id ?? null}::uuid)
-              and (${input.date ?? null}::date is null or (d.created_at at time zone 'UTC')::date=${input.date ?? null}::date)
+            where d.topic=${input.topic ?? input.event!} and d.state='queued' and r.status='pending' and w.completed_at is not null
+              and (${input.id ?? null}::uuid is null or (case when ${input.event ?? null}::text is null then r.id else d.event_id end)=${input.id ?? null}::uuid)
+              and (${input.date ?? null}::date is null or (case when ${input.event ?? null}::text is null then (d.created_at at time zone 'UTC')::date else (select subject_date from brain.result_events e where e.id=d.event_id) end)=${input.date ?? null}::date)
               and (exists(select 1 from brain.channel_attempt_results a where a.request_id=r.id and a.outcome in ('unknown','definite_failed'))
                 or exists(select 1 from brain.failures f where f.target_kind='channel_request' and f.target_id=r.id::text and f.stage='channel_send' and f.resolved_at is null))
             order by r.id for update of r`.execute(held);
@@ -105,10 +135,12 @@ export function postgresChannelControl(connect: PgConnect): ChannelControlStore 
     },
     async health() {
       try {
-        const result = await sql<{ channels: number; configured: number; routes: number; unrouted: number; scheduled: number }>`select
+        const result = await sql<{ channels: number; configured: number; routes: number; unrouted: number; scheduled: number; subscriptions: number; archivedEvents: number }>`select
           (select count(*)::int from brain.channels) as channels,(select count(*)::int from brain.messenger_credentials) as configured,
           (select count(*)::int from brain.channel_routes) as routes,(select count(*)::int from brain.channel_dispatches where state='unrouted') as unrouted,
-          (select count(*)::int from brain.channel_dispatches where state='scheduled') as scheduled`.execute(db().db);
+          (select count(*)::int from brain.channel_dispatches where state='scheduled') as scheduled,
+          (select count(*)::int from brain.channel_subscriptions) as subscriptions,
+          (select count(*)::int from brain.result_events e where not exists(select 1 from brain.channel_dispatches d where d.event_id=e.id)) as "archivedEvents"`.execute(db().db);
         return { ok: true, ...result.rows[0]! };
       } catch (error) { return privateFailure(error); }
     },

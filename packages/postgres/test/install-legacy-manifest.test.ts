@@ -378,7 +378,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     const before = {files:await packageFiles(),installed:await readFile(join(k.home,'installed.json'),'utf8'), ledger:await rows('select * from brain.schema_migrations order by owner,version'), gate:(await rows("select to_regclass('brain.extension_quiesce') as name"))[0]?.name, progress:await rows('select * from brain.extension_install_progress'), manifest:await readFile(join(k.dir,'manifest.json'),'utf8')};
     const first = await ttyRun(); expect(first.answered,first.output).toBe(false); expect(first.code,first.output).toBe(0);
     const again = await ttyRun(); expect(again.code,again.output).toBe(0);
-    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:46});
+    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:47});
   } finally {
     for (const child of localChildren) if (child.exitCode===null && child.signalCode===null) child.kill('SIGTERM');
     const killTimer = setTimeout(()=>{for(const child of localChildren)if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},2000);
@@ -455,7 +455,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   expect(history).toHaveLength(8);
   await setupViaCli(k);
   expect(await preserved(k,name)).toBe(before);
-  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:46}]);
+  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:47}]);
   const gates = await k.db.rows('select name,owner from brain.extension_quiesce'); expect(gates).toHaveLength(1);
   expect(await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`)).toEqual(history);
   const cli = await cliForWorld(k);

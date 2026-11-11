@@ -70,7 +70,7 @@ export function compareCommonSearch(base, change) {
   return {map,auxiliary};
  };
  const {map:b,auxiliary:ba}=validate(base), {map:c,auxiliary:ca}=validate(change);
- for(const [r,version] of [[base,39],[change,46]]) {
+ for(const [r,version] of [[base,39],[change,47]]) {
   if(!schemaEvidenceValid(r.migration?.schema,version,r.migration?.value?.to) || !schemaEvidenceValid(r.diagnostic?.cost?.setup?.schema,version,r.diagnostic?.cost?.setup?.migration?.to) || !eq(r.migration.schema,r.diagnostic.cost.setup.schema)) throw Error('invalid schema provenance');
   if(!validPreparation(r.preparation) || !validDiagnostic(r.diagnostic) || !validTime(r.migration) || !validStats(r.statistics)) throw Error('invalid protocol 2 or diagnostics');
   const cost=r.diagnostic.cost, cp=cost.setup.preparation, w=cost.write,a=cost.analyze;

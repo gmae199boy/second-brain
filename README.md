@@ -1287,20 +1287,20 @@ Python 확장 통합 시험은 uv, fixture의 `.python-version`에 지정된 로
 
 ### Telegram 설정과 대화 등록
 
-Telegram 자격 증명은 메신저별로 DB에 저장합니다. 메신저를 등록하고 그 안의 채널을 만든 뒤 topic 경로를 연결합니다.
+Telegram 자격 증명은 메신저별로 DB에 저장합니다. 메신저를 등록하고 그 안의 채널을 만든 뒤 topic 경로나 결과 이벤트 구독을 연결합니다.
 토큰을 셸 기록에 남기지 않도록 비밀 관리자 등의 출력을 stdin으로 연결합니다.
 
 ```sh
 # 비밀 관리자의 토큰 출력을 다음 명령의 stdin에 연결
 brain messengers add telegram --name personal --token -
 brain channels add --messenger personal --name reports --chat <chat-id>
-brain channels route set garmin.report --messenger personal --channel reports
+brain channels subscribe set garmin.report.completed --messenger personal --channel reports --at 08:20 --tz Asia/Seoul
 brain daemon stop
 brain daemon start
 ```
 
 `channels add --messenger ... --chat ...`은 목적지 등록이며 메시지를 보내지 않습니다. 메신저 목록은 `brain messengers list --json`으로 확인합니다. 토큰은 전역 설정 대신 해당 메신저 등록·갱신의 stdin으로 전달합니다.
-감독자의 설정을 갱신하려면 daemon을 재시작합니다. Garmin 보고서는 `garmin.report` 경로를 사용합니다. 경로 없이 보관된 요청은 경로를 등록한 뒤 `brain channels send-pending --topic garmin.report`로 명시적으로 발신합니다.
+감독자의 설정을 갱신하려면 daemon을 재시작합니다. Garmin 보고서는 `garmin.report.completed` 결과 이벤트를 기록하며 core 구독이 발송을 결정합니다. 구독 없이 보관된 이벤트는 구독 등록 후 `brain channels send-pending --event garmin.report.completed --date 2026-11-11`로 명시적으로 발신합니다.
 
 ### 메신저·채널과 topic 발신
 
@@ -1328,7 +1328,7 @@ brain channels send-pending --topic garmin.report --id <request-id>
 
 `channels list/status`는 메신저와 채널 ID, 발신 상태를 함께 표시합니다. 미경로·topic 예약의 대상은 경로 확정 전까지 미확정입니다. `doctor run`은 메신저 자격 증명 설정 수, 경로·예약·미경로 수를 비밀 없이 표시합니다. 기존 `telegram.*` DB 설정과 `BRAIN_TELEGRAM_*` 환경 설정은 기본 단일 메신저로 호환되며 `channels add telegram`도 유지합니다. 새 메신저의 자격 증명이 전역 설정에 섞이지 않습니다.
 
-확장은 대상이나 비밀 없이 `brain.extension_channel_send(work,attempt,topic,key,purpose,revision,summary,document,albums,send_at)`를 호출합니다. topic은 확장 이름 접두사를 가져야 합니다. `revision`은 nullable text이며 본문·첨부의 검증은 기존 `extension_channel_publish`와 같습니다. 같은 `(topic,key)`는 한 번만 접수합니다. 세부 결정은 [채널 발신 결정 기록](_bmad-output/personal-brain/channel-delivery-decision.md)을 참조하세요.
+기존 확장의 하위 호환 API는 `brain.extension_channel_send(work,attempt,topic,key,purpose,revision,summary,document,albums,send_at)`를 호출합니다. topic은 확장 이름 접두사를 가져야 합니다. `revision`은 nullable text이며 본문·첨부의 검증은 기존 `extension_channel_publish`와 같습니다. 같은 `(topic,key)`는 한 번만 접수합니다. 세부 결정은 [채널 발신 결정 기록](_bmad-output/personal-brain/channel-delivery-decision.md)을 참조하세요.
 
 
 ### 에이전트용 CLI 스킬과 커버리지
@@ -1344,3 +1344,19 @@ core 플러그인은 `brain-recall`, `brain-install`, `brain-login`, `brain-chan
 설치·`brain setup run`·Garmin 확장 설치는 설정이 비어 있으면 로그인 셸의 PATH와 Homebrew·npm 전역 prefix·`~/.local/bin` 등의 후보를 조회하고, `--version` 응답을 확인한 절대 경로를 PostgreSQL global 설정 `agent.codex_path`에 저장합니다. Windows에서는 `where`와 `%APPDATA%\npm` 등의 후보를 조회하며 Windows 데몬 지원은 포함하지 않습니다. 기존 설정은 유지합니다.
 
 `brain config get agent.codex_path --json`으로 확인하고 `brain config set agent.codex_path <절대경로> --json`으로 바꿀 수 있습니다. 실행 가능한 파일이어야 하며 `--version`이 성공해야 합니다. `brain doctor run`은 미설정·실행 불가·버전 확인 실패를 경고합니다. 데몬은 이 설정을 읽어 비밀이 아닌 `BRAIN_CODEX_PATH`로 확장에 전달하므로 launchd PATH를 수동으로 고칠 필요가 없습니다. Garmin 분석에서 경로가 없거나 사용할 수 없으면 `ANALYSIS_AGENT_NOT_FOUND`와 설정 방법을 반환합니다. 설정 변경은 다음 일감 실행부터 적용됩니다.
+
+### 결과 이벤트와 발송 구독
+
+확장은 `brain.extension_event_emit(work,attempt,event,key,subject_date,revision,summary,document,albums)`만 호출하여 결과를 기록합니다. 이벤트 이름은 확장 이름 접두사를 가지며 같은 `(event,key)`는 기존 이벤트 ID를 반환합니다. 문서·앨범은 기존 core 파일 소유 검증을 따릅니다. 확장은 메신저·채널·발송 시각을 알지 않습니다.
+
+```sh
+brain channels subscribe set garmin.report.completed --messenger personal --channel reports --at 08:20 --tz Asia/Seoul
+brain channels subscribe set garmin.period_report.completed --messenger personal --channel reports --at immediate
+brain channels subscribe list --json
+brain channels subscribe remove garmin.period_report.completed
+brain channels send-pending --event garmin.report.completed --date 2026-11-10
+```
+
+분석 시각은 `schedules` 예약(예: 08:10), 발송 시각은 core 구독(예: 08:20)으로 분리합니다. `--at` 생략 또는 `immediate`는 즉시이며 HH:MM은 매일 현지 시각입니다. `--tz` 생략은 사용자 timezone(기본 Asia/Seoul)을 따릅니다. 이벤트가 당일 시각 전에 기록되면 그 시각에 예약하고 이후면 즉시 접수하여 분석 지연 때문에 다음 날로 넘기지 않습니다. 자동 발송은 subject_date가 기록 당시 구독 시간대의 오늘인 경우만 합니다. 수동 ext run으로 요청한 재생성·report-send·기간 분석은 날짜와 무관하게 구독 정책을 적용합니다.
+
+구독이 없거나 날짜 필터에서 제외된 이벤트는 오류 없이 보관하며 구독을 추가해도 과거 이벤트를 자동 발신하지 않습니다. `send-pending --event`의 날짜는 대상 날짜, `--id`는 이벤트 ID이고 두 필터는 택일입니다. 현재 구독의 목적지에 즉시 접수하며 같은 이벤트+구독의 기존 요청은 중복 생성하지 않습니다. 구독 시각·목적지 변경은 이후 이벤트부터 적용되고 기존 예약은 그대로입니다. 기존 `garmin.report`·`garmin.period_report` 경로는 migration에서 각각 `.completed`의 immediate 구독으로 이동합니다. 다른 topic 경로와 기존 send/send-pending/retry는 유지합니다. `doctor run`은 구독 수와 보관 이벤트 수도 표시합니다.
