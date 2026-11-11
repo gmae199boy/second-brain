@@ -196,7 +196,7 @@ attempt 재시도를 관찰하고 `test_body_runtime.py`는 날짜와 source 거
 예약 기본값은 `Asia/Seoul` 기준 수집 11:00, 분석 11:30이며 두 예약은
 사용자 설정 `garmin.connection_id`를 발화 때 고정한다. 21.7 운영자는 해당
 연결이 보호 tokenstore binding과 일치하는지 확인하고 이 설정을 지정한다.
-분석은 같은 사용자·대상·현지 날짜의 수집 성공 회차를 기다린다. 놓친 회차는
+수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(`after_schedule`)이 담당한다. 분석 프로세스 자체는 수집 상태를 기다리지 않고 시작 시점의 DB 자료를 읽는다. 실행 시각은 사용자 예약이 결정하며 위 시각은 설치 기본값이다. 운동은 직전 현지 날짜에 완료된 건만 확정 집계하고 대상 날짜는 진행 중 부분 자료로 본다. 놓친 회차는
 latest로 정산하며 예약 수집의 부분 수집·차단·인증 실패·무실행은 성공이 아니다.
 예약 실행은 봉투의 단일 회차 날짜를 사용하며 수동 실행은 기존 날짜 규칙을 쓴다.
 시험 코드는 작성했으나 시험 실행은 **21.8로 이관, 미실행**이다.
@@ -302,3 +302,5 @@ fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest�
 성공적으로 완료되면 항상 발신하며 `send` 선택 플래그는 없다. 발신 계약은 core `brain.extension_channel_send`, topic `garmin.period_report`이며 메신저·경로는 core가 선택한다. 기간·revision의 의미 키는 재시도에 동일하다. 라우트 미설정은 core의 보류 정책을 따른다.
 
 `brain ext garmin recent-period-evaluations --input '{"connection_id":"<connection-id>","timezone":"Asia/Seoul","limit":10}' --json`으로 전체 본문·근거·초점·기간·revision을 조회한다. 별도 요청은 새 revision, 같은 work 재시도는 저장된 revision을 재사용한다. 같은 연결의 열린 일감에 다른 입력을 겹쳐 접수하면 거부한다. 기존 일일 report의 day·7d·30d·all 평가와 발신은 그대로다.
+
+수동 report/report-regenerate/report-send가 진행 중 수집과 겹치면 기존 계정 쓰기 락에 의해 최대 60초 대기하거나 실패할 수 있다. 수집 상태 polling을 없앤 것이며 쓰기 락 구조는 변경하지 않는다. 수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(after_schedule)이 담당하고 report 코드 자체는 수집 상태를 기다리지 않는다.

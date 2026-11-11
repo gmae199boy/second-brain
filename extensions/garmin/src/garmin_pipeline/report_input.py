@@ -3,13 +3,14 @@
 import contextlib
 import importlib.resources
 import json
+import math
 import os
 import shutil
 import psycopg
 from psycopg.rows import dict_row
 import tempfile
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -107,17 +108,43 @@ def _run(conn, day):
     ).fetchone()
 
 
+def activity_completion(endpoints, start_ms, duration_s):
+    """원본 소수 초 정밀도를 digest와 동일하게 보존한다."""
+    activity = endpoints.get('activity')
+    summary = activity.get('summaryDTO') if isinstance(activity, dict) else None
+    if isinstance(summary, dict):
+        duration, raw_start = summary.get('duration'), summary.get('startTimeGMT')
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and math.isfinite(duration):
+            try:
+                start = (datetime.fromtimestamp(raw_start / 1000, UTC) if isinstance(raw_start, (int, float))
+                         else datetime.fromisoformat(str(raw_start)))
+                if start.tzinfo is None: start = start.replace(tzinfo=UTC)
+                return (start + timedelta(seconds=duration)).timestamp() * 1000
+            except (ValueError, OverflowError):
+                pass
+    # 원본이 불완전한 보존 자료는 기존 정수 초 cutoff 계약으로만 내보낸다.
+    # 기존 SQLite의 int64 overflow → binary64 승격까지 보존한다.
+    minimum, maximum = -(2 ** 63), 2 ** 63 - 1
+    product = duration_s * 1000
+    if minimum <= product <= maximum:
+        total = start_ms + product
+        if minimum <= total <= maximum: return total
+        return float(start_ms) + float(product)
+    return float(start_ms) + float(duration_s) * 1000
+
+
+def workout_window(day, timezone):
+    """직전 현지 날짜의 완료 시각 반열림 창. DST에도 인접 날짜 경계가 정확히 맞는다."""
+    return tuple(int(datetime.combine(value, time.min, ZoneInfo(timezone)).timestamp() * 1000)
+                 for value in (day - timedelta(days=1), day))
+
+
 def _snapshot(cfg, day, started_at, notes):
     days, activities, workouts, missing = {}, {}, [], []
     workout_starts = []
     cutoff = started_at
     yesterday = day - timedelta(days=1)
-    window_from = int(
-        datetime.combine(
-            yesterday, cfg.collect_time, ZoneInfo(cfg.timezone)
-        ).timestamp()
-        * 1000
-    )
+    window_from, window_to = workout_window(day, cfg.timezone)
     collect = {
         "status": "not_run",
         "detail": "",
@@ -142,15 +169,11 @@ def _snapshot(cfg, day, started_at, notes):
     try:
         run = _run(conn, day)
         if run:
-            cutoff = run[0]
             collect.update(
                 status=run[1],
                 detail=run[2] or "",
                 finished_at=dates.local_minute(run[3], cfg) if run[3] else None,
             )
-        previous = _run(conn, yesterday)
-        if previous:
-            window_from = previous[0]
         earliest = conn.execute(
             "SELECT MIN(key COLLATE \"C\") FROM garmin.raw_current WHERE user_id=%s AND connection_id=%s AND scope='day'",
             (conn.user_id, conn.connection_id)
@@ -190,10 +213,10 @@ def _snapshot(cfg, day, started_at, notes):
                 (conn.user_id, conn.connection_id, first, day.isoformat(), cutoff),
             )
         ]
-        for activity_id, start_ms in conn.execute(
-            "SELECT activity_id, start_ms FROM garmin.activity WHERE user_id=%s AND connection_id=%s AND day_key BETWEEN %s AND %s "
-            "AND garmin.activity_ends_before_cutoff(start_ms,duration_s,%s) ORDER BY start_ms",
-            (conn.user_id, conn.connection_id, first, day.isoformat(), cutoff),
+        for activity_id, start_ms, duration_s in conn.execute(
+            "SELECT activity_id, start_ms, duration_s FROM garmin.activity WHERE user_id=%s AND connection_id=%s AND day_key BETWEEN %s AND %s "
+            "AND start_ms IS NOT NULL AND duration_s IS NOT NULL ORDER BY start_ms",
+            (conn.user_id, conn.connection_id, first, day.isoformat()),
         ):
             activity_id = str(activity_id)
             if not activity_id.isdecimal():
@@ -210,8 +233,12 @@ def _snapshot(cfg, day, started_at, notes):
                     endpoints[endpoint] = scrub(json.loads(encoded))
                 except (ValueError, TypeError):
                     notes.append(f"운동 {activity_id} {endpoint}: 원본 JSON이 잘못됐다")
+            completed_at = activity_completion(endpoints, start_ms, duration_s)
+            if completed_at >= cutoff:
+                continue
             activities[activity_id] = endpoints
-            if window_from <= start_ms < cutoff:
+            # 완료한 현지 날짜로 한 번만 귀속한다. 자정을 넘기는 운동도 다음 날 창에서 빠지지 않는다.
+            if window_from <= completed_at < window_to:
                 workouts.append(activity_id)
     except (psycopg.Error, ValueError):
         notes.append("수집 DB 스냅샷을 읽지 못했다")
@@ -235,6 +262,7 @@ def build(
 ) -> ReportInput:
     """Replace today's input with a fresh snapshot, then remove older date folders."""
     notes = [
+        "운동은 직전 현지 날짜에 완료된 건만 확정 집계한다. 대상 날짜 자료는 data_cutoff까지의 진행 중 부분 자료다.",
         "리포트 날짜의 stress_data·heart_rates는 data_cutoff 전 샘플만 담는다.",
         "리포트 날짜의 user_summary·body_battery는 하루가 끝나지 않아 넣지 않았다.",
     ]
@@ -298,7 +326,8 @@ def build(
         },
         "workout_window": {
             "from": _timestamp(window_from, cfg),
-            "to": _timestamp(cutoff, cfg),
+            "to": _timestamp(workout_window(report_date, cfg.timezone)[1], cfg),
+            "basis": "completed_at",
         },
         "workouts": workouts,
         "_workout_starts_ms": workout_starts,

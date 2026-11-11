@@ -97,7 +97,7 @@ else:
     status = 'failed' if (control / ('status-failed-' + scope)).exists() else 'ok'
     marker = json.dumps({'scope': scope, 'work': work, 'observed': observed}, ensure_ascii=False, sort_keys=True)
     result = {'status': status, 'summary': 'synthetic ' + scope, 'report_md': marker,
-              'judgments': [], 'evidence': [], 'next_checks': []}
+              'judgments': [], 'evidence': [], 'next_checks': [], 'message': None}
 output = Path(args[args.index('-o') + 1])
 output.write_text('{invalid-json' if (control / ('invalid-' + scope)).exists() else json.dumps(result))
 print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'cached_input_tokens': 0, 'output_tokens': 1}}), flush=True)

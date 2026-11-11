@@ -7,7 +7,7 @@ from pathlib import Path
 
 import query
 import report_runtime
-from garmin_pipeline import body, dates, report, report_input, store
+from garmin_pipeline import body, dates, report, report_input, report_message, store
 
 InvalidReportInput = report_runtime.InvalidReportInput
 
@@ -91,7 +91,11 @@ def _send(cfg, saved, env):
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             key = report_channel._key(str(conn.user_id), str(conn.connection_id), start, end, revision)
-            text = report._combined_summary(f'{start} ~ {end} (revision {revision})\n{summary}', [])
+            row = conn.execute('''select summary,judgments,next_checks from garmin.period_evaluations
+                where user_id=%s and connection_id=%s and work_id=%s''',
+                (conn.user_id, conn.connection_id, env['BRAIN_WORK_ID'])).fetchone()
+            text = report_message.render_period(start, end, revision,
+                dict(zip(('summary', 'judgments', 'next_checks'), row)))
             conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
                 (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.period_report', key,
                  'period_report', str(revision), text, None, None, None)).fetchone()
@@ -112,7 +116,7 @@ def run(env=None, *, writer=None):
                 saved = _saved(conn, account.work_id)
         if saved is None:
             report_runtime.install_skills(cfg)
-            result = _analyze(cfg, data, report.CodexWriter() if writer is None else writer)
+            result = _analyze(cfg, data, report.CodexWriter(executable=report.codex_executable(actual)) if writer is None else writer)
             saved = _save(cfg, data, result, account.work_id)
         _send(cfg, saved, actual)
         return json.dumps({'status': 'success', 'revision': saved[2], 'send_requested': True})

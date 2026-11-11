@@ -41,6 +41,7 @@ it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin �
     const manifest = JSON.parse(read(path)) as { work: { manual?: string }[]; commands: { name: string }[] };
     const manual = manifest.work.flatMap(work => work.manual ? [`ext run garmin ${work.manual}`] : []);
     const queries = manifest.commands.map(command => `ext garmin ${command.name}`);
+    expect(manual).toContain('ext run garmin report-send');
     expect(manual.length).toBeGreaterThan(0);
     expect(uncovered([...manual, ...queries], garmin, [])).toEqual([]);
     expect(uncovered([...manual, 'ext run garmin new-manual'], garmin, [])).toContain('ext run garmin new-manual');

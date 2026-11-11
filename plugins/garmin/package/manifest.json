@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -300,6 +300,17 @@
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "kind": "garmin.report_send",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report-send",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.connection_id"
+      ]
     }
   ],
   "settings": [
@@ -891,6 +902,7 @@
     "migrations/0015_raw_observations.sql",
     "migrations/0016_report_publication.sql",
     "migrations/0017_period_analysis.sql",
+    "migrations/0018_report_message.sql",
     "pyproject.toml",
     "skills/garmin-body-intake/SKILL.md",
     "skills/garmin-daily-analysis/SKILL.md",
@@ -927,6 +939,7 @@
     "src/garmin_pipeline/rawparse.py",
     "src/garmin_pipeline/report.py",
     "src/garmin_pipeline/report_input.py",
+    "src/garmin_pipeline/report_message.py",
     "src/garmin_pipeline/schemas/body.schema.json",
     "src/garmin_pipeline/schemas/body_intake_output.schema.json",
     "src/garmin_pipeline/schemas/daily_analysis_output.schema.json",
@@ -966,5 +979,5 @@
     "min": "0.0.0",
     "max_exclusive": "1.0.0"
   },
-  "plugin_version": "0.1.7"
+  "plugin_version": "0.1.9"
 }

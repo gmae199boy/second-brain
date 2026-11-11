@@ -110,7 +110,7 @@ class ModelProcessTest(unittest.TestCase):
             def spawn(argv, **kwargs):
                 Path(argv[argv.index('-o') + 1]).write_text(json.dumps({
                     'status':'ok', 'summary':'synthetic', 'report_md':'synthetic',
-                    'judgments':[], 'evidence':[], 'next_checks':[]}))
+                    'judgments':[], 'evidence':[], 'next_checks':[], 'message':None}))
                 kwargs['stdout'].write(b'{"type":"turn.completed","synthetic":"model-stream"}\n')
                 kwargs['stdout'].flush()
                 return proc

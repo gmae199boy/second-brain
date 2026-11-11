@@ -38,6 +38,8 @@ class PeriodInputTest(unittest.TestCase):
              patch.object(runtime.report_runtime,'validate_account'), \
              patch.object(runtime,'_saved',return_value=saved) as lookup, \
              patch.object(runtime.report_runtime,'install_skills'), \
+             patch.object(runtime.report, 'codex_executable', return_value='/synthetic/configured-codex') as executable, \
+             patch.object(runtime.report, 'CodexWriter') as writer, \
              patch.object(runtime,'_analyze') as analyze, patch.object(runtime,'_send') as send:
             result=json.loads(runtime.run(env))
             self.assertEqual(result['revision'],2)
@@ -48,6 +50,8 @@ class PeriodInputTest(unittest.TestCase):
             analyze.side_effect=runtime.report.SupervisedReportFailed('synthetic')
             with self.assertRaises(runtime.report.SupervisedReportFailed): runtime.run(env)
             send.assert_not_called()
+            executable.assert_called_once_with(env)
+            writer.assert_called_once_with(executable='/synthetic/configured-codex')
 
     def test_other_work_kind_is_rejected(self):
         with self.assertRaises(runtime.InvalidReportInput): runtime.run(report_env())

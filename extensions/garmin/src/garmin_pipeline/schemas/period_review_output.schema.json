@@ -32,6 +32,40 @@
       "items": {
         "type": "string"
       }
+    },
+    "message": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "headline": {
+          "type": "string"
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2
+        },
+        "trend_line": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "headline",
+        "recommendations",
+        "trend_line",
+        "limitations"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -40,7 +74,8 @@
     "report_md",
     "judgments",
     "evidence",
-    "next_checks"
+    "next_checks",
+    "message"
   ],
   "additionalProperties": false
 }

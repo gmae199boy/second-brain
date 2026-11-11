@@ -26,19 +26,15 @@ from garmin_pipeline import (
     body,
     charts,
     config,
-    coverage,
     dates,
     digest,
     errors,
     ports,
     report_input,
+    report_message,
     store,
 )
 
-WAIT_POLL_SECONDS = 30
-"""수집 대기 중 다시 확인하는 간격(초)."""
-BLOCK_FILENAME = "block.json"
-"""`<tokenstore>/block.json`. `garmin.BLOCK_FILENAME`과 같다(import 금지라 테스트가 고정한다)."""
 GRAPH_HEADING = "## 그래프"
 FALLBACK_MARKER = "> 몸상태 종합을 쓰지 못했다"
 """폴백 하루 분석 본문의 첫머리. 예약 실행 판정은 evaluation을 읽는다."""
@@ -88,11 +84,6 @@ _DIR_MODE = 0o700
 
 logger = logging.getLogger(__name__)
 
-_monotonic = time.monotonic
-"""대기 시계 seam. 테스트는 이것과 `_sleep`을 바꾼다."""
-_sleep = time.sleep
-
-
 @dataclass(frozen=True)
 class DailyAnalysis:
     """Validated analysis, structured evaluation fields and optional numeric usage."""
@@ -104,6 +95,7 @@ class DailyAnalysis:
     evidence: list[str] = field(default_factory=list)
     next_checks: list[str] = field(default_factory=list)
     usage: dict[str, int] | None = None
+    message: dict | None = None
 
 
 class WriterFailed(Exception):
@@ -343,6 +335,7 @@ def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
         data["judgments"],
         data["evidence"],
         data["next_checks"],
+        message=data.get("message"),
     )
 
 
@@ -523,107 +516,6 @@ class CodexWriter:
 def default_writer(cfg: config.Config) -> DailyWriter:
     """CLI가 쓰는 작성기: `CodexWriter()`."""
     return CodexWriter()
-
-
-# --- 수집 대기 -------------------------------------------------------------------------------
-
-
-def _should_wait(blocked: bool, lock_held: bool, status: str | None) -> bool:
-    """대기 판정(순수 함수). `status`는 오늘 `day_status`이고 DB 오류면 `None`이다."""
-    if blocked:
-        return False
-    if lock_held:
-        return True
-    return status == coverage.NOT_RUN
-
-
-def _block_today(cfg: config.Config, today: date) -> bool:
-    """`<tokenstore>/block.json`이 읽히고 `local_date`가 오늘이면 참. 없거나 깨졌으면 거짓."""
-    path = cfg.tokenstore / BLOCK_FILENAME
-    try:
-        data = json.loads(path.read_bytes().decode("utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get("local_date") == today.isoformat()
-
-
-def _db_state(cfg: config.Config, today: date) -> tuple[bool, str | None]:
-    """(오늘 `skipped_blocked` 행이 있는지, 오늘 `day_status`). DB가 없으면 `not_run`, 다른 오류면 `None`."""
-    try:
-        conn = store.read_connection(cfg)
-    except store.DbMissing:
-        return False, coverage.NOT_RUN
-    except (store.StoreError, psycopg.Error, OSError) as error:
-        logger.warning(
-            "수집 대기: DB를 읽지 못해 기다리지 않는다: %s", type(error).__name__
-        )
-        return False, None
-    try:
-        with store.transaction(conn):
-            skipped = conn.execute(
-                "SELECT EXISTS(SELECT 1 FROM garmin.run WHERE user_id=%s AND connection_id=%s AND local_date = %s AND status = %s)",
-                (conn.user_id, conn.connection_id, today.isoformat(), errors.RunStatus.SKIPPED_BLOCKED.value),
-            ).fetchone()[0]
-            status = coverage.day_status(conn, today).status
-    except (store.StoreError, psycopg.Error) as error:
-        logger.warning(
-            "수집 대기: DB를 읽지 못해 기다리지 않는다: %s", type(error).__name__
-        )
-        return False, None
-    finally:
-        conn.close()
-    return bool(skipped), str(status)
-
-
-def _lock_held(cfg: config.Config) -> bool:
-    try:
-        return store.write_lock_held(cfg)
-    except (store.StoreError, OSError) as error:
-        logger.warning("수집 대기: 쓰기 락을 확인하지 못했다: %s", type(error).__name__)
-        return False
-
-
-def _observe(cfg: config.Config, today: date) -> tuple[bool, bool, str | None]:
-    """한 번의 확인: (차단, 락, `today` 상태)."""
-    if _block_today(cfg, today):
-        return True, False, None
-    skipped, status = _db_state(cfg, today)
-    if skipped:
-        return True, False, status
-    return False, _lock_held(cfg), status
-
-
-def wait_for_collect(cfg: config.Config, today: date | None = None) -> None:
-    """`today`(기본 `dates.today(cfg)`) 수집이 끝나기를 최대 `report_wait_minutes` 동안 기다린다.
-
-    풀리지 않아도 돌아온다. 날짜는 처음 한 번만 정하므로 대기 중 자정을 넘어도 같은 날을 본다.
-    """
-    if today is None:
-        today = dates.today(cfg)
-    deadline = _monotonic() + cfg.report_wait_minutes * 60
-    waited = False
-    while True:
-        blocked, lock_held, status = _observe(cfg, today)
-        if not _should_wait(blocked, lock_held, status):
-            logger.info(
-                "수집 대기 끝: blocked=%s lock=%s status=%s waited=%s",
-                blocked,
-                lock_held,
-                status,
-                waited,
-            )
-            return
-        remaining = deadline - _monotonic()
-        if remaining <= 0:
-            logger.warning(
-                "수집 대기 시간(%d분)이 끝나 그대로 진행한다: lock=%s status=%s",
-                cfg.report_wait_minutes,
-                lock_held,
-                status,
-            )
-            return
-        waited = True
-        _sleep(min(WAIT_POLL_SECONDS, remaining))
 
 
 # --- 하루 분석 ----------------------------------------------------------------------------------
@@ -907,7 +799,7 @@ def run(
     regenerate: bool = False,
     on_written: Callable[[Path], None] | None = None,
 ) -> int:
-    """Wait → intake → input/digest → analysis → graphs → atomic write → delivery.
+    """저장 자료 snapshot → intake → analysis → graphs → atomic write → delivery.
 
     `on_written`은 이번 실행의 파일 쓰기 성공 직후에만 부른다. 종료 코드는 그대로다.
     """
@@ -920,7 +812,6 @@ def run(
         if not regenerate and existing_day:
             logger.info("report 건너뜀: 오늘 성공 리포트가 이미 있다")
             return 0
-        wait_for_collect(cfg, today)
         pending = _pending_inputs(cfg)
         if pending:
             try:
@@ -1009,9 +900,10 @@ def run(
                     period_summary = "평가를 쓰지 못했다"
             report_md += f"\n\n### {label}\n\n{period_md.rstrip()}"
             period_summaries.append(f"{label}: {' '.join(period_summary.split())}")
-        text = _combined_summary(
-            text or SUMMARY_FALLBACK.format(report_date=today), period_summaries
-        )
+        text = report_message.saved_or_fallback(cfg, today, {
+            'day': text or SUMMARY_FALLBACK.format(report_date=today),
+            **{scope: value.split(': ', 1)[-1] for scope, value in zip(('7d', '30d', 'all'), period_summaries)},
+        })
         totals = [u for u in session_usage if u is not None]
         if len(totals) == 4:
             logger.info(
@@ -1149,6 +1041,7 @@ def _save_evaluation(cfg, day, scope, analysis):
                 report_md=analysis.report_md,
                 model=cfg.report_model or "",
                 created_at=dates.now_ms(),
+                message=getattr(analysis, "message", None),
             )
             conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
                          (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, day.isoformat(), scope, revision))

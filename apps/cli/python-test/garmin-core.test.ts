@@ -210,7 +210,10 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     const photoMethod=expectedGraphs.length === 1 ? 'sendPhoto' : 'sendMediaGroup';
     expect(messages).toEqual(['sendMessage',photoMethod,'sendDocument','sendDocument']);
     const summary=JSON.parse(requests[0]!.bytes.toString('utf8'));
-    expect(summary).toEqual({chat_id:'synthetic-chat',text:'synthetic day\n7일: synthetic 7d\n30일: synthetic 30d\n전체: synthetic all'});
+    expect(summary).toEqual({chat_id:'synthetic-chat',parse_mode:'HTML',text:
+      `<b>🩺 Garmin 일일 리포트 · ${day.slice(5).replace('-', '/')} (${{'2026-11-09':'월','2026-11-10':'화','2026-11-11':'수'}[day]})</b>\n\n` +
+      '<b>오늘 회복: synthetic day</b>\n• 수면 측정 없음 · 점수 측정 없음\n• HRV 측정 없음\n• 기상 Body Battery 측정 없음\n\n\n' +
+      '<b>📈 추세</b>\n• 7일: synthetic 7d\n• 30일: synthetic 30d\n• 전체: synthetic all'});
     // Keep field names and values as well as file bytes to validate media references.
 
     const parts=(request: typeof requests[number]) => {

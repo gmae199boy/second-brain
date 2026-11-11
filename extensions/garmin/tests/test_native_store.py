@@ -27,7 +27,7 @@ class Cursor:
 
 
 class FakeRaw:
-    def __init__(self, *, version=17, account=True, attempt=True, raw=None):
+    def __init__(self, *, version=store.NATIVE_SCHEMA_VERSION, account=True, attempt=True, raw=None):
         self.version, self.account, self.attempt, self.value = version, account, attempt, raw
         self.commands, self.closed, self.depth = [], False, 0
         self.info = type('Info', (), {'transaction_status': TransactionStatus.IDLE})()

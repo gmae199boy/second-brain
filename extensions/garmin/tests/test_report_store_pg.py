@@ -52,7 +52,8 @@ class ReportStoreTest(unittest.TestCase):
         def session(_cfg): yield conn
         cfg = SimpleNamespace(report_model='synthetic')
         def analysis(text):
-            return SimpleNamespace(summary='summary ' + text, judgments=[], evidence=[], next_checks=[], report_md=text)
+            return SimpleNamespace(summary='summary ' + text, judgments=[], evidence=[], next_checks=[], report_md=text,
+                message={'headline': text, 'recommendations': [], 'trend_line': '', 'limitations': []})
         with patch.dict(os.environ, {'BRAIN_WORK_ID':str(USER)}), patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session), \
              patch.object(store, 'read_connection', return_value=conn):
             self.assertIsNone(report._today_evaluation(cfg, DAY, 'day'))
@@ -62,6 +63,8 @@ class ReportStoreTest(unittest.TestCase):
         self.assertEqual([row[-1] for row in conn.rows], [1, 2])
         self.assertEqual(conn.rows[0][6], 'first')
         self.assertEqual(json.loads(conn.rows[1][3]), [])
+        saved = [args for sql, args in conn.calls if 'insert into garmin.evaluation_revisions' in sql]
+        self.assertEqual([json.loads(args[11])['headline'] for args in saved], ['first', 'second'])
         for sql, args in conn.calls:
             if 'evaluation_revisions' in sql or 'from garmin.evaluation where' in sql:
                 self.assertIn(USER, args)
@@ -83,16 +86,6 @@ class ReportStoreTest(unittest.TestCase):
             self.assertIsNone(failure)
             report._save_evaluation(cfg, DAY, 'day', result)
         self.assertEqual(conn.depth, 0)
-
-    def test_wait_query_is_account_scoped(self):
-        conn = Conn()
-        with patch.object(store, 'read_connection', return_value=conn), patch.object(store, 'transaction', transaction), \
-             patch.object(report.coverage, 'day_status', return_value=SimpleNamespace(status='success')):
-            self.assertEqual(report._db_state(None, DAY), (False, 'success'))
-        sql, args = conn.calls[0]
-        self.assertIn('garmin.run', sql)
-        self.assertIn('user_id=%s AND connection_id=%s', sql)
-        self.assertEqual(args[:2], (USER, ACCOUNT))
 
     def test_manifest_does_not_expose_standalone_operations(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())

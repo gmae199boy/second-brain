@@ -23,7 +23,7 @@ from psycopg.pq import TransactionStatus
 
 NORMALIZE_VERSION = 8
 NORMALIZE_VERSION_KEY = "normalize_version"
-NATIVE_SCHEMA_VERSION = 17
+NATIVE_SCHEMA_VERSION = 18
 _write_held = contextvars.ContextVar("garmin_write_held", default=False)
 _report_held = contextvars.ContextVar("garmin_report_held", default=False)
 _account_context = contextvars.ContextVar("garmin_account_context", default=None)
@@ -364,7 +364,7 @@ def upsert_raw(conn: Connection, *, scope: str, key: str, endpoint: str,
 
 def append_evaluation(conn: Connection, *, report_date: str, scope: str, summary: str,
                       judgments: str, evidence: str, next_checks: str, report_md: str,
-                      model: str, created_at: int) -> int:
+                      model: str, created_at: int, message: dict | None = None) -> int:
     """Append a monotonically increasing revision while holding a transaction lock."""
     if conn.readonly:
         raise StoreError("write attempted on read-only connection")
@@ -372,11 +372,11 @@ def append_evaluation(conn: Connection, *, report_date: str, scope: str, summary
         lock = json.dumps([str(conn.user_id), str(conn.connection_id), report_date, scope], separators=(',', ':'))
         conn.execute('select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%s, 1))', (lock,))
         row = conn.execute('''insert into garmin.evaluation_revisions
-            (user_id,connection_id,report_date,scope,revision,summary,judgments,evidence,next_checks,report_md,model,created_at)
-            select %s,%s,%s,%s,coalesce(max(revision),0)+1,%s,%s,%s,%s,%s,%s,%s
+            (user_id,connection_id,report_date,scope,revision,summary,judgments,evidence,next_checks,report_md,model,created_at,message)
+            select %s,%s,%s,%s,coalesce(max(revision),0)+1,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
             from garmin.evaluation_revisions where user_id=%s and connection_id=%s and report_date=%s and scope=%s
             returning revision''', (conn.user_id,conn.connection_id,report_date,scope,summary,judgments,evidence,
-                                    next_checks,report_md,model,created_at,conn.user_id,conn.connection_id,report_date,scope)).fetchone()
+                                    next_checks,report_md,model,created_at,json.dumps(message, ensure_ascii=False),conn.user_id,conn.connection_id,report_date,scope)).fetchone()
         return row[0]
 
 
