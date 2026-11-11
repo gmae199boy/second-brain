@@ -25,7 +25,7 @@ context: []
 
 ## Boundaries & Constraints
 
-**항상:** 기존 설치·데몬·확장 fence와 migration 신원 검증을 유지한다. 이전 프로세스와 자식 종료가 증명되지 않으면 안전하게 중단한다. 기존 journal의 operator 기록은 읽되 새 시도에서는 재검증하고 automatic 근거를 남긴다. 새 필수 선택은 기본값을 적용하고 출력한다. 최초 설치의 질문은 유지한다.
+**항상:** 기존 설치·데몬·확장 fence와 migration 신원 검증을 유지한다. 이전 프로세스와 자식 종료가 증명되지 않으면 안전하게 중단한다. 기존 journal의 operator 기록은 읽되 새 시도에서는 재검증하고 automatic 근거를 남긴다. 새 필수 선택은 기본값을 적용하고 출력한다. 2026-11-11 추가 사용자 승인에 따라 최초 설치도 질문 없이 기본값을 적용하고 감지된 하네스를 연결한다.
 
 **제외:** 운영 Brain·중앙 checkout/state 변경, 전체 티켓 자동화 재개, plugin/app-ref와 plugin version 변경. 개발 중 시험은 실행하지 않고 마지막 구현·독립 리뷰 수정 후에만 전체 회귀를 순차 실행한다. 자기 브랜치만 push한다.
 
@@ -36,7 +36,7 @@ context: []
 | 기존 설치 | config와 installed 기록, 다른 commit | 기존 선택을 무질문 재사용하고 migration·승격 완료 | 검증 실패 시 완료 기록을 쓰지 않음 |
 | 이전 실행 있음 | 데몬 또는 홈 소유 프로세스·자식 | 진입을 막고 종료를 확인 | 불명확한 소유권·종료는 DB_LOCKED와 재시도 안내 |
 | 중단된 갱신 | 기존 journal | operator·automatic 읽기 호환, 현재 정지 재검증 | 타 소유자 기록은 보존 |
-| 최초 설치 | installed 기록 없음 | 기존 동의·설정 질문 유지 | 기존 입력 검증 유지 |
+| 최초 설치 | installed 기록 없음 | 선택 질문 없이 기본값·감지 하네스 적용 | 기존 입력 검증 유지 |
 | 자동 갱신 실패 | SessionStart 비대화형 | 원인을 bootstrap.log와 doctor에 표시 | 세션 진행은 허용 |
 
 ## 중앙 승인 추가 수락조건
@@ -71,7 +71,7 @@ context: []
 - Given 이전 실행·자식이 남거나 소유권 검증이 실패하면, when 갱신하면, then migration을 시작하지 않고 구체적 재시도 오류를 남긴다.
 - Given 기존 mirror·update.auto·timezone·하네스 선택, when TTY에서 갱신하면, then 질문 호출 없이 같은 선택을 보존한다.
 - Given 새 필수 선택이 빠진 기존 설치, when 비대화형 갱신하면, then 기본값을 적용하고 출력한다.
-- Given 최초 설치, when TTY로 설치하면, then 기존 설치 질문이 유지된다.
+- Given 최초 설치, when TTY로 설치하면, then 질문 호출 없이 기본값·시스템 IANA 시간대와 감지 하네스를 적용하고 결과를 출력한다.
 - Given hook 갱신 실패, when 세션이 시작하면, then 세션을 차단하지 않고 bootstrap.log·doctor에서 원인을 찾을 수 있다.
 
 ## Implementation Notes
@@ -80,6 +80,9 @@ context: []
 - 작업 Dispatch가 구현·리뷰·검증·커밋·자기 브랜치 push를 승인하며 구현자는 직접 작업한다. 독립 Codex gpt-6.1-sol/medium 리뷰어 한 명만 배정한다.
 
 ## Plan Change Log
+
+- 2026-11-11 중앙 추가 지시: 최초 설치 질문도 제거하고 미러·임베딩·자동 업데이트·시간대는 기본값을 적용한다. 감지 하네스 자동 연결, brain-config를 통한 사후 변경과 수락 시험을 추가한다. 이 명시적 범위 변경으로 frozen 최초 설치 질문 유지 조건을 대체한다. 임베딩은 런타임 미지원으로 설정 활성화가 불가능함을 문서와 결과에 보고한다.
+
 
 ## Review Triage Log
 
@@ -111,6 +114,12 @@ context: []
 | 검사 뒤 직접 명령 진입 경합 | high / patch | 현재 직접 명령을 홈 설치 잠금으로 직렬화하고 NOLOGIN·backend 종료·확장 advisory lock 획득 뒤 process registry와 DB 그룹을 재검증; 설치 잠금 중 직접 명령 진입 거부 시험 추가 |
 | trackedExec 출력 실패 정리 | high / patch | finally에서 기존 cleanProcessGroup으로 종료를 요청·확인하고 출력을 닫음; 종료 불명은 기록 보존·명확한 오류; 실제 출력 초과 자식 종료 시험 추가 |
 
+### 최초 설치 기본값 추가 리뷰 triage
+
+| finding | 판정·경로 | 근거·수정 |
+|---|---|---|
+| 설치 스냅샷이 동시 config 변경을 덮음 | high / patch | 운영 설치의 전체 읽기·쓰기와 머신 설정 setter를 기존 홈 install.lock으로 직렬화; 설치 내부 PostgreSQL 호출은 동일 프로세스 owner 신원 일치 때만 재진입; 설치 중 setter 대기 후 false 보존 시험 추가 |
+
 ## Verification
 
 - 첫 전체 회귀는 `pnpm test` 5413 통과·14 실패, 이어서 `pnpm test:python` 86 통과·5 실패였다. 두 명령을 순차 한 번씩 실행했으며 실패를 숨기지 않고 원인별로 수정했다.
@@ -127,3 +136,13 @@ context: []
 - 최종 `pnpm test:changed -- 7b61fa3b85ea9653d78fd5a3d134ee0ea2b2e5b8`은 종료 코드 0: TypeScript 153개 파일·3162건, Python 16개 파일·91건 모두 통과했다. Python run은 `a4e487db11c3f1a2c46f1b28`이다.
 - 앞선 SIGKILL 재개 fixture의 그룹 종료를 명시적으로 단언하고 최대 10초 기다리도록 보강했다. 관련 실제 수락 시험 6건과 최종 변경 회귀가 통과했다.
 - 마지막 parser 확인 독립 리뷰는 추가 findings 없음이며 최종 typecheck·diff 검사도 통과했다. 미해결 finding·보류 기능·운영자 필수 후속 조치는 없다. 운영 반영과 main 병합은 이번 작업 범위에 포함하지 않는다.
+
+### main 통합과 최초 설치 기본값 추가 최종 검증
+
+- origin/main `e407369b57841a5d759945a2a70c38480329e3bb`을 no-ff merge한 커밋은 `b738664f434ee8b0345037fc641de29cd344c46c`이며 충돌은 없었다. core/Garmin plugin ref·version은 main 값을 보존하고 공식 Garmin build.mjs 재생성 결과도 동일했다.
+- 최초 설치 질문 0·기본값·시스템 시간대·감지 하네스 연결, DB 없는 mirror.path/update.auto 변경·재조회·다른 키·비밀 보존과 동시 변경 직렬화를 구현했다. timezone은 기존 DB 설정을 사용하고 임베딩은 런타임 미지원으로 활성화 키가 없음을 문서에 보고했다. 하네스는 외부 hook 연결이므로 기존 setup connect로 추가한다.
+- 독립 리뷰의 설치 중 config 변경 유실 1건을 수정했으며 후속 리뷰는 잔여 finding 0건이다. 실제 설치 어댑터의 전달 환경 보존도 보강했다.
+- 수락 8개 파일은 294건 통과·옛 오류 문구 기대 1건 실패 후 해당 계약 60건이 통과했다. 실제 설치 관련 41건, Drive 종합 1건, legacy core35 fault 선택 1건도 각각 재검증 통과했다.
+- Drive 종합 시험의 기존 120초 제한은 단독 실행도 131.61초가 필요하여 해당 시험만 240초로 조정했다. legacy fault 주입의 선행 중단은 진단 assertion을 보강하고 단독 및 병렬도 2의 전체 변경 회귀로 확인했다. 제품 정지 검증은 완화하지 않았다.
+- 최종 `pnpm test:changed -- origin/main` 종료 코드 0 (1049.2초): TypeScript 155개 파일·3174건 및 Python 16개 파일·91건 모두 통과했다. Python run `33094dc2405daf4a6e09a1ba`. 최초 작업의 전체 회귀 이력은 위에 보존하며 이번 중앙 통합 재검증은 지시된 test:changed와 관련 시험으로 수행했다.
+- pnpm build·pnpm typecheck·git diff --check 통과. 미해결 finding·필수 기능 보류 없음. 운영 Brain·중앙 state·main은 변경하지 않았다.

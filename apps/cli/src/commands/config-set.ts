@@ -1,11 +1,12 @@
+import { machineConfig } from './config-machine.js';
 import { settingDefinitions } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
 export const configSetCommand: CommandSpec = {
-  ns: 'config', verb: 'set', nsDescription: 'DB에 저장된 사용자 설정을 관리합니다',
+  ns: 'config', verb: 'set', nsDescription: '사용자 설정과 설치 선택을 관리합니다',
   usedFor: '사용자 설정을 바꿉니다',
   arguments: ['<key>', '<value>'], required: ['key', 'value'],
-  examples: ['brain config set timezone America/New_York --json', 'brain config set telegram.bot_token -'],
+  examples: ['brain config set timezone America/New_York --json', 'brain config set telegram.bot_token -', 'brain config set update.auto false --json'],
   output: 'key, value(토큰은 configured), source와 updated_at을 반환합니다',
   risk: 'write', writes: true, hook: false, dryRun: false, drain: false,
   preflight(context) {
@@ -17,6 +18,7 @@ export const configSetCommand: CommandSpec = {
     if (!parsed.ok) return { ok: false, code: 'CONFIG_INVALID', message: parsed.message, exit: 2 };
     return undefined;
   },
+  runMachine: context => machineConfig(context, true),
   async runSettings(context) {
     const input = context.args[1] === '-' ? await context.stdin() : context.args[1] ?? '';
     if (context.args[1] === '-' && input === '') return { ok: false, code: 'CONFIG_INVALID', message: 'stdin으로 설정 값을 연결하세요', exit: 2 };

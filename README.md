@@ -89,7 +89,7 @@ HEAD도 움직이지 않습니다. 실패해도 로그 한 줄로 끝입니다.
 
 기존 `config.toml`과 `installed.json`이 있는 홈은 미러·임베딩·자동 업데이트·시간대·하네스
 질문 없이 기존 선택을 재사용합니다. 새 필수 설정은 기본값을 적용하고 출력합니다.
-최초 설치에서는 기존 질문을 유지합니다. `[update] auto = true`이면 SessionStart가
+최초 설치도 질문 없이 기본값을 적용하고 감지된 하네스를 연결합니다. `[update] auto = true`이면 SessionStart가
 core migration과 app 전환까지 자동 수행합니다. 실패해도 세션은 시작되며
 `log/bootstrap.log`와 `brain doctor run`에서 원인을 확인합니다.
 
@@ -225,33 +225,22 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 | `SECOND_BRAIN_LAUNCH_AGENTS` | `~/Library/LaunchAgents` | 데몬 plist를 쓸 폴더. 시험용 |
 | `SECOND_BRAIN_NODE_DIRS` | `/opt/homebrew/bin:/usr/local/bin` | node를 찾아볼 고정 폴더들. 시험용 |
 
-설치 전에 OrbStack이 실행 중이어야 합니다. 설치기는 홈별 PostgreSQL 컨테이너를
-만들고, 미러 경로와 시간대 등의 설정을 묻습니다.
+설치 전에 OrbStack이 실행 중이어야 합니다. 설치기는 선택 질문 없이 기본값을
+적용하고 결과를 출력합니다. 기존 설정이 있으면 보존합니다.
 
-- **PostgreSQL을 어디에 둘지.** 홈에서 분리된 compose project와 영속 볼륨을 만들고, 접속 URL은 `.env`에 기록합니다. 선택자는 `store.url_env`이며 기본값은 `BRAIN_DATABASE_URL`입니다.
-- **미러 폴더를 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
-  `~/.second_brain/mirror`입니다. 아직 그 폴더를 만드는 것은 없습니다.
+| 항목 | 최초 기본값 | 나중에 변경 |
+| --- | --- | --- |
+| 미러 | `~/.second_brain/mirror` (별도 홈이면 그 홈의 mirror) | `brain config set mirror.path <절대경로>` |
+| 자동 업데이트 | 켜짐 | `brain config set update.auto false` 또는 `true` |
+| 시간대 | 시스템 IANA 시간대 | `brain config set timezone America/New_York` |
+| 임베딩 | 꺼짐 | 런타임 미지원으로 활성화 설정 없음 |
+| 하네스 | 감지된 하네스에 자동 연결 | `brain setup connect <하네스>`로 추가 연결 |
 
-파일 저장소 루트는 묻지 않습니다. 기록된 값이 있으면 그것을, 없으면
-`~/.second_brain/files`를 씁니다.
-
-그다음 임베딩을 켤지 묻는데, 이것은 여전히 "아직 지원하지 않습니다"라서 켠다고
-답해도 그렇게 말하기만 하고 아무것도 쓰지 않습니다.
-
-그다음 자동 업데이트를 켤지 묻습니다. 이것은 실제로 쓰이는 값입니다 —
-`config.toml`의 `[update] auto`이고, 플러그인의 `SessionStart`가 더 새 앱을 설치해도
-되는지를 그 값으로 판단합니다. 기본값은 켜짐이고, 이미 기록된 값이 있으면 그것을
-기본값으로 내놓습니다. 터미널이 없으면 묻지 않고 기록된 값(없으면 켜짐)을 씁니다.
-꺼 두면 플러그인이 더 새 commit을 담고 있어도 아무것도 하지 않고, `brain doctor
-run`이 `UPDATE_AVAILABLE` 경고로 알려 줍니다.
-
-마지막으로, 아직 아무것도 쓰지 않은 자리에서 쓸 것을 다 보여 주고 한 번
-묻습니다. 설정 두 파일, PostgreSQL compose project·볼륨·포트, 파일 저장소 루트,
-shim의 경로입니다. 여기서 아니요라고
-답하면 — 또는 그 앞의 어느 질문에서 Ctrl-C를 누르면 — 한 바이트도 쓰지 않고
-`SETUP_CANCELLED`로 끝납니다. 뒤 질문에서 누른 Ctrl-C는 그 자리에서 멈추므로,
-그때까지 밟은 단계는 그대로 남습니다. `--yes`는 이 질문을 건너뜁니다 — 경로
-질문은 그대로 묻습니다. 하네스를 연결할지는 뒤에서 따로 묻습니다.
+PostgreSQL은 홈별 compose project·영속 볼륨에 두고 URL은 `.env`에 기록합니다.
+파일 저장소는 기존 값이 없으면 `~/.second_brain/files`를 사용합니다. 미러는 경로만
+기록하며 기존 데이터를 옮기지 않습니다. 미러·자동 업데이트·시간대 변경은 brain-config
+스킬로 요청할 수 있습니다. 하네스 연결은 외부 설정을 바꾸므로 brain-setup을 사용하며,
+설치 갱신에서는 기존 연결을 유지하고 새 하네스를 자동으로 추가하지 않습니다.
 
 동의한 다음에는 PostgreSQL role·schema와 마이그레이션을 준비하고, 이 brain의 주인을
 기록하고, 시간대를 DB에 저장합니다. 파일 저장소 루트를 mode 0700으로 만든 뒤
@@ -306,8 +295,9 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 node apps/cli/dist/install.js --yes
 ```
 
-터미널이 없으면 아무것도 묻지 않으므로 각 경로는 기록된 값(없으면 기본값)을
-지키고, `--connect`가 이름을 대지 않은 하네스는 연결되지 않습니다.
+각 경로는 기록된 값(없으면 기본값)을 지킵니다. 최초 설치에서는 감지된 하네스를
+자동 연결하며, `--connect`를 지정하면 그 하네스만 연결합니다. 갱신에서는 명시적으로
+지정한 연결만 추가합니다.
 
 | 플래그 | 하는 일 |
 | --- | --- |
@@ -389,7 +379,7 @@ hook이 내는 줄입니다. 도구 메모 대상은 셸 `NAME=value` 규칙도 
 그래서 수집 결과의 `inserted`에는 `messages`와 `toolNotes`만 있습니다
 (`redactions` 키는 없습니다 — 수집은 가리기 기록을 남기지 않습니다). 도구 메모
 대상은 파서가 자른 그대로, 첫 줄의 500자까지 저장됩니다. commander가 내는
-도움말과 설치기의 질문 화면은 등록부의 정적 문구와 경로뿐이어서 코덱 밖입니다.
+도움말과 설치기의 결과 화면은 등록부의 정적 문구와 경로뿐이어서 코덱 밖입니다.
 
 그래서 데이터베이스 파일에는 비밀이 원문으로 남습니다. 그 파일을 지키는 것은
 권한 0600과 "동기화 폴더에 두지 않기"입니다. 저장본에서도 지우려면
@@ -1196,7 +1186,7 @@ Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 �
 설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
 있습니다. PostgreSQL 홈의 시간대는 DB 사용자 설정에 저장하며, `brain config get timezone`과
 `brain config set timezone America/New_York`으로 읽고 바꿉니다. `setup run`은 기존
-파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 기본값은 `Asia/Seoul`입니다.
+파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 최초 설치 기본값은 시스템 IANA 시간대이며 이미 저장된 DB 값은 보존합니다.
 `config.toml`은 `schema_version`,
 PostgreSQL 연결 선택자(`store.url_env`, 기본 `BRAIN_DATABASE_URL`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
 담고, 플러그인이 더 새 앱을 스스로 설치해도 되는지(`update.auto`, 기본 참)를

@@ -77,4 +77,5 @@ await db.query("create function brain.test_reject_interval() returns trigger lan
   for(const secret of forbidden)expect(visible).not.toContain(secret);const envFile=await readFile(join(home,'.env'),'utf8');for(const secret of ['synthetic-refresh','synthetic-access','synthetic-code',...verifiers])expect(envFile).not.toContain(secret);expect((await stat(join(home,'.env'))).mode&0o777).toBe(0o600);
   const inspect=async(dir:string):Promise<void>=>{for(const entry of await readdir(dir,{withFileTypes:true})){const path=join(dir,entry.name);if(entry.isDirectory())await inspect(path);else if(entry.isFile()&&path!==join(home,'.env')){const contents=await readFile(path);for(const secret of forbidden)expect(contents.includes(Buffer.from(secret))).toBe(false);}}};await inspect(home);
  } finally {releaseLate();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await db.drop();await rm(home,{recursive:true,force:true});}
-},120000);
+// 여러 설치 CLI·데몬·OAuth 재시도를 직렬 검증하므로 공유 호스트 부하에서도 종료 검증 시간을 둔다.
+},240000);

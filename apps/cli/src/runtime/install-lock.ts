@@ -34,6 +34,6 @@ export async function withHomeInstallLock<T>(home: string, run: () => Promise<T>
 /** Bootstrap owns the lock until its installer child has exited. */
 export async function withInstallerHomeLock<T>(home: string, env: NodeJS.ProcessEnv, run: () => Promise<T>): Promise<T> {
   const inherited = env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
-  if (inherited && inherited === await readFile(join(home, 'install.lock', 'owner'), 'utf8').catch(() => '') && inherited.startsWith(`${process.ppid} `)) return run();
+  if (inherited && inherited === await readFile(join(home, 'install.lock', 'owner'), 'utf8').catch(() => '') && (inherited.startsWith(`${process.ppid} `) || inherited.startsWith(`${process.pid} `))) return run();
   return withHomeInstallLock(home, run);
 }

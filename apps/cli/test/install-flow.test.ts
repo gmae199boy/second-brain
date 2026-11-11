@@ -7,6 +7,7 @@ function harness() {
   const order: string[] = [], lines: string[] = [];
   const step = (name: string) => { order.push(name); };
   const deps: InstallDeps = {
+    systemTimezone: () => 'Asia/Seoul',
     isTTY: false, log: line => lines.push(line),
     prompts: { confirm: vi.fn(async () => true), text: vi.fn(async () => ''), multiselect: vi.fn(async (_q, _c, values) => values) },
     config: { read: vi.fn(async () => ({ ok: true as const, recorded: undefined, warnings: [] })), write: vi.fn(async () => { step('config'); return { ok: true as const }; }) },
@@ -82,34 +83,11 @@ describe('PG installer flow', () => {
     if (operation === 'get') expect(kit.deps.settings!.set).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])('validates TTY timezone answers and stops after repeated invalid input: %s', async exhausted => {
-    const kit = harness();
-    kit.deps.isTTY = true;
-    kit.deps.config.read = async () => ({ ok: true, warnings: [], recorded: { timezone: 'Europe/Paris', extra: {} } });
-    const answers = ['Mars/Base', '+09:00', exhausted ? 'invalid' : 'america/new_york'];
-    const placeholders: (string | undefined)[] = [];
-    kit.deps.prompts.text = vi.fn(async (question, fallback) => {
-      if (!question.includes('시간대')) return '';
-      placeholders.push(fallback);
-      const answer = answers.shift();
-      if (answer === undefined) throw new Error('준비한 시간대 답변을 모두 썼습니다');
-      return answer;
-    });
-
-    const result = await kit.run();
-
-    expect(placeholders).toEqual(['Europe/Paris', 'Europe/Paris', 'Europe/Paris']);
-    if (exhausted) {
-      expect(result).toMatchObject({ ok: false, failure: { code: 'CONFIG_INVALID', exit: 2 } });
-      expect(kit.deps.settings!.set).not.toHaveBeenCalled();
-      expect(kit.deps.config.write).not.toHaveBeenCalled();
-      expect(kit.deps.installed.write).not.toHaveBeenCalled();
-    } else {
-      expect(result).toMatchObject({ ok: true, report: { timezone: 'America/New_York' } });
-      expect(kit.deps.settings!.set).toHaveBeenCalledExactlyOnceWith(home, 'BRAIN_DATABASE_URL', env, 'America/New_York');
-      expect(kit.deps.config.write).toHaveBeenCalledOnce();
-      expect(kit.deps.installed.write).toHaveBeenCalledOnce();
-    }
+  it('첫 설치는 시스템 IANA 시간대를 저장하며 질문하지 않는다', async () => {
+    const kit = harness(); kit.deps.isTTY = true; kit.deps.systemTimezone = () => 'Europe/Paris';
+    expect(await kit.run([])).toMatchObject({ ok: true, report: { timezone: 'Europe/Paris' } });
+    expect(kit.deps.settings!.set).toHaveBeenCalledWith(home, 'BRAIN_DATABASE_URL', env, 'Europe/Paris');
+    for (const prompt of Object.values(kit.deps.prompts)) expect(prompt).not.toHaveBeenCalled();
   });
 
   it('warns when transcript replay fails even though the queue stops normally without failures', async () => {
@@ -193,11 +171,11 @@ describe('PG installer flow', () => {
   it('refuses relative mirror paths in noninteractive mode', async () => {
     expect(await harness().run(['--mirror-path', 'relative', '--yes'])).toMatchObject({ ok: false, failure: { code: 'CONFIG_INVALID' } });
   });
-  it('asks terminal questions and honors refusal before writing', async () => {
+  it('TTY 최초 설치도 질문을 호출하지 않고 기본값을 출력한다', async () => {
     const kit = harness(); kit.deps.isTTY = true;
-    kit.deps.prompts.confirm = vi.fn(async question => !question.includes('진행'));
-    expect(await kit.run([])).toMatchObject({ ok: false, failure: { code: 'SETUP_CANCELLED' } });
-    expect(kit.deps.postgres).not.toHaveBeenCalled(); expect(kit.deps.config.write).not.toHaveBeenCalled();
+    expect(await kit.run([])).toMatchObject({ ok: true, report: { mirror_path: home + '/mirror', update: { auto: true } } });
+    for (const prompt of Object.values(kit.deps.prompts)) expect(prompt).not.toHaveBeenCalled();
+    expect(kit.lines.join('\n')).toContain('임베딩은 꺼져 있습니다');
   });
   it('parses repeated connections and absolute plugin roots', () => {
     expect(parseFlags(['--connect', 'demo', '--connect', 'demo', '--plugin-root', '/tmp/plugin', '--yes'])).toMatchObject({ ok: true as const, flags: { connect: ['demo'], pluginRoot: '/tmp/plugin' } });
@@ -226,9 +204,13 @@ describe('기존 홈 무인 갱신', () => {
     expect(kit.lines.join('\n')).toContain('자동 업데이트는 켜져 있습니다');
     expect(kit.lines.join('\n')).toContain('시간대: Asia/Seoul');
   });
-  it('최초 TTY 설치 질문은 유지한다', async () => {
-    const kit = harness(); kit.deps.isTTY = true;
-    expect(await kit.run()).toMatchObject({ ok: true });
-    expect(kit.deps.prompts.text).toHaveBeenCalled(); expect(kit.deps.prompts.confirm).toHaveBeenCalled();
+  it.each([true, false])('최초 설치는 TTY %s에서도 감지된 하네스를 기본 연결한다', async tty => {
+    const kit = harness(); kit.deps.isTTY = tty;
+    const connect = vi.fn(async () => ({ ok: true as const, target: '/tmp/settings', changed: true }));
+    const absent = vi.fn(async () => ({ ok: true as const, target: '/tmp/absent', changed: true }));
+    kit.deps.connectors = [{ harness: 'synthetic', label: '시험', detect: async () => true, connect }, { harness: 'absent', label: '없음', detect: async () => false, connect: absent }] as never;
+    expect(await kit.run(['--yes'])).toMatchObject({ ok: true, report: { harnesses: [{ harness: 'synthetic' }] } });
+    expect(connect).toHaveBeenCalledOnce(); expect(absent).not.toHaveBeenCalled();
+    for (const prompt of Object.values(kit.deps.prompts)) expect(prompt).not.toHaveBeenCalled();
   });
 });

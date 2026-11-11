@@ -262,7 +262,7 @@ async function world(mode = 'running', withDatabase = true, isolated = false) {
   // Keep installation verification in-process while retaining the actual PG assembly.
   deps.installed.verify = async () => ({ ok: true });
   deps.daemon.register = async () => ({ label: homeResources(home).label, plist_path: null, status: 'unsupported', plist_changed: false });
-  if (db) deps.postgres = () => installPostgres({ home, urlEnv: 'BRAIN_DATABASE_URL', env, clock, runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
+  if (db) deps.postgres = (_home, _urlEnv, installEnv) => installPostgres({ home, urlEnv: 'BRAIN_DATABASE_URL', env: installEnv, clock, runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
   const execute = async (args: string[], commandRunner = runner) => {
     let stdout = ''; const exit = await dispatch(commands, [...args, '--json'], { clock, env, runner: commandRunner, stdout: (s: string) => { stdout += s; }, stderr: () => {} });
     return { exit, ...JSON.parse(stdout) };
@@ -384,7 +384,7 @@ it.each(['volume', 'port'])('returns exit 2 from installer and CLI for a %s conf
   };
   const lines: string[] = [];
   kit.deps.log = line => lines.push(line);
-  kit.deps.postgres = () => installPostgres({ home: kit.home, env: kit.env, urlEnv: 'BRAIN_DATABASE_URL', clock, runner });
+  kit.deps.postgres = (_home, _urlEnv, installEnv) => installPostgres({ home: kit.home, env: installEnv, urlEnv: 'BRAIN_DATABASE_URL', clock, runner });
   expect(await runInstaller(['--yes'], kit.env, kit.deps)).toBe(2);
   expect(lines.join('\n')).toContain('DB_UNAVAILABLE');
   const expectedDetail = conflict === 'volume' ? 'other-project' : String(homeResources(kit.home).port);

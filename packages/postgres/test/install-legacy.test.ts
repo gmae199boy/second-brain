@@ -490,7 +490,9 @@ it('L5 core 35 직후 gate 진입 실패를 주입하고 새 확인으로 재개
     end $$;
     create event trigger attach_gate_failure on ddl_command_end when tag in ('CREATE TABLE') execute function brain.attach_gate_failure()`);
   let old = '';
-  expect(await k.install(async r => { old = r.verificationId; return old; })).toMatchObject({ ok: false });
+  const interrupted = await k.install(async r => { old = r.verificationId; return old; });
+  expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ ok: false });
+  expect(old, JSON.stringify(interrupted)).not.toBe('');
   expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{ version: 35 }]);
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   const path = join(k.home, 'run/bootstrap-extension-migrations.json'), owner = JSON.parse(await readFile(path, 'utf8')).owner;

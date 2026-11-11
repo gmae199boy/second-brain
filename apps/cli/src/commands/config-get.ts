@@ -1,11 +1,12 @@
+import { machineConfig } from './config-machine.js';
 import { settingDefinitions } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
 export const configGetCommand: CommandSpec = {
-  ns: 'config', verb: 'get', nsDescription: 'DB에 저장된 사용자 설정을 관리합니다',
+  ns: 'config', verb: 'get', nsDescription: '사용자 설정과 설치 선택을 관리합니다',
   usedFor: '사용자 설정을 읽습니다',
   arguments: ['<key>'], required: ['key'],
-  examples: ['brain config get timezone --json'],
+  examples: ['brain config get timezone --json', 'brain config get update.auto --json'],
   output: 'key, value(토큰은 configured), source와 updated_at을 반환합니다',
   risk: 'read', writes: false, hook: false, dryRun: false, drain: false,
   preflight(context) {
@@ -14,6 +15,7 @@ export const configGetCommand: CommandSpec = {
     if (definition === undefined) return { ok: false, code: 'CONFIG_INVALID', message: `모르는 사용자 설정 키입니다: ${context.args[0] ?? ''}`, exit: 2 };
     return undefined;
   },
+  runMachine: context => machineConfig(context, false),
   async runSettings(context) {
     const result = await context.brain.config.get({ key: context.args[0] ?? '' });
     if (!result.ok) return result;

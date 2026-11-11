@@ -1,3 +1,4 @@
+import { withHomeInstallLock } from '../runtime/install-lock.js';
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
@@ -916,4 +917,21 @@ export async function saveDriveRefreshForClient(home:string,client:{clientId:str
     values.BRAIN_DRIVE_REFRESH_TOKEN=refreshToken;values.BRAIN_DRIVE_SESSION=randomUUID();saved=true;
   });
   return saved;
+}
+
+/** 설치 선택은 bootstrap도 읽는 파일에 둔다. DB 설정과 별개이며 읽기·쓰기를 직렬화한다. */
+export async function setInstallChoice(home: string, key: 'mirror.path' | 'update.auto', value: string): Promise<WriteConfigResult> {
+  if (key === 'mirror.path' ? !isAbsolute(value) : !['true', 'false'].includes(value)) return { ok: false, code: 'CONFIG_INVALID', message: '설치 설정 값이 올바르지 않습니다' };
+  try {
+    return await withHomeInstallLock(home, () => withEnvMutation(home, async () => {
+      const strict = await readConfig(home);
+      if (!strict.ok) return { ok: false as const, code: 'CONFIG_INVALID' as const, message: strict.message };
+      const document = parseToml(await readFile(configFilePath(home), 'utf8'));
+      const [section, field] = key.split('.') as [string, string];
+      const table = document[section];
+      document[section] = { ...(isTable(table) ? table : {}), [field]: key === 'mirror.path' ? value : value === 'true' };
+      await writeEnv(configFilePath(home), stringifyToml(document));
+      return { ok: true as const };
+    }));
+  } catch { return { ok: false, code: 'CONFIG_INVALID', message: '설치 설정 파일을 바꿀 수 없습니다. 잠금과 파일 권한을 확인하세요' }; }
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { withInstallerHomeLock } from './runtime/install-lock.js';
+import { readFile } from 'node:fs/promises';
 import { detectCodexPath, executableSettingValidator } from './runtime/executable.js';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { probeOrbStack } from './runtime/orbstack.js';
@@ -188,6 +190,7 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
     // and the warnings it collects belong to the codec (AD-18), and the
     // adapter that used to sit here is what turned a broken value into
     // "nothing recorded" and dropped every warning with it (F1, F2).
+    withInstallLock: (home, env, run) => withInstallerHomeLock(home, env, async () => run({ ...env, SECOND_BRAIN_INSTALL_LOCK_OWNER: await readFile(join(home, 'install.lock/owner'), 'utf8') })),
     config: {
       write: writeConfig,
       read: readConfigForSetup,
