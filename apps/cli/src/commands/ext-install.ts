@@ -10,14 +10,15 @@ export const extInstallCommand: CommandSpec = {
     let r;
     try { r = await context.brain.ext.install({ ...(context.args[0] === undefined ? {} : { name: context.args[0] }), ...(typeof context.options.package === 'string' ? { packagePath: context.options.package } : {}), signal: controller.signal }); }
     finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+    const agentText = 'agentPathMessage' in r && typeof r.agentPathMessage === 'string' ? [r.agentPathMessage] : [];
     if (!r.ok) {
       if ('status' in r && r.status) {
         const status = await context.brain.ext.status({ name: r.status.name }); if (!status.ok) return status;
-        return { ...r, data: publicExtensionData(status.status), text: extensionProgressText(r.status.progress) };
+        return { ...r, data: { ...publicExtensionData(status.status), ...('agentPathMessage' in r ? { analysis_agent: r.agentPathMessage } : {}) }, text: [...extensionProgressText(r.status.progress), ...agentText] };
       }
       return r;
     }
     const status = await context.brain.ext.status({ name: r.name }); if (!status.ok) return status;
-    return { ok: true, data: publicExtensionData(status.status), text: [`확장 ${r.name}을 설치하고 연결을 확인했습니다.`, ...extensionProgressText(r.progress)] };
+    return { ok: true, data: { ...publicExtensionData(status.status), ...('agentPathMessage' in r ? { analysis_agent: r.agentPathMessage } : {}) }, text: [`확장 ${r.name}을 설치하고 연결을 확인했습니다.`, ...extensionProgressText(r.progress), ...agentText] };
   },
 };

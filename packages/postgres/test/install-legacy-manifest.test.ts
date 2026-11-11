@@ -1,10 +1,11 @@
+import { withoutHarnessFolders } from '../../../apps/cli/test/environment.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
+import { createIsolatedTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import { installPostgres } from '../../../apps/cli/dist/install/postgres.js';
 import { database, clock } from './fixture.js';
 import { CORE_SCHEMA_VERSION, runMigrations, postgresStore } from '../src/index.js';
@@ -46,7 +47,7 @@ afterEach(async () => {
 });
 async function world(name: 'garmin' | 'oldext', schema = 27) {
   const home = await mkdtemp(join(await realpath(tmpdir()), 'brain-retired-')); homes.push(home);
-  const db = await database(false, createTestDatabase); databases.push(db);
+  const db = await database(false, createIsolatedTestDatabase); databases.push(db);
   const databaseName = new URL(db.url).pathname.slice(1);
   await db.query(`alter database "${databaseName}" owner to brain_owner`);
   expect(await runMigrations({ databaseUrl: db.url, clock, coreMaxVersion: schema })).toMatchObject({ok:true});
@@ -69,7 +70,7 @@ async function world(name: 'garmin' | 'oldext', schema = 27) {
   const installed = {commit: build.commit === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40), schema_version:schema,node:process.execPath,plugin_root:null,installed_at:'2026-01-01T00:00:00Z'};
   await writeFile(join(home,'installed.json'),JSON.stringify(installed));
   const runner = async (request: {args: readonly string[]}) => request.args[0] === 'volume' ? {ok:false as const,stdout:'',stderr:'no such volume',message:'missing'} : {ok:true as const,stdout:'',stderr:''};
-  const env: NodeJS.ProcessEnv = {...process.env, SECOND_BRAIN_HOME:home}; delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
+  const env: NodeJS.ProcessEnv = {...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME:home}; delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
   const options = {home,urlEnv:'BRAIN_DATABASE_URL',env,clock,runner,secrets:{adminUrl:db.url,appPassword:'brain-test-app'},databaseName};
   const install = () => installPostgres({...options,confirmOffline:async r => r.challenge});
   return {home, db, dir, build, installed, install, options};
@@ -148,9 +149,10 @@ async function cliWorld() {
   return cliForWorld(k);
 }
 async function cliForWorld(k: Awaited<ReturnType<typeof world>>) {
+  const adminPassword = decodeURIComponent(new URL(k.db.url).password);
   await writeFile(join(k.home,'config.toml'), 'schema_version=1\n[store]\nurl_env="BRAIN_DATABASE_URL"\n');
-  await writeFile(join(k.home,'.env'), `BRAIN_POSTGRES_PASSWORD="postgres"\nBRAIN_APP_PASSWORD="brain-test-app"\nBRAIN_EXT_GARMIN_PASSWORD="${'a'.repeat(48)}"\nBRAIN_EXT_OLDEXT_PASSWORD="${'a'.repeat(48)}"\n`);
-  const env: NodeJS.ProcessEnv = {...process.env,HOME:k.home,SECOND_BRAIN_HOME:k.home,BRAIN_DATABASE_URL:k.db.appUrl,BRAIN_POSTGRES_PASSWORD:'postgres',BRAIN_APP_PASSWORD:'brain-test-app',SECOND_BRAIN_TEST_EXTENSIONS:join(k.home,'source-extensions')};
+  await writeFile(join(k.home,'.env'), `BRAIN_POSTGRES_PASSWORD=${JSON.stringify(adminPassword)}\nBRAIN_APP_PASSWORD="brain-test-app"\nBRAIN_EXT_GARMIN_PASSWORD="${'a'.repeat(48)}"\nBRAIN_EXT_OLDEXT_PASSWORD="${'a'.repeat(48)}"\n`);
+  const env: NodeJS.ProcessEnv = {...withoutHarnessFolders(process.env),HOME:k.home,SECOND_BRAIN_HOME:k.home,BRAIN_DATABASE_URL:k.db.appUrl,BRAIN_POSTGRES_PASSWORD:adminPassword,BRAIN_APP_PASSWORD:'brain-test-app',SECOND_BRAIN_TEST_EXTENSIONS:join(k.home,'source-extensions')};
   delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER; delete env.SECOND_BRAIN_STAGED_APP; delete env.SECOND_BRAIN_PREVIOUS_APP_HEAD;
   const cli = fileURLToPath(new URL('../../../apps/cli/dist/bin.js',import.meta.url));
   const run = (args:string[], timeoutMs = 60000) => new Promise<{code:number|null;stdout:string;stderr:string;body:any}>((resolve,reject) => {
@@ -279,14 +281,14 @@ async function setupViaCli(k: Awaited<ReturnType<typeof world>>) {
   const { chmod, symlink } = await import('node:fs/promises');
   const { homeResources } = await import('../../../apps/cli/dist/config/resources.js');
   const pg = (await import('pg')).default;
-  const adminUrl = new URL(process.env.BRAIN_TEST_DATABASE_URL!); adminUrl.pathname='/postgres';
+  const adminUrl = new URL(k.db.url); adminUrl.pathname='/postgres';
   const password = decodeURIComponent(adminUrl.password);
   if (decodeURIComponent(adminUrl.username) !== 'postgres' || !password) throw Error('전용 서버 관리자 계정이 필요합니다');
   const admin = new pg.Client({connectionString:adminUrl.toString()}); await admin.connect();
   const dbName = k.options.databaseName; let renamed = false;
   const sockets = new Set<import('node:net').Socket>();
   const proxy = createServer(incoming => {
-    const endpoint = new URL(process.env.BRAIN_TEST_DATABASE_URL!);
+    const endpoint = new URL(k.db.url);
     const outgoing = createConnection({host:endpoint.hostname,port:Number(endpoint.port || 5432)}); sockets.add(incoming); sockets.add(outgoing);
     incoming.on('close',()=>sockets.delete(incoming)); outgoing.on('close',()=>sockets.delete(outgoing));
     incoming.on('error',()=>outgoing.destroy()); outgoing.on('error',()=>incoming.destroy()); incoming.pipe(outgoing).pipe(incoming);
@@ -315,7 +317,7 @@ esac\n`);
     await postgresSecrets(k.home,homeResources(k.home).port,'BRAIN_DATABASE_URL');
     await mkdir(join(k.home,'postgres')); await writeFile(join(k.home,'postgres/compose.yaml'),renderPostgresCompose(k.home));
     await symlink(fileURLToPath(new URL('../../../',import.meta.url)),join(k.home,'app'));
-    const env:NodeJS.ProcessEnv = {...process.env,HOME:k.home,SECOND_BRAIN_HOME:k.home,PATH:`${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,CLAUDE_CONFIG_DIR:join(k.home,'claude'),SECOND_BRAIN_LAUNCH_AGENTS:join(k.home,'agents'),SECOND_BRAIN_LAUNCHCTL:fileURLToPath(new URL('../../../apps/cli/test/fixtures/fake-launchctl.sh',import.meta.url)),FAKE_LAUNCHCTL_DIR:join(k.home,'launchctl'),BRAIN_DATABASE_URL:`postgres://brain_app:brain-test-app@127.0.0.1:${homeResources(k.home).port}/brain`};
+    const env:NodeJS.ProcessEnv = {...withoutHarnessFolders(process.env),HOME:k.home,SECOND_BRAIN_HOME:k.home,PATH:`${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,CLAUDE_CONFIG_DIR:join(k.home,'claude'),SECOND_BRAIN_LAUNCH_AGENTS:join(k.home,'agents'),SECOND_BRAIN_LAUNCHCTL:fileURLToPath(new URL('../../../apps/cli/test/fixtures/fake-launchctl.sh',import.meta.url)),FAKE_LAUNCHCTL_DIR:join(k.home,'launchctl'),BRAIN_DATABASE_URL:`postgres://brain_app:brain-test-app@127.0.0.1:${homeResources(k.home).port}/brain`};
     delete env.DOCKER_HOST; delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER; delete env.SECOND_BRAIN_STAGED_APP; delete env.SECOND_BRAIN_PREVIOUS_APP_HEAD;
     const cli=fileURLToPath(new URL('../../../apps/cli/dist/bin.js',import.meta.url));
     const ptyScript=String.raw`import os,pty,select,subprocess,sys,time,re,json,fcntl,termios,struct,signal

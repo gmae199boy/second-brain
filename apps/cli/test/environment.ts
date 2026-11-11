@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { chmodSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,9 +24,16 @@ export const EMPTY_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'brain-no-harness-'))
 
 const EMPTY_LAUNCH_AGENTS = mkdtempSync(join(tmpdir(), 'brain-launch-agents-'));
 const FAKE_LAUNCHCTL_DIR = mkdtempSync(join(tmpdir(), 'brain-launchctl-'));
+const FAKE_AGENT_DIR = mkdtempSync(join(tmpdir(), 'brain-agent-'));
+const FAKE_AGENT = join(FAKE_AGENT_DIR, 'codex');
+const FAKE_LOGIN_SHELL = join(FAKE_AGENT_DIR, 'login-shell');
+// 설치/확장 fixture는 이 Mac의 실제 Codex를 탐지하거나 실행하지 않는다.
+writeFileSync(FAKE_AGENT, '#!/bin/sh\n[ "$1" = "--version" ] || exit 99\nprintf "synthetic-codex 1.0\\n"\n');
+writeFileSync(FAKE_LOGIN_SHELL, `#!/bin/sh\nprintf '%s\\n' '${FAKE_AGENT}'\n`);
+chmodSync(FAKE_AGENT, 0o700); chmodSync(FAKE_LOGIN_SHELL, 0o700);
 
 afterAll(async () => {
-  await Promise.all([EMPTY_CONFIG_DIR, EMPTY_LAUNCH_AGENTS, FAKE_LAUNCHCTL_DIR]
+  await Promise.all([EMPTY_CONFIG_DIR, EMPTY_LAUNCH_AGENTS, FAKE_LAUNCHCTL_DIR, FAKE_AGENT_DIR]
     .map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -37,6 +44,7 @@ const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 export function withoutHarnessFolders(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const isolated: NodeJS.ProcessEnv = {
     ...env,
+    SHELL: FAKE_LOGIN_SHELL,
     [CLAUDE_CONFIG_DIR_ENV]: EMPTY_CONFIG_DIR,
     SECOND_BRAIN_LAUNCHCTL: fileURLToPath(new URL('./fixtures/fake-launchctl.sh', import.meta.url)),
     SECOND_BRAIN_LAUNCH_AGENTS: EMPTY_LAUNCH_AGENTS,

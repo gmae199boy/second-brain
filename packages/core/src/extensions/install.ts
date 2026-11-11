@@ -52,6 +52,7 @@ export interface ExtensionMigrator {
   apply(owner: string, directory: string): Promise<{ ok: true; from: number; to: number; applied: string[] } | { ok: false; code: 'MIGRATION_FAILED' | 'DB_UNAVAILABLE'; message: string; file?: string }>;
 }
 export interface ExtensionRuntime {
+  prepareAnalysisAgent?(name: string): Promise<string | undefined>;
   installedDirectory?(name: string): string;
   validateValue?(schema: Record<string, unknown>, value: unknown): boolean;
   validateSchema?(schema: Record<string, unknown>): boolean;
@@ -106,7 +107,8 @@ export async function installExtension(deps: ExtensionDependencies, input: { nam
       const outcome = await installExtensionUnlocked(deps, name, runtime, input.signal, prepared);
       const status = await extensionStatus(deps, { name });
       if (!status.ok) return status;
-      return outcome.ok ? status : { ...outcome, status };
+      const agentPathMessage = await runtime.prepareAnalysisAgent?.(name);
+      return outcome.ok ? { ...status, agentPathMessage } : { ...outcome, status, agentPathMessage };
     };
     const locked = () => runtime.withInstallLock ? runtime.withInstallLock(name, run, input.signal) : run();
     try { return await (runtime.withHomeInstallLock ? runtime.withHomeInstallLock(locked, input.signal) : locked()); }

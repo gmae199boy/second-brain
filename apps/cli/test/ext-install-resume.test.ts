@@ -301,15 +301,16 @@ while (!existsSync(join(dir,'ready'))) await new Promise(r=>setTimeout(r,40)); c
   const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
   const launch = () => {
     const child = spawn(process.execPath, [bin, 'ext', 'install', 'resumext', '--json'], { env: fixture.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = ''; child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr.resume();
-    return { child, result: new Promise<{ code: number | null; stdout: string }>(resolve => child.once('close', code => resolve({ code, stdout }))) };
+    let stdout = '', stderr = ''; child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    return { child, get stderr() { return stderr; }, result: new Promise<{ code: number | null; stdout: string }>(resolve => child.once('close', code => resolve({ code, stdout }))) };
   };
   const owner = launch(); let waiter: ReturnType<typeof launch> | undefined;
   const dir = join(fixture.home, 'extensions/resumext/tokenstore');
   try {
     await expect.poll(async () => { try { return await readFile(join(dir, 'owner'), 'utf8'); } catch { return ''; } }, { timeout: 10000 }).not.toBe('');
     const before = await fixture.db.rows("select revision,progress from brain.extension_install_progress where name='resumext'");
-    waiter = launch(); await new Promise(resolve => setTimeout(resolve, 300));
+    waiter = launch(); await expect.poll(() => waiter!.stderr, { timeout: 10000 }).toContain('기다립니다');
     const started = Date.now(); waiter.child.kill('SIGINT');
     const stopped = await waiter.result; expect(Date.now() - started).toBeLessThan(2000);
     expect(stopped.code).toBe(1); expect(JSON.parse(stopped.stdout).error.code).toBe('EXTENSION_INSTALL_CANCELLED');
@@ -343,10 +344,12 @@ it('실제 데몬 인증 일감 조회 중 취소하면 자식 종료를 확인�
     const pid = Number(await readFile(pidFile, 'utf8'));
     await blocker.connect(); await blocker.query('begin'); await blocker.query('lock table brain.work_items in access exclusive mode');
     const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
-    child = spawn(process.execPath, [bin, 'ext', 'install', 'resumext', '--json'], { env: fixture.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const commandUrl = new URL(fixture.db.appUrl); commandUrl.searchParams.set('application_name', 'cancel-auth-waiter');
+    child = spawn(process.execPath, [bin, 'ext', 'install', 'resumext', '--json'], { env: { ...fixture.env, BRAIN_DATABASE_URL: commandUrl.toString() }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; child.stdout!.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr!.resume();
     const ended = new Promise<number | null>(resolve => child!.once('close', code => resolve(code)));
-    await new Promise(resolve => setTimeout(resolve, 300)); child.kill('SIGINT'); await blocker.query('rollback');
+    await expect.poll(async () => (await fixture.db.rows("select 1 from pg_stat_activity where application_name='cancel-auth-waiter' and wait_event_type='Lock'")).length, { timeout: 10000 }).toBeGreaterThan(0);
+    child.kill('SIGINT'); await blocker.query('rollback');
     expect(await ended, stdout).toBe(1); expect(JSON.parse(stdout).error.code).toBe('EXTENSION_INSTALL_CANCELLED');
     expect(() => process.kill(pid, 0)).toThrow();
     const journal = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;

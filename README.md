@@ -1016,6 +1016,7 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 ```sh
 brain config get <key>               # 사용자 설정 읽기 (PostgreSQL)
 brain config set <key> <value>       # 사용자 설정 바꾸기 (예: timezone America/New_York)
+brain config set agent.codex_path <절대경로> # 이 컴퓨터의 Codex 실행 파일 지정
 brain guide schema [<ns> [<verb>]]   # 명령마다 메타 일곱 칸과 인자·옵션
 brain guide exit-codes               # 위의 세 표
 brain guide show                     # CLI 사용 규약 절(Markdown)
@@ -1339,3 +1340,9 @@ core 플러그인은 `brain-recall`, `brain-install`, `brain-login`, `brain-chan
 새 공개 CLI 명령은 배포 스킬 본문에 실제 명령으로 포함해야 합니다. `tooling/bootstrap/test/cli-skill-coverage.test.ts`가 CommandSpec 레지스트리와 Garmin manifest의 manual·조회 진입점을 대조합니다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 좁은 범위와 사유를 기록합니다. 단순 인벤토리 등록만으로 통과하지 않습니다.
 
 새 스킬의 격리 행동 사례는 `pnpm eval:skills prepare <brain-skill-name> <normal|unsupported|confirmation|secret> <새-임시-폴더>`로 준비하고 폴더의 prompt를 수행한 뒤 `pnpm eval:skills verify <폴더>`로 판정합니다. `brain-garmin-operations`는 Garmin 스킬입니다. 실제 Brain·메신저는 호출하지 않습니다. 판정기의 고정 호출 자기시험은 실제 에이전트 행동 평가와 구별합니다.
+
+### Codex 실행 경로
+
+설치·`brain setup run`·Garmin 확장 설치는 설정이 비어 있으면 로그인 셸의 PATH와 Homebrew·npm 전역 prefix·`~/.local/bin` 등의 후보를 조회하고, `--version` 응답을 확인한 절대 경로를 PostgreSQL global 설정 `agent.codex_path`에 저장합니다. Windows에서는 `where`와 `%APPDATA%\npm` 등의 후보를 조회하며 Windows 데몬 지원은 포함하지 않습니다. 기존 설정은 유지합니다.
+
+`brain config get agent.codex_path --json`으로 확인하고 `brain config set agent.codex_path <절대경로> --json`으로 바꿀 수 있습니다. 실행 가능한 파일이어야 하며 `--version`이 성공해야 합니다. `brain doctor run`은 미설정·실행 불가·버전 확인 실패를 경고합니다. 데몬은 이 설정을 읽어 비밀이 아닌 `BRAIN_CODEX_PATH`로 확장에 전달하므로 launchd PATH를 수동으로 고칠 필요가 없습니다. Garmin 분석에서 경로가 없거나 사용할 수 없으면 `ANALYSIS_AGENT_NOT_FOUND`와 설정 방법을 반환합니다. 설정 변경은 다음 일감 실행부터 적용됩니다.

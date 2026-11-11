@@ -1,3 +1,4 @@
+import { executableSettingValidator } from './runtime/executable.js';
 import { createDriveRuntime, type DriveRuntimeNetwork } from './runtime/drive-runtime.js';
 import { validateSchema } from './runtime/json-schema.js';
 import { readFile } from 'node:fs/promises';
@@ -648,7 +649,7 @@ async function execute(
         }
       }
       const driveRuntime=await createDriveRuntime({home,store:opened.store,clock,idGen,schemaVersions:expected,network:wiring.driveNetwork});
-      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected, settingDefinitions: definitions, onSettingChanged:driveRuntime?.onSettingChanged }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
+      return finish(rendering, await spec.runSettings({ brain: createSettingsBrain({ store: opened.store, clock, schemaVersions: expected, settingDefinitions: definitions, validateExecutablePath: executableSettingValidator(env), onSettingChanged:driveRuntime?.onSettingChanged }), config: config.config, clock, options, args, stdin, recordHookArrival }), warningCodes, warningLines);
     } finally { await store.close(); }
   }
 

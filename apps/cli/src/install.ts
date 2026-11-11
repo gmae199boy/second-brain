@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { detectCodexPath, executableSettingValidator } from './runtime/executable.js';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { probeOrbStack } from './runtime/orbstack.js';
 import { brainDependencies } from './assembly.js';
@@ -161,6 +162,11 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
   };
   return {
     orbstack: env => probeOrbStack({ env, runner: options.runner }),
+    detectCodex: async (home, env) => {
+      const config = await readConfig(home);
+      const opened = await openBrainStore({ home, env, config, path: 'command' });
+      try { return await detectCodexPath(opened.store, env); } finally { await opened.store.close(); }
+    },
     postgresDoctor: (home, env) => withBrain(home, env, brain => brain.doctor.run()),
     importTranscripts: (home, env) => withBrain(home, env, brain => brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })),
     settings: {
@@ -298,6 +304,6 @@ async function withSettings(home: string, urlEnv: string, env: NodeJS.ProcessEnv
   run: (brain: import('second_brain').SettingsBrain) => Promise<import('second_brain').SettingResult>): Promise<import('second_brain').SettingResult> {
   const databaseUrl = await resolveStoreUrl(home, urlEnv, env).catch(() => undefined);
   const store = postgresStore({ databaseUrl: databaseUrl ?? 'postgresql://invalid@127.0.0.1:1/unavailable', path: 'command' });
-  try { return await run(createSettingsBrain({ store, clock: { now: () => new Date() }, schemaVersions: { core: CORE_SCHEMA_VERSION } })); }
+  try { return await run(createSettingsBrain({ store, validateExecutablePath: executableSettingValidator(env), clock: { now: () => new Date() }, schemaVersions: { core: CORE_SCHEMA_VERSION } })); }
   finally { await store.close(); }
 }

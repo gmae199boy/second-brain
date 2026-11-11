@@ -95,6 +95,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     await writeFile(join(tokenstore,'block.json'),JSON.stringify({schema_version:1,local_date:day,reason:'rate_limited'}),{mode:0o600});
     const bin=join(home,'fake-bin'), control=join(ext,'report-fixture'); await mkdir(bin,{recursive:true}); await mkdir(control,{recursive:true});
     await copyFile(join(repo,'extensions/garmin/tests/report-fixture/codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
+    await store.setSetting({userId:null,key:'agent.codex_path',value:join(bin,'codex'),updatedAt:clock.now()});
     const profile=join(ext,'reports/accounts',self,account); await mkdir(profile,{recursive:true}); await writeFile(join(profile,'profile.md'),'synthetic profile');
     const deps={store,clock,idGen:ids,cron:cronCalculator,readTimeZone:async()=>({ok:true as const,value:'Asia/Seoul'})};
     expect(await tickSchedules(deps)).toMatchObject({ok:true, enqueued:2});

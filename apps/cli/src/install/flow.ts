@@ -64,6 +64,7 @@ export type InstallExitCode = 0 | 1 | 2 | 3;
  * ran the moment a sentence is reworded.
  */
 export interface InstallReport {
+  analysis_agent?: string;
   postgres: PostgresInstallReport;
   timezone: string;
   /** The configuration folder this install belongs to. */
@@ -236,6 +237,7 @@ export interface InstallDeps {
   config: InstallConfigIo;
   legacyFileExists(path: string): Promise<boolean>;
   orbstack?: (env: NodeJS.ProcessEnv) => Promise<OrbStackResult>;
+  detectCodex?: (home: string, env: NodeJS.ProcessEnv) => Promise<string>;
   postgresDoctor?: (home: string, env: NodeJS.ProcessEnv) => Promise<DoctorReport>;
   importTranscripts?: (home: string, env: NodeJS.ProcessEnv) => Promise<import('second_brain').BrainDrainReport>;
   postgres?: (home: string, urlEnv: string, env: NodeJS.ProcessEnv) => Promise<PostgresInstallResult>;
@@ -457,6 +459,8 @@ export async function runInstall(
   // value, and the one the codec tightens. `config.toml` holds no secret.
   deps.log(`${configFilePath(home)}과 ${envFilePath(home)}를 썼습니다 (.env는 mode 0600)`);
 
+  const analysisAgent = deps.detectCodex ? await deps.detectCodex(home, env) : undefined;
+  if (analysisAgent) deps.log(analysisAgent);
   postgres.import = null;
   try {
     if (deps.importTranscripts === undefined) throw new Error('transcript 가져오기 단계가 없습니다');
@@ -568,6 +572,7 @@ export async function runInstall(
     ok: true,
     warnings,
     report: {
+      ...(analysisAgent ? { analysis_agent: analysisAgent } : {}),
       home,
       config_path: configFilePath(home),
       timezone,

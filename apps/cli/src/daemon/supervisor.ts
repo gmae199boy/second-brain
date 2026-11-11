@@ -1,3 +1,4 @@
+import { codexRuntimeEnvironment, executableEnvironment } from '../runtime/executable.js';
 import { validateSchema } from '../runtime/json-schema.js';
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, rename, rm, readdir, realpath, lstat } from 'node:fs/promises';
@@ -62,6 +63,9 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             async prepare(item, token, userId) {
               const self = userId === undefined ? await resolveSelfUser(opened.store) : { ok: true as const, userId };
               if (!self.ok) return { ok: false, code: self.code };
+              // core role로 전역 경로를 읽고 확장 snapshot의 namespace와 분리한다.
+              const agent = await codexRuntimeEnvironment(opened.store, options.env);
+              if (!agent.ok) return { ok: false, code: agent.code };
               const read = await readScopedSettings(opened.store, self.userId, declarations);
               if (!read.ok) return { ok: false, code: read.code };
               let secrets: Record<string, string> = {};
@@ -79,7 +83,7 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const readiness = { version: 1, core: versions.ok ? versions.versions['core']?.version ?? null : null, expected_core: opened.expected.core ?? null, extension: versions.ok ? versions.versions[manifest.name]?.version ?? null : null, migrations: migrationVersions, applied_migrations: applied?.ok ? applied.versions : null, manifest_version: manifest.version, abi: manifest.abi };
               return { ok: true, spec: { command: work.runtime === 'python' ? join(directory, '.venv', 'bin', 'python') : process.execPath, args: [join(directory, work.entry)], env: {
-                ...extensionRuntimeEnvironment(options.env), [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
+                ...extensionRuntimeEnvironment(executableEnvironment(options.env)), ...agent.env, [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: extensionUrl, [PROCESS_ABI_ENV.workId]: item.id,
                 [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,
                 [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
                 ...scheduleEnvironment(item.scheduledOccurrences), BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: await realpath(directory), BRAIN_SECRET_SCANNER_NODE: process.execPath, BRAIN_SECRET_SCANNER_SCRIPT: fileURLToPath(new URL('../../dist/workers/secret-scan.js', import.meta.url)), BRAIN_EXTENSION_READINESS: JSON.stringify(readiness),

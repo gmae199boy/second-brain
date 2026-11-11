@@ -1,3 +1,4 @@
+import { codexPathCheck, systemExecutablePort } from './runtime/executable.js';
 import { runtimeDocumentExtractors } from './runtime/document-extractors.js';
 import { cronCalculator } from './runtime/cron.js';
 import { importStaging } from './runtime/import-staging.js';
@@ -92,7 +93,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     ...(assembly.driveFactory ? {drive:assembly.driveFactory(store)} : {}),
     ...(assembly.sourceSyncFactory ? {sourceSync:assembly.sourceSyncFactory(store)} : {}),
     cron: cronCalculator,
-    extensions: extensionRuntime({ home, env, config, clock }),
+    extensions: extensionRuntime({ home, env, config, clock, settingsStore: store as unknown as SettingsStore }),
     prerequisites: postgresPrerequisites({ home, env, runner: assembly.runner }),
     adapterProbeIds: assembly.adapterProbeIds,
     // Under `home` and not under a configured path: a write that could not
@@ -120,7 +121,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     // because it is the one name a person reading a report would recognise.
     machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
-    checks: runtimeChecks({ home, config, clock }),
+    checks: [...runtimeChecks({ home, config, clock }), codexPathCheck(store as unknown as SettingsStore, systemExecutablePort(env))],
     // Kinds beyond Core's own, which `createBrain` merges in. Empty for every
     // real invocation of this build (AD-21).
     workHandlers,

@@ -12,3 +12,5 @@ description: Brain 사용자 설정을 조회하거나 변경해 달라는 요�
 변경 전 키·비밀이 아닌 값·영향을 확인하고 사용자 변경 동의를 받는다. 일반 값은 `brain config set <key> <value> --json`으로 설정하고 같은 키를 재조회한다. 비밀 값은 사용자가 직접 터미널에서 `brain config set <key> -`의 stdin에 비밀 관리자 출력을 연결하도록 안내한다. 에이전트는 이 명령의 출력도 수집하지 않는다. 비밀은 인자·셸 기록·대화·로그에 넣거나 요청하지 않는다. 사용자가 완료했다고 하면 값 대신 완료 진술과 공개 상태만 보고한다.
 
 `ok:false`나 비정상 종료는 오류 코드를 보고하고 중단한다. 값이나 비밀이 담길 수 있는 오류 원문을 그대로 복사하지 않는다. 쓰기 응답만으로 적용을 추정하지 않는다.
+
+`agent.codex_path`는 비밀이 아닌 global 설정이며 이 컴퓨터의 Codex 실행 파일 절대 경로다. `brain config get agent.codex_path --json`으로 확인하고, 사용자가 지정한 실행 파일을 `brain config set agent.codex_path <절대경로> --json`으로 저장한다. CLI는 파일 실행 가능성과 `--version` 응답을 검증한다. 설치·setup·Garmin 확장 설치는 비어 있는 설정에만 자동 탐지한 경로를 저장한다. 잘못되거나 오래된 경로는 `brain doctor run --json` 경고를 확인하고 같은 설정 명령으로 고친다.

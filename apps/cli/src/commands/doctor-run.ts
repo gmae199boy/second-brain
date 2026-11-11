@@ -53,9 +53,9 @@ export const doctorRun: CommandSpec<DoctorRunData> = {
 
     // A failing check that carries one of the shared codes is also a warning:
     // the command ran, and the result is degraded (Conventions, NFR-2).
-    const warnings = checks.flatMap((check): WarningCode[] =>
+    const warnings = [...new Set(checks.flatMap((check): WarningCode[] =>
       check.code !== undefined && isWarningCode(check.code) ? [check.code] : [],
-    );
+    ))];
 
     return {
       ok: true,

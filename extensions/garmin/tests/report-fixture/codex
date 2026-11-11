@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 
 args = sys.argv[1:]
+if args == ["--version"]:
+    print("synthetic-codex 1.0")
+    sys.exit(0)
 extension = Path(os.environ['BRAIN_EXTENSION_HOME'])
 target = os.environ['BRAIN_TARGET_ID']
 work = os.environ['BRAIN_WORK_ID']

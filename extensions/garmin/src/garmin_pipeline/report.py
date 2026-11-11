@@ -50,8 +50,18 @@ STATUS_FAILED = "failed"
 DAILY_STATUSES = (STATUS_OK, STATUS_FAILED)
 """`schemas/daily_analysis_output.schema.json`의 `status` enum과 같다(테스트가 고정한다)."""
 
-CODEX_EXECUTABLE = "codex"
-"""codex 실행 파일(PATH로 찾는다). 테스트는 이것을 바꿔 실제 codex 실행을 막는다."""
+class AnalysisAgentNotFound(RuntimeError):
+    """설정된 분석 실행 파일을 사용할 수 없다."""
+
+
+def codex_executable(env=None) -> str:
+    actual = os.environ if env is None else env
+    value = actual.get("BRAIN_CODEX_PATH", "")
+    if not value or not Path(value).is_absolute() or not Path(value).is_file() or not os.access(value, os.X_OK):
+        raise AnalysisAgentNotFound(
+            "ANALYSIS_AGENT_NOT_FOUND: brain config set agent.codex_path <절대경로>로 실행 파일을 설정하세요"
+        )
+    return value
 CODEX_SKILL_PROMPT = "$garmin-daily-analysis"
 """프롬프트 첫 줄(skill 호출). 셸을 거치지 않으므로 그대로 넘어간다."""
 CODEX_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
@@ -172,7 +182,7 @@ def codex_argv(
 ) -> list[str]:
     """`codex exec` argv(셸 없음). `-i`가 값을 여러 개 받으므로 프롬프트를 그 앞에 둔다."""
     argv = [
-        CODEX_EXECUTABLE if executable is None else executable,
+        codex_executable() if executable is None else executable,
         "exec",
         "-C",
         str(body.runtime_root(cfg)),
@@ -339,7 +349,7 @@ def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
 class CodexWriter:
     """`codex exec`로 skill `garmin-daily-analysis`를 실행해 하루 분석을 쓰는 작성기(FR34·AD-16).
 
-    `executable`은 기본 `CODEX_EXECUTABLE`(쓸 때 읽는다), `timeout_seconds`는 기본
+    `executable`은 기본 `BRAIN_CODEX_PATH`(쓸 때 읽는다), `timeout_seconds`는 기본
     `report_codex_timeout_minutes * 60`이다.
     """
 
@@ -382,7 +392,7 @@ class CodexWriter:
             if self.timeout_seconds is None
             else self.timeout_seconds
         )
-        executable = CODEX_EXECUTABLE if self.executable is None else self.executable
+        executable = codex_executable() if self.executable is None else self.executable
         images = codex_images(inputs) if intake else []
         try:
             cfg.data_dir.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)

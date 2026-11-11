@@ -66,6 +66,8 @@ def run(env=None, *, writer=None):
     from garmin_pipeline import report
     actual = os.environ if env is None else env
     account, cfg = envelope(actual)
+    if writer is None:
+        report.codex_executable(actual)
     try:
         day = scheduled_date(actual, cfg.timezone)
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
@@ -79,7 +81,7 @@ def run(env=None, *, writer=None):
             import body_runtime
             def body_handler(action, **kwargs):
                 return body_runtime.execute(actual, action, **kwargs)
-            writer = report.CodexWriter(body_handler=body_handler)
+            writer = report.CodexWriter(executable=report.codex_executable(actual), body_handler=body_handler)
         import report_publish
         try:
             return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate, **({'today': day} if day is not None else {})))
