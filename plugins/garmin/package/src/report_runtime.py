@@ -85,14 +85,7 @@ def run(env=None, *, writer=None):
             def body_handler(action, **kwargs):
                 return body_runtime.execute(actual, action, **kwargs)
             writer = report.CodexWriter(executable=report.codex_executable(actual), body_handler=body_handler)
-        import report_publish
-        try:
-            return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate, **({'today': day} if day is not None else {})))
-        except (report.SupervisedReportFailed, report_publish.FilesFailed, OSError):
-            import report_channel
-            from garmin_pipeline import dates
-            report_channel.failure(cfg, day if day is not None else dates.today(cfg), actual)
-            raise
+        return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate, **({'today': day} if day is not None else {})))
 
 
 def send_saved(env):
@@ -125,7 +118,7 @@ def send_saved(env):
         except report_publish.RenderUnavailable:
             # 결정적 렌더링을 사용할 수 없을 때만 문구 전용으로 명시한다.
             document, rows, source, reason = None, [], 'unavailable', 'artifact_render_unavailable'
-        request = report_channel.success(cfg, day, revisions, document, env, regenerate=True,
+        event = report_channel.success(cfg, day, revisions, document, env,
                                          attachment_rows=rows, missing_reason=reason)
-    return json.dumps({'status': 'queued', 'request_id': str(request),
+    return json.dumps({'status': 'recorded', 'event_id': str(event),
                        'attachments': source, 'attachment_reason': reason})

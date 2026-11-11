@@ -1,4 +1,4 @@
-"""수동 기간 분석의 입력·실패·재시도·완료 후 발신 계약."""
+"""수동 기간 분석의 입력·실패·재시도·완료 후 결과 이벤트 계약."""
 import contextlib
 import json
 import sys
@@ -40,7 +40,7 @@ class PeriodInputTest(unittest.TestCase):
              patch.object(runtime.report_runtime,'install_skills'), \
              patch.object(runtime.report, 'codex_executable', return_value='/synthetic/configured-codex') as executable, \
              patch.object(runtime.report, 'CodexWriter') as writer, \
-             patch.object(runtime,'_analyze') as analyze, patch.object(runtime,'_send') as send:
+             patch.object(runtime,'_analyze') as analyze, patch.object(runtime,'_emit') as send:
             result=json.loads(runtime.run(env))
             self.assertEqual(result['revision'],2)
             analyze.assert_not_called(); send.assert_called_once_with(unittest.mock.ANY,saved,env)
@@ -60,23 +60,36 @@ class PeriodInputTest(unittest.TestCase):
         from uuid import UUID
         import report_publish
         conn = MagicMock(); conn.user_id = UUID(int=1); conn.connection_id = UUID(int=2)
+        events = {}
+        published = []
         def execute(sql, args):
             cursor = MagicMock()
             if 'select report_md' in sql: cursor.fetchone.return_value = ('full period report', 1767225600000)
             elif 'select summary' in sql: cursor.fetchone.return_value = ('summary', [], [], None)
+            elif 'extension_event_emit' in sql:
+                self.assertTrue(published)
+                cursor.fetchone.return_value = (events.setdefault((args[2], args[3]), UUID(int=100 + len(events))),)
             return cursor
         conn.execute.side_effect = execute
         saved = ('2026-01-01', '2026-01-31', 2, 'summary')
         with patch.object(runtime.store, 'write_session', return_value=contextlib.nullcontext(conn)), \
              patch.object(runtime.store, 'transaction', side_effect=lambda c: contextlib.nullcontext()), \
              patch.object(runtime.report, '_assert_attempt_current'), \
-             patch.object(report_publish, 'publish_send_copy', return_value=UUID(int=10)) as publish:
-            runtime._send(None, saved, report_env('garmin.period_analysis'))
-            first = next(call.args[1] for call in conn.execute.call_args_list if 'extension_channel_send' in call.args[0])
+             patch.object(report_publish, 'publish_send_copy', side_effect=lambda *a: published.append('done') or UUID(int=10)) as publish:
+            first_id = runtime._emit(None, saved, report_env('garmin.period_analysis'))
+            first = next(call.args[1] for call in conn.execute.call_args_list if 'extension_event_emit' in call.args[0])
             conn.execute.reset_mock()
-            runtime._send(None, saved, report_env('garmin.period_analysis'))
-            second = next(call.args[1] for call in conn.execute.call_args_list if 'extension_channel_send' in call.args[0])
+            runtime._emit(None, saved, report_env('garmin.period_analysis'))
+            second = next(call.args[1] for call in conn.execute.call_args_list if 'extension_event_emit' in call.args[0])
+            self.assertEqual(len(events), 1)
+            self.assertEqual(first_id, next(iter(events.values())))
+            with patch.object(runtime.report_message, 'FORMAT_VERSION', 'report-v2'):
+                runtime._emit(None, saved, report_env('garmin.period_analysis'))
+            runtime._emit(None, (*saved[:2], 3, saved[3]), report_env('garmin.period_analysis'))
+            self.assertEqual(len(events), 3)
         self.assertEqual(first, second)
-        self.assertEqual(first[2], 'garmin.period_report')
+        self.assertEqual(first[2], 'garmin.period_report.completed')
+        self.assertEqual(first[4:6], ('2026-01-31', '2'))
+        self.assertEqual(len(first), 9)
         self.assertEqual(first[7:9], (UUID(int=10), '[]'))
         self.assertEqual(publish.call_args.args[3], b'full period report')

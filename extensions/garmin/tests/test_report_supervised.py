@@ -51,7 +51,7 @@ class SupervisedReportTest(unittest.TestCase):
         self.stack.enter_context(patch.object(report, '_work_revisions', side_effect=lambda cfg, day, regenerate: dict(self.work_rows) if regenerate else {k: len(v) for k, v in self.rows.items()}))
         self.stack.enter_context(patch.object(report, '_read_work_revisions', side_effect=lambda cfg, day: {k: len(v) for k, v in self.rows.items()}))
         self.stack.enter_context(patch('report_publish.publish_and_wait'))
-        self.stack.enter_context(patch('report_channel.success'))
+        self.event = self.stack.enter_context(patch('report_channel.success'))
         self.stack.enter_context(patch.object(report.body, 'pending', side_effect=lambda cfg: list(self.pending)))
         self.stack.enter_context(patch.object(report.report_input, 'build', return_value=self.exported))
         self.stack.enter_context(patch.object(report.report_input, 'build_period', side_effect=lambda cfg, folder, day, scope: folder / scope))
@@ -74,6 +74,23 @@ class SupervisedReportTest(unittest.TestCase):
              patch.object(report.time, 'sleep', side_effect=AssertionError('수집 대기 금지')):
             self.assertEqual(self.run_report(), {'status': 'success', 'scopes': 4})
         self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+
+    def test_daily_and_regenerate_emit_once_only_after_saving_and_publication(self):
+        for regenerate in (False, True):
+            self.event.reset_mock()
+            def emitted(cfg, day, revisions, document):
+                self.assertEqual(day, DAY)
+                self.assertEqual(set(revisions), {'day', '7d', '30d', 'all'})
+                self.assertTrue(all(self.rows.get(scope) for scope in revisions))
+                self.assertEqual(document, 'published-document')
+            self.event.side_effect = emitted
+            with patch('report_publish.publish_and_wait', return_value='published-document') as publish:
+                self.run_report(regenerate)
+                publish.assert_called_once()
+                self.event.assert_called_once()
+        self.event.reset_mock(); self.fail = 'day'
+        with self.assertRaises(report.SupervisedReportFailed): self.run_report(True)
+        self.event.assert_not_called()
 
     def test_order_immediate_append_then_resume_missing_scopes(self):
         self.fail = '30d'
