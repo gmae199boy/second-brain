@@ -868,7 +868,7 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 
 `EXTENSION_LOGIN_REQUIRED`가 나오면 확장 인증을 완료한 뒤 같은 설치 명령을 다시 실행하세요. 인증은 기존 데몬의 감독 일감으로 실행되며 비밀번호나 MFA를 명령 출력에 담지 않습니다. `EXTENSION_SCHEDULER_UNAVAILABLE`은 데몬의 감독자가 준비되지 않았거나 예약 기능을 사용할 수 없다는 뜻입니다. 데몬을 준비하고 재실행하면 기존과 설정이 같은 예약을 재사용하며 다른 설정의 충돌은 오류로 남깁니다. SIGINT 또는 SIGTERM으로 취소한 뒤에도 같은 명령으로 재개할 수 있습니다.
 
-### 설치 스킬 행동 평가
+### brain-install 스킬 행동 평가
 
 `pnpm eval:install prepare normal /tmp/brain-install-normal`은 새 격리 디렉터리에 실제 스킬 사본, 평가 지시와 가짜 `brain`을 준비합니다. 사례는 `normal`, `already`, `failure`, `login`, `scheduler`, `unsupported`, `connection`, `secret`, `resume`, `cancel`입니다. 각 사례에 새 디렉터리를 사용하세요. 실제 에이전트에게 그 디렉터리의 `prompt.md`와 `SKILL.md`를 제공하고, 해당 디렉터리의 `bin`을 PATH 앞에 둔 격리 환경에서 실행합니다. 인증 사례에서는 지시된 사용자 응답을 로그인 안내 뒤 전달합니다. 대화 기록에는 실행 명령 줄을 `명령:`, 안내 줄을 `에이전트:`, 주어진 응답 원문을 `사용자 (fixture 응답):` 접두사로 시간순 기록합니다. 실제 홈, DB, 계정이나 외부 서비스는 사용하지 않습니다.
 
@@ -1276,11 +1276,11 @@ https://orbstack.dev 에서 설치하고, 꺼져 있으면 `orb start`로 켜세
 
 Python 확장 통합 시험은 uv, fixture의 `.python-version`에 지정된 로컬 Python, 격리 PostgreSQL과 잠긴 의존성을 필요로 합니다. `pnpm test:python`으로 별도 실행합니다. 시험은 임시 홈과 데이터베이스를 정리하며, 자동으로 시작한 시험 컨테이너도 종료합니다.
 
-채널 스킬의 격리 평가 사례는 `pnpm eval:channels prepare failed <새-임시-폴더>`로 준비한다. `failed`, `sent`, `legacy`, `unsupported` 각각에 대해 별도 에이전트가 폴더의 안내와 스킬을 읽고 fake CLI를 호출한 다음 `pnpm eval:channels verify <폴더>`로 기록을 판정한다. 판정기 시험이나 고정 호출 재생은 실제 에이전트 행동 평가와 구분한다.
+`brain-channels` 스킬의 격리 평가 사례는 `pnpm eval:channels prepare failed <새-임시-폴더>`로 준비한다. `failed`, `sent`, `legacy`, `unsupported` 각각에 대해 별도 에이전트가 폴더의 안내와 스킬을 읽고 fake CLI를 호출한 다음 `pnpm eval:channels verify <폴더>`로 기록을 판정한다. 판정기 시험이나 고정 호출 재생은 실제 에이전트 행동 평가와 구분한다.
 
-recall 건강 조회의 합성 사례는 `pnpm eval:recall prepare sum <새-임시-폴더>`로 준비한다. `sum`, `mean`, `all-null`, `zero`, `dst-yesterday`, `daily`, `workout`, `exercise`, `not-installed`, `disabled`, `command-error`마다 별도 에이전트가 폴더의 안내와 스킬을 따라 fake CLI를 호출한 뒤 `pnpm eval:recall verify <폴더>`로 판정한다. 고정 호출을 재생하는 판정기 자기시험은 실제 에이전트 행동 평가가 아니다. 확인을 마친 임시 폴더는 삭제한다.
+`brain-recall` 건강 조회의 합성 사례는 `pnpm eval:recall prepare sum <새-임시-폴더>`로 준비한다. `sum`, `mean`, `all-null`, `zero`, `dst-yesterday`, `daily`, `workout`, `exercise`, `not-installed`, `disabled`, `command-error`마다 별도 에이전트가 폴더의 안내와 스킬을 따라 fake CLI를 호출한 뒤 `pnpm eval:recall verify <폴더>`로 판정한다. 고정 호출을 재생하는 판정기 자기시험은 실제 에이전트 행동 평가가 아니다. 확인을 마친 임시 폴더는 삭제한다.
 
-recall 검색 행동 평가는 `pnpm eval:recall prepare search-two <새-임시-폴더>`로 준비하며, `search-two`, `search-rephrase`, `search-empty`, `search-disabled`, `search-orphan`, `search-failed`, `search-db-failed`, `search-not-installed`, `search-read-failed` 각각 별도 폴더에서 실제 에이전트가 스킬과 질문을 수행한 뒤 `pnpm eval:recall verify <폴더>`로 판정한다. 허용 질의·재질의 순서와 실제 출처 원문 호출 및 보고를 비교하며 판정기 자기시험은 실제 행동 평가와 구별한다. 평가 폴더에는 합성 자료만 사용하고 확인 뒤 자신이 만든 폴더를 삭제한다.
+`brain-recall` 검색 행동 평가는 `pnpm eval:recall prepare search-two <새-임시-폴더>`로 준비하며, `search-two`, `search-rephrase`, `search-empty`, `search-disabled`, `search-orphan`, `search-failed`, `search-db-failed`, `search-not-installed`, `search-read-failed` 각각 별도 폴더에서 실제 에이전트가 스킬과 질문을 수행한 뒤 `pnpm eval:recall verify <폴더>`로 판정한다. 허용 질의·재질의 순서와 실제 출처 원문 호출 및 보고를 비교하며 판정기 자기시험은 실제 행동 평가와 구별한다. 평가 폴더에는 합성 자료만 사용하고 확인 뒤 자신이 만든 폴더를 삭제한다.
 
 검색 실행계획 실측은 개발이 끝난 후 독립적인 합성 환경에서 `pnpm build`를 마친 다음 `node tooling/recall-eval/explain.mjs --out <새-출력-파일.json>`으로 수행한다. 도구는 공식 `postgres:18` 이미지로 임의 이름·loopback 임의 포트·tmpfs를 사용하는 전용 컨테이너와 시험 DB를 만들고 합성 자료만 넣는다. 결과는 이미지 digest·OS·DB locale/provider/encoding·pg_trgm 버전·다섯 expression index·100/10,000행과 선택도 및 필터별 `EXPLAIN (ANALYZE, BUFFERS)`를 담는다. 실행계획은 강제하지 않는다. `BRAIN_TEST_PG_RESOURCE_LOG=<전용-로그>`를 지정해 생성 및 삭제된 컨테이너 ID를 보존하고 출력의 cleanup 필드와 Docker inspect로 해당 ID 부재를 확인한다. 예외로 자원 삭제에 실패하면 로그의 정확한 자기 소유 ID만 확인해 정리하며 다른 컨테이너·볼륨·운영 DB는 건드리지 않는다. 생성 결과·종료 코드와 실제 출력은 실행자가 계획에 보존한다.
 
@@ -1334,8 +1334,8 @@ brain channels send-pending --topic garmin.report --id <request-id>
 
 ### 에이전트용 CLI 스킬과 커버리지
 
-core 플러그인은 `recall`, `install`, `login` 외에 `channels`, `config`, `schedules`, `status`, `ext`, `sources`, `files`, `messages`, `sessions`, `setup`, `guide` 스킬을 제공합니다. Garmin 플러그인은 `install`과 수집·이관·리포트·조회용 `operations`를 제공합니다. package 내부 분석 스킬 3개는 감독 실행용이며 공개 CLI 안내와 구분합니다. 각 기능 스킬은 먼저 `brain guide schema <ns> --json`으로 현재 지원을 확인하고 미지원이면 중단합니다.
+core 플러그인은 `brain-recall`, `brain-install`, `brain-login`, `brain-channels`, `brain-config`, `brain-schedules`, `brain-status`, `brain-ext`, `brain-sources`, `brain-files`, `brain-messages`, `brain-sessions`, `brain-setup`, `brain-guide` 스킬을 제공합니다. Garmin 플러그인은 `brain-garmin-install`과 수집·이관·리포트·조회용 `brain-garmin-operations`를 제공합니다. plugin namespace가 없는 Codex 같은 하네스에서도 다른 일반 스킬 이름과 충돌하지 않도록 폴더명과 name에 접두사를 붙입니다. package 내부 분석 스킬 3개는 감독 실행용이며 이름을 유지합니다. 각 기능 스킬은 먼저 `brain guide schema <ns> --json`으로 현재 지원을 확인하고 미지원이면 중단합니다. Codex에서 배포 스킬 전부를 연결하는 절차는 [CONNECTION.md](CONNECTION.md)를 따릅니다.
 
 새 공개 CLI 명령은 배포 스킬 본문에 실제 명령으로 포함해야 합니다. `tooling/bootstrap/test/cli-skill-coverage.test.ts`가 CommandSpec 레지스트리와 Garmin manifest의 manual·조회 진입점을 대조합니다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 좁은 범위와 사유를 기록합니다. 단순 인벤토리 등록만으로 통과하지 않습니다.
 
-새 스킬의 격리 행동 사례는 `pnpm eval:skills prepare <skill> <normal|unsupported|confirmation|secret> <새-임시-폴더>`로 준비하고 폴더의 prompt를 수행한 뒤 `pnpm eval:skills verify <폴더>`로 판정합니다. `operations`는 Garmin 스킬입니다. 실제 Brain·메신저는 호출하지 않습니다. 판정기의 고정 호출 자기시험은 실제 에이전트 행동 평가와 구별합니다.
+새 스킬의 격리 행동 사례는 `pnpm eval:skills prepare <brain-skill-name> <normal|unsupported|confirmation|secret> <새-임시-폴더>`로 준비하고 폴더의 prompt를 수행한 뒤 `pnpm eval:skills verify <폴더>`로 판정합니다. `brain-garmin-operations`는 Garmin 스킬입니다. 실제 Brain·메신저는 호출하지 않습니다. 판정기의 고정 호출 자기시험은 실제 에이전트 행동 평가와 구별합니다.

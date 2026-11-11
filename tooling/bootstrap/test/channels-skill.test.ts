@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { commands } from '../../../apps/cli/src/commands/index.js';
 import { JSON_FLAG } from '../../../apps/cli/src/envelope.js';
-const skill = readFileSync(fileURLToPath(new URL('../../../plugin/skills/channels/SKILL.md', import.meta.url)), 'utf8');
+const skill = readFileSync(fileURLToPath(new URL('../../../plugin/skills/brain-channels/SKILL.md', import.meta.url)), 'utf8');
 it('스킬 명령과 인자는 등록된 CommandSpec에 존재한다', () => {
   const calls = [...skill.matchAll(/`(brain [^`]+)`/g)].map(m => m[1]!.split(/\s+/));
   expect(new Set(calls.map(c => c.slice(1, 3).join(' ')))).toEqual(new Set(['guide schema', 'messengers list', 'messengers add', 'channels list', 'channels add', 'channels route', 'channels send', 'channels send-pending', 'channels status', 'channels resend']));

@@ -37,3 +37,5 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 ## 공개 CLI와 스킬
 
 - 새 공개 CLI 명령은 배포 스킬 본문에 포함하고 커버리지 시험을 갱신한다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 사유를 기록한다.
+
+- 배포 스킬의 폴더명과 frontmatter name은 core `brain-*`, Garmin `brain-garmin-*`를 사용한다. package 내부 감독 분석 스킬 이름은 유지한다. Codex 연결은 `CONNECTION.md`의 공식 설치본 전체 symlink 절차를 따른다.

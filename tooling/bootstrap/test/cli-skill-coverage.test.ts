@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { commands } from '../../../apps/cli/src/commands/index.js';
@@ -32,7 +32,7 @@ it('모든 공개 CommandSpec은 배포 스킬 본문 또는 사유가 있는 �
   }
   // A new command, a removed skill and a prefix collision must fail the gate.
   expect(uncovered([...names, 'future newly-added'], core, internal)).toContain('future newly-added');
-  expect(uncovered(['config set'], core.filter(path => !path.includes('/config/')), [])).toEqual(['config set']);
+  expect(uncovered(['config set'], core.filter(path => !path.includes('/brain-config/')), [])).toEqual(['config set']);
   expect(mentions('`brain channels send-pending --json`', 'channels send')).toBe(false);
 });
 
@@ -50,7 +50,7 @@ it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin �
 it('신규·확장 스킬은 지원 확인을 먼저 하고 예시의 명령·옵션은 실제 schema에 있다', () => {
   const changed = ['channels', 'config', 'schedules', 'status', 'ext', 'sources', 'files', 'messages', 'sessions', 'setup', 'guide'];
   for (const name of changed) {
-    const text = body(`plugin/skills/${name}/SKILL.md`);
+    const text = body(`plugin/skills/brain-${name}/SKILL.md`);
     expect(text).toMatch(/먼저[^\n]*`brain guide schema/);
     expect(text).toContain('미구현');
     for (const match of text.matchAll(/`brain ([^`]+)`/g)) {
@@ -61,4 +61,16 @@ it('신규·확장 스킬은 지원 확인을 먼저 하고 예시의 명령·�
       for (const flag of args.filter(arg => arg.startsWith('--'))) expect(flags, `${name}: ${flag}`).toContain(flag);
     }
   }
+});
+
+it('배포 스킬의 폴더명과 name은 하네스 namespace 없이도 구별된다', () => {
+  for (const [paths, prefix] of [[core, 'brain-'], [garmin, 'brain-garmin-']] as const) {
+    for (const path of paths) {
+      const name = basename(dirname(path));
+      expect(name.startsWith(prefix), path).toBe(true);
+      expect(read(path).match(/^name: (.+)$/m)?.[1], path).toBe(name);
+    }
+  }
+  const deployedNames = [...core, ...garmin].map(path => basename(dirname(path)));
+  expect(new Set(deployedNames).size).toBe(deployedNames.length);
 });

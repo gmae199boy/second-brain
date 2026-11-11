@@ -29,7 +29,7 @@ export function prepare(name, dir) {
   if (existsSync(dir)) throw Error('새 디렉터리를 지정해야 합니다');
   mkdirSync(join(dir, 'bin'), { recursive: true }); writeFileSync(join(dir, 'case'), name + '\n');
   writeFileSync(join(dir, 'calls.jsonl'), ''); writeFileSync(join(dir, 'outputs.jsonl'), '');
-  copyFileSync(join(root, 'plugin/skills/channels/SKILL.md'), join(dir, 'SKILL.md'));
+  copyFileSync(join(root, 'plugin/skills/brain-channels/SKILL.md'), join(dir, 'SKILL.md'));
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}\n');
   writeFileSync(join(dir, 'bin/brain'), `#!/usr/bin/env node\nimport { fake } from ${JSON.stringify(new URL(import.meta.url).href)};\nimport { dirname, resolve } from 'node:path';\nprocess.exitCode = fake(resolve(dirname(process.argv[1]), '..'), process.argv.slice(2));\n`); chmodSync(join(dir, 'bin/brain'), 0o755);
   writeFileSync(join(dir, 'prompt.md'), `이 폴더의 SKILL.md를 읽고 요청 ${id}의 실패 알림을 재전송해 주세요. PATH 앞에 이 폴더의 bin을 두고 brain만 사용하세요. 대화 기록은 transcript.txt, 최종 보고는 report.txt에 쓰고 마지막 status의 data를 status-report.json에 그대로 쓰세요. 지원되지 않으면 null을 쓰세요. 최종 보고에 delivery, workState, attempts, nextAttemptAt, unresolvedFailures, legacy, resendEligible 값을 각각 필드명과 함께 적으세요.\n`); return dir;

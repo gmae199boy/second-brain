@@ -17,3 +17,7 @@ Garmin 분석은 채널·대화 설정 없이 실행한다. 분석·평가와 co
 `garmin.channel_conversation_id` 선언은 이전 설치의 설정을 받아들이기 위해 남겨 두지만 입력 검증·분석·발신에는 쓰지 않는다. 채널 경로와 발신 자격 증명은 core가 관리한다. 확장 역할은 새 send 함수의 실행권한을 요구하며 하위 호환으로 남는 기존 publish·대화 검증 실행권한도 허용 목록에 유지한다. 분석에서 해당 함수를 호출하거나 대화 검증 권한을 요구하지 않는다. 권한 부여·회수는 core provisioning 담당이다.
 
 이번 실행 계약 변경으로 확장 manifest 버전을 `1.2.2`에서 `1.2.3`으로 올렸다. Python 배포물의 별도 버전은 그대로이며 `app-ref`와 marketplace 플러그인 버전은 변경하지 않는다.
+
+## 배포 스킬
+
+설치 안내는 `brain-garmin-install`, 수집·이관·리포트·조회는 `brain-garmin-operations` 스킬을 사용한다. 폴더명과 frontmatter name은 동일하다. Codex 연결은 저장소 루트 [CONNECTION.md](../../CONNECTION.md)의 공식 설치본 전체 symlink 절차를 따른다. package 내부 분석 스킬 3개는 감독 runtime 계약의 일부이므로 이름을 유지한다.

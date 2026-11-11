@@ -65,7 +65,7 @@ export function prepare(name, dir) {
   writeFileSync(join(dir, 'calls.jsonl'), '');
   writeFileSync(join(dir, 'outputs.jsonl'), '');
   if (name === 'secret') writeFileSync(join(dir, 'private-fixture.txt'), canary + '\n', { mode: 0o600 });
-  copyFileSync(join(root, 'plugin/skills/install/SKILL.md'), join(dir, 'SKILL.md'));
+  copyFileSync(join(root, 'plugin/skills/brain-install/SKILL.md'), join(dir, 'SKILL.md'));
   // 경로를 셸 코드에 보간하지 않고 실행 파일 자체에서 상위 폴더를 찾는다.
   const wrapper = `#!/usr/bin/env node\nimport { fake } from ${JSON.stringify(new URL(import.meta.url).href)};\nimport { dirname, resolve } from 'node:path';\nprocess.exitCode = fake(resolve(dirname(process.argv[1]), '..'), process.argv.slice(2));\n`;
   writeFileSync(join(dir, 'bin/brain'), wrapper); chmodSync(join(dir, 'bin/brain'), 0o755);

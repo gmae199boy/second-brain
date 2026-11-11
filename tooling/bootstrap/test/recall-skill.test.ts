@@ -5,7 +5,7 @@ import { commands } from '../../../apps/cli/src/commands/index.js';
 import { JSON_FLAG } from '../../../apps/cli/src/envelope.js';
 
 const read = (path:string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
-const skill = read('../../../plugin/skills/recall/SKILL.md');
+const skill = read('../../../plugin/skills/brain-recall/SKILL.md');
 const manifest = JSON.parse(read('../../../extensions/garmin/manifest.json')) as {commands:{name:string; input_schema:{properties:Record<string, unknown>}}[]};
 
 it('recall 명령과 입력은 등록된 명세에 있고 필수 안내를 포함한다', () => {

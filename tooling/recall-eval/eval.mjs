@@ -51,7 +51,7 @@ export function prepare(name, dir) {
   mkdirSync(join(dir,'bin'),{recursive:true});
   writeFileSync(join(dir,'case'),name+'\n');
   for (const file of ['calls.jsonl','outputs.jsonl']) writeFileSync(join(dir,file),'');
-  copyFileSync(join(root,'plugin/skills/recall/SKILL.md'),join(dir,'SKILL.md'));
+  copyFileSync(join(root,'plugin/skills/brain-recall/SKILL.md'),join(dir,'SKILL.md'));
   writeFileSync(join(dir,'package.json'),'{"type":"module"}\n');
   writeFileSync(join(dir,'bin/brain'),`#!/usr/bin/env node\nimport { fake } from ${JSON.stringify(import.meta.url)};\nimport { dirname, resolve } from 'node:path';\nprocess.exitCode = fake(resolve(dirname(process.argv[1]), '..'), process.argv.slice(2));\n`); chmodSync(join(dir,'bin/brain'),0o755);
   if (searchCases.includes(name)) { writeFileSync(join(dir,'prompt.md'),searchPrompt(name)); return dir; }

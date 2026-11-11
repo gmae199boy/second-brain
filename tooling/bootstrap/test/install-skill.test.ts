@@ -6,8 +6,8 @@ import { commands } from '../../../apps/cli/src/commands/index.js';
 import { JSON_FLAG } from '../../../apps/cli/src/envelope.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const skill = readFileSync(join(root, 'plugin/skills/install/SKILL.md'), 'utf8');
-const loginSkill = readFileSync(join(root, 'plugin/skills/login/SKILL.md'), 'utf8');
+const skill = readFileSync(join(root, 'plugin/skills/brain-install/SKILL.md'), 'utf8');
+const loginSkill = readFileSync(join(root, 'plugin/skills/brain-login/SKILL.md'), 'utf8');
 
 function forbiddenInstructions(text: string): string[] {
   const patterns = [/(?:pip|npm|pnpm|brew)\s+(?:install|add)\b/i, /launchctl\s+(?:load|bootstrap)\b/i, /brain\s+schedules\s+add\b/i, /(?:비밀번호|토큰|MFA 코드).{0,20}(?:요청한다|수집한다|저장한다)/];
@@ -55,6 +55,6 @@ describe('확장 설치 스킬', () => {
     const marketplace = JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8')) as { plugins: { name: string; source: string }[] };
     const source = marketplace.plugins.find(plugin => plugin.name === 'second-brain')?.source;
     expect(source).toBe('./plugin');
-    expect(existsSync(resolve(root, source!, 'skills/install/SKILL.md'))).toBe(true);
+    expect(existsSync(resolve(root, source!, 'skills/brain-install/SKILL.md'))).toBe(true);
   });
 });
