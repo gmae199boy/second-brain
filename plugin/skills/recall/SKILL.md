@@ -5,6 +5,8 @@ description: 기억과 리포트를 검색해 출처 원문을 읽고 Garmin 건
 
 # 기억 검색과 원문
 
+텍스트 검색 요청은 먼저 `brain guide schema recall --json`으로 검색 명령·옵션을 확인한다. 세션·파일 원문을 읽을 때는 `brain guide schema sessions --json` 또는 `brain guide schema files --json`도 확인한다. 해당 명령이 없거나 확인이 실패하면 미구현 또는 확인 불가로 보고 중단한다. 건강 수치 요청은 아래 건강 절차의 지원 확인을 따른다.
+
 질문이 대화·도구 사용·리포트의 내용을 찾는 것이면 먼저 핵심 표현을 뽑아 검색한다. 검색어는 짧고 구체적으로 정하며 적중이 없으면 같은 뜻으로 표현을 바꿔 다시 검색한다. 질의는 근거를 찾기 위한 것이며 원문 없이 답을 지어내지 않는다.
 
 - 대화는 `brain recall chunks <query> --json`, 도구 메모는 `brain recall tools <query> --json`, 리포트는 `brain recall docs <query> --source <source> --json`을 사용한다. 특정 확장 출처를 아는 경우 `--source`에 그 이름을 지정한다. 확장 이름을 모르면 임의로 정하지 않는다.

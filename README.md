@@ -1288,7 +1288,7 @@ recall 검색 행동 평가는 `pnpm eval:recall prepare search-two <새-임시-
 
 ### Telegram 설정과 대화 등록
 
-Telegram은 DB 사용자 설정을 우선하며 기존 `.env`/환경 변수는 DB 값이 없을 때만 사용합니다.
+Telegram 자격 증명은 메신저별로 DB에 저장합니다. 메신저를 등록하고 그 안의 채널을 만든 뒤 topic 경로를 연결합니다.
 토큰을 셸 기록에 남기지 않도록 비밀 관리자 등의 출력을 stdin으로 연결합니다.
 
 ```sh
@@ -1300,9 +1300,8 @@ brain daemon stop
 brain daemon start
 ```
 
-`channels add telegram`은 등록만 하며 메시지를 보내지 않습니다. 재실행해도 같은 대화 ID를 반환합니다.
-`config get/set telegram.bot_token`은 텍스트·JSON 모두 설정 여부만 출력합니다. 빈 값은 미설정이며 기존 환경 설정이 있으면 fallback을 사용합니다.
-감독자는 시작할 때 Telegram 설정을 읽으므로 변경 후 daemon을 재시작합니다. Garmin 보고서는 `garmin.report` 경로를 사용합니다. 경로 없이 보관된 요청은 경로를 등록한 뒤 `brain channels send-pending --topic garmin.report`로 명시적으로 발신합니다.
+`channels add --messenger ... --chat ...`은 목적지 등록이며 메시지를 보내지 않습니다. 메신저 목록은 `brain messengers list --json`으로 확인합니다. 토큰은 전역 설정 대신 해당 메신저 등록·갱신의 stdin으로 전달합니다.
+감독자의 설정을 갱신하려면 daemon을 재시작합니다. Garmin 보고서는 `garmin.report` 경로를 사용합니다. 경로 없이 보관된 요청은 경로를 등록한 뒤 `brain channels send-pending --topic garmin.report`로 명시적으로 발신합니다.
 
 ### 메신저·채널과 topic 발신
 
@@ -1331,3 +1330,12 @@ brain channels send-pending --topic garmin.report --id <request-id>
 `channels list/status`는 메신저와 채널 ID, 발신 상태를 함께 표시합니다. 미경로·topic 예약의 대상은 경로 확정 전까지 미확정입니다. `doctor run`은 메신저 자격 증명 설정 수, 경로·예약·미경로 수를 비밀 없이 표시합니다. 기존 `telegram.*` DB 설정과 `BRAIN_TELEGRAM_*` 환경 설정은 기본 단일 메신저로 호환되며 `channels add telegram`도 유지합니다. 새 메신저의 자격 증명이 전역 설정에 섞이지 않습니다.
 
 확장은 대상이나 비밀 없이 `brain.extension_channel_send(work,attempt,topic,key,purpose,revision,summary,document,albums,send_at)`를 호출합니다. topic은 확장 이름 접두사를 가져야 합니다. `revision`은 nullable text이며 본문·첨부의 검증은 기존 `extension_channel_publish`와 같습니다. 같은 `(topic,key)`는 한 번만 접수합니다. 세부 결정은 [채널 발신 결정 기록](_bmad-output/personal-brain/channel-delivery-decision.md)을 참조하세요.
+
+
+### 에이전트용 CLI 스킬과 커버리지
+
+core 플러그인은 `recall`, `install`, `login` 외에 `channels`, `config`, `schedules`, `status`, `ext`, `sources`, `files`, `messages`, `sessions`, `setup`, `guide` 스킬을 제공합니다. Garmin 플러그인은 `install`과 수집·이관·리포트·조회용 `operations`를 제공합니다. package 내부 분석 스킬 3개는 감독 실행용이며 공개 CLI 안내와 구분합니다. 각 기능 스킬은 먼저 `brain guide schema <ns> --json`으로 현재 지원을 확인하고 미지원이면 중단합니다.
+
+새 공개 CLI 명령은 배포 스킬 본문에 실제 명령으로 포함해야 합니다. `tooling/bootstrap/test/cli-skill-coverage.test.ts`가 CommandSpec 레지스트리와 Garmin manifest의 manual·조회 진입점을 대조합니다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 좁은 범위와 사유를 기록합니다. 단순 인벤토리 등록만으로 통과하지 않습니다.
+
+새 스킬의 격리 행동 사례는 `pnpm eval:skills prepare <skill> <normal|unsupported|confirmation|secret> <새-임시-폴더>`로 준비하고 폴더의 prompt를 수행한 뒤 `pnpm eval:skills verify <폴더>`로 판정합니다. `operations`는 Garmin 스킬입니다. 실제 Brain·메신저는 호출하지 않습니다. 판정기의 고정 호출 자기시험은 실제 에이전트 행동 평가와 구별합니다.

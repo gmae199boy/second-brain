@@ -1,6 +1,8 @@
 // Python integration uses the daemon, its real store, extension runtime and
 // subprocesses; these paths have effects beyond Vitest's TS import graph.
 const rules = [
+  { prefix:'tooling/skills-eval/', reason:'offline CLI skill behavior subprocess fixtures' },
+  { prefix:'tooling/skill-coverage/', reason:'public CLI skill coverage policy inputs' },
   { prefix:'apps/cli/src/commands/messengers-', reason:'messenger credential CLI used by channel workers' },
   { prefix:'apps/cli/src/workers/channel-send.ts', reason:'channel adapter credential selection child process' },
   { prefix:'apps/cli/src/commands/channels-', reason:'core channel CLI and dispatch integration' },

@@ -119,7 +119,11 @@ it.each(['search-two','search-rephrase','search-empty','search-disabled'])('%s �
   const parent = mkdtempSync(join(tmpdir(),'recall-search-eval-')), dir = join(parent,'case');
   try {
     execFileSync(process.execPath,[script,'prepare',name,dir]);
-    const run = (args:string[]) => spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    const seen=new Set<string>();
+    const run = (args:string[]) => {
+      if (['recall','files','sessions'].includes(args[0]!) && !seen.has(args[0]!)) { spawnSync(join(dir,'bin/brain'),['guide','schema',args[0]!,'--json'],{encoding:'utf8'}); seen.add(args[0]!); }
+      return spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    };
     const query = (verb:string,value:string) => run(['recall',verb,value,'--source','garmin','--json']);
     if (name === 'search-rephrase') expect(query('docs','숙면').status).toBe(0);
     if (name === 'search-empty') {
@@ -177,7 +181,11 @@ it.each(['search-orphan','search-failed','search-db-failed','search-not-installe
   const parent=mkdtempSync(join(tmpdir(),'recall-exception-')), dir=join(parent,'case');
   try {
     execFileSync(process.execPath,[script,'prepare',name,dir]);
-    const run=(args:string[])=>spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    const seen=new Set<string>();
+    const run=(args:string[])=>{
+      if (['recall','files','sessions'].includes(args[0]!) && !seen.has(args[0]!)) { spawnSync(join(dir,'bin/brain'),['guide','schema',args[0]!,'--json'],{encoding:'utf8'}); seen.add(args[0]!); }
+      return spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+    };
     const params:Record<string,{verb:string;query:string}>={ 'search-orphan':{verb:'tools',query:'고아메모'}, 'search-failed':{verb:'docs',query:'실패검색'}, 'search-db-failed':{verb:'docs',query:'연결검색'}, 'search-not-installed':{verb:'docs',query:'미설치자료'}, 'search-read-failed':{verb:'docs',query:'원문실패'} };
     const item=params[name]!; const found=run(['recall',item.verb,item.query,'--source','garmin','--json']);
     const body=JSON.parse(found.stdout); let report:string;
@@ -241,4 +249,27 @@ it('EXPLAIN 정리 복합 오류의 원인과 cause를 가려 보존한다', asy
     { message:'컨테이너 삭제 실패 ~/docker' },
   ], cause:{ message:'상위 원인 [REDACTED-URL]' } });
   expect(JSON.stringify(record)).not.toMatch(/secret|token|\/Users\/example/);
+});
+
+
+it('recall 검색은 미지원 schema에서 중단하고 정상 검색의 선행 schema 누락을 거부한다', () => {
+  const parent=mkdtempSync(join(tmpdir(),'recall-schema-eval-'));
+  try {
+    for (const name of ['search-schema-unsupported','search-empty']) {
+      const dir=join(parent,name);
+      execFileSync(process.execPath,[script,'prepare',name,dir]);
+      const run=(args:string[])=>spawnSync(join(dir,'bin/brain'),args,{encoding:'utf8'});
+      run(['guide','schema','recall','--json']);
+      if (name==='search-empty') { run(['recall','docs','무지개','--json']); run(['recall','docs','오로라','--json']); }
+      writeFileSync(join(dir,'report.txt'),name==='search-empty'?'검색 결과가 없습니다.':'미구현이므로 중단합니다.');
+      writeFileSync(join(dir,'transcript.txt'),'합성 명령 기록');
+      const verify=()=>spawnSync(process.execPath,[script,'verify',dir],{encoding:'utf8'});
+      expect(verify().status).toBe(0);
+      for (const file of ['calls.jsonl','outputs.jsonl']) {
+        const path=join(dir,file),lines=readFileSync(path,'utf8').trim().split('\n');
+        writeFileSync(path,lines.slice(1).join('\n')+'\n');
+      }
+      expect(verify().status).toBe(1);
+    }
+  } finally { rmSync(parent,{recursive:true,force:true}); }
 });

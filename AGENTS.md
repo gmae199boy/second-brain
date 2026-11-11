@@ -33,3 +33,7 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 - 티켓 워커는 자신의 Dispatch 지시와 전용 체크포인트를 먼저 복원한다. 중앙 상태 파일을 수정하거나 main을 병합·푸시하지 않는다.
 - 런북·상태가 실행 준비 단계이면 티켓을 자동 시작하지 않는다. 실행 중이면 실제 상태와 대조한 다음 행동을 이어 간다. 컴팩션은 실행 승인이나 중단 상태를 바꾸지 않는다.
 - 이 자동화에는 기존 bmad-loop 런북·감독 스크립트·정책을 적용하지 않는다. 최신 사용자 지시와 새 런북을 따른다.
+
+## 공개 CLI와 스킬
+
+- 새 공개 CLI 명령은 배포 스킬 본문에 포함하고 커버리지 시험을 갱신한다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 사유를 기록한다.

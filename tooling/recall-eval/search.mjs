@@ -1,13 +1,15 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { commands } from '../../apps/cli/dist/commands/index.js';
 
-export const searchCases = ['search-two', 'search-rephrase', 'search-empty', 'search-disabled', 'search-orphan', 'search-failed', 'search-db-failed', 'search-not-installed', 'search-read-failed'];
+export const searchCases = ['search-schema-unsupported', 'search-two', 'search-rephrase', 'search-empty', 'search-disabled', 'search-orphan', 'search-failed', 'search-db-failed', 'search-not-installed', 'search-read-failed'];
 const time = '2026-01-01T00:00:00.000Z';
 const locator = '{"type":"text","start":0,"end":20}';
 const file = '11111111-1111-4111-8111-111111111111';
 const extraction = '22222222-2222-4222-8222-222222222222';
 const data = {
+  'search-schema-unsupported': { question:'리포트에서 수면을 찾아 주세요.', verb:'docs', queries:[], hit:null, schemaUnsupported:true },
   'search-two': { question:'대화에서 "수면"에 관해 무슨 결정을 했는지 출처 원문으로 확인해 주세요.', verb:'chunks', queries:['수면'], hit:'수면', id:'chunk-1', text:'수면 시간을 일정하게 유지하기로 했다.' },
   'search-rephrase': { question:'리포트에서 "숙면" 관련 기록을 찾아 주세요. 없으면 동의어 "수면"으로 바꿔 확인해 주세요.', verb:'docs', queries:['숙면','수면'], hit:'수면', id:file, text:'수면 리듬을 일정하게 유지했다.' },
   'search-empty': { question:'리포트에서 "무지개"를 찾고 없으면 "오로라"로 바꿔 확인해 주세요.', verb:'docs', queries:['무지개','오로라'], hit:null },
@@ -23,13 +25,14 @@ const envelope = (name, value, meta = {}) => ({ok:true,now:time,data:value,warni
 const error = (code='USAGE') => ({ok:false,now:time,warnings:[],error:{code,message:code==='USAGE'?'허용되지 않은 평가 명령':'합성 조회 실패',exit_code:code==='USAGE'?2:1}});
 const row = item => item.verb === 'tools' ? {kind:'conversation',session:'claude:synthetic',harness:'claude',started_at:time,workspace_id:null,project_id:null,worktree_id:null,tag_source:null,from_at:null,to_at:null,tool_note_id:item.id,message_id:null,tool:'Bash',body:item.text} : item.verb === 'chunks' ? {kind:'conversation',session:'claude:synthetic',harness:'claude',started_at:time,workspace_id:null,project_id:null,worktree_id:null,tag_source:null,from_at:time,to_at:time,chunk_id:item.id,body:item.text} : {kind:'document',file_id:file,display_name:'합성 리포트',chunk_locator:locator,extraction_id:extraction,report_date:'2026-01-01',source:'garmin',source_unreachable:false,body:item.text};
 function parse(args) {
-  const [ns,verb,...rest] = args; if (!['recall','files','sessions'].includes(ns)) return null;
+  const [ns,verb,...rest] = args; if (!['recall','files','sessions','guide'].includes(ns)) return null;
   const positional = [], opts = {}; for (let i=0;i<rest.length;i++) { const x=rest[i]; if (x.startsWith('--')) { if (Object.hasOwn(opts,x)) return null; if (x==='--json') opts[x]=true; else if (i+1 < rest.length && !rest[i+1].startsWith('--')) opts[x]=rest[++i]; else return null; } else positional.push(x); }
   return {ns,verb,positional,opts};
 }
 function response(name, args) {
   const item=data[name], parsed=parse(args); if (!parsed || parsed.positional.length !== 1 || parsed.opts['--json'] !== true) return error();
   const {ns,verb,positional:[arg],opts}=parsed;
+  if (ns==='guide' && verb==='schema' && ['recall','files','sessions'].includes(arg) && Object.keys(opts).length===1) return envelope(name,{commands:item.schemaUnsupported?[]:commands.filter(c=>c.ns===arg).map(c=>({ns:c.ns,verb:c.verb,required:c.required,arguments:c.arguments??[],options:c.options??[]}))});
   if (ns==='recall' && verb===item.verb && item.queries.includes(arg) && Object.keys(opts).every(k=>['--json','--source'].includes(k)) && (item.missing ? opts['--source']==='garmin' : !opts['--source'] || opts['--source']==='garmin')) {
     if (item.failure) return error(item.failure);
     const hit=arg===item.hit; return envelope(name,hit?[row(item)]:[],{count:hit?1:0,has_more:false,...(hit?{}:{hint:'일치하는 결과가 없습니다'})});
@@ -61,7 +64,17 @@ export function verifySearch(dir,name) {
   const item=data[name];
   if (!report.trim() || !transcript.trim()) errors.push('보고 또는 대화 기록이 없습니다');
   if (calls.length!==outputs.length || calls.some((call,i)=>!isDeepStrictEqual(outputs[i],response(name,call)) || (!outputs[i]?.ok && outputs[i]?.error?.code !== item.failure && outputs[i]?.error?.code !== item.readFailure))) errors.push('허용되지 않은 호출이나 출력 변조가 있습니다');
-  const parsed=calls.map(parse), searches=parsed.map((p,i)=>({p,i})).filter(({p})=>p?.ns==='recall' && p.verb===item.verb);
+  const parsed=calls.map(parse);
+  if (item.schemaUnsupported) {
+    if (calls.length!==1 || parsed[0]?.ns!=='guide' || parsed[0]?.positional[0]!=='recall' || !/미구현|지원하지|지원.*없/.test(report)) errors.push('미지원 schema에서 중단하지 않았습니다');
+    const result={ok:errors.length===0,errors}; writeFileSync(join(dir,'verdict.json'),JSON.stringify(result,null,2)+'\n'); return result;
+  }
+  for (let index=0;index<parsed.length;index++) {
+    const p=parsed[index]; if (!p || p.ns==='guide') continue;
+    const supported=parsed.some((prior,i)=>i<index && prior?.ns==='guide' && prior.verb==='schema' && prior.positional[0]===p.ns && outputs[i]?.data?.commands?.some(command=>command.ns===p.ns && command.verb===p.verb));
+    if (!supported) errors.push('검색 또는 원문 명령의 선행 schema 지원 확인이 없습니다');
+  }
+  const searches=parsed.map((p,i)=>({p,i})).filter(({p})=>p?.ns==='recall' && p.verb===item.verb);
   if (!isDeepStrictEqual(searches.map(({p})=>p.positional[0]),item.queries)) errors.push('검색어 또는 재질의 순서가 다릅니다');
   if (item.hit) {
     const hitIndex=searches.find(({p})=>p.positional[0]===item.hit)?.i ?? -1;
