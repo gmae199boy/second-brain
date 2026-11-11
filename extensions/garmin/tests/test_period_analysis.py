@@ -55,3 +55,28 @@ class PeriodInputTest(unittest.TestCase):
 
     def test_other_work_kind_is_rejected(self):
         with self.assertRaises(runtime.InvalidReportInput): runtime.run(report_env())
+
+    def test_period_send_publishes_saved_document_and_attaches_it_once(self):
+        from uuid import UUID
+        import report_publish
+        conn = MagicMock(); conn.user_id = UUID(int=1); conn.connection_id = UUID(int=2)
+        def execute(sql, args):
+            cursor = MagicMock()
+            if 'select report_md' in sql: cursor.fetchone.return_value = ('full period report', 1767225600000)
+            elif 'select summary' in sql: cursor.fetchone.return_value = ('summary', [], [], None)
+            return cursor
+        conn.execute.side_effect = execute
+        saved = ('2026-01-01', '2026-01-31', 2, 'summary')
+        with patch.object(runtime.store, 'write_session', return_value=contextlib.nullcontext(conn)), \
+             patch.object(runtime.store, 'transaction', side_effect=lambda c: contextlib.nullcontext()), \
+             patch.object(runtime.report, '_assert_attempt_current'), \
+             patch.object(report_publish, 'publish_send_copy', return_value=UUID(int=10)) as publish:
+            runtime._send(None, saved, report_env('garmin.period_analysis'))
+            first = next(call.args[1] for call in conn.execute.call_args_list if 'extension_channel_send' in call.args[0])
+            conn.execute.reset_mock()
+            runtime._send(None, saved, report_env('garmin.period_analysis'))
+            second = next(call.args[1] for call in conn.execute.call_args_list if 'extension_channel_send' in call.args[0])
+        self.assertEqual(first, second)
+        self.assertEqual(first[2], 'garmin.period_report')
+        self.assertEqual(first[7:9], (UUID(int=10), '[]'))
+        self.assertEqual(publish.call_args.args[3], b'full period report')

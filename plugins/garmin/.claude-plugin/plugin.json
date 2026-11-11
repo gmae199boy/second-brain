@@ -1,5 +1,5 @@
 {
   "name": "second-brain-garmin",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "description": "설치된 Personal Brain에 Garmin 확장을 추가합니다. 먼저 core를 설치해야 합니다."
 }

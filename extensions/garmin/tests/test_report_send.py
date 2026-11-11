@@ -21,7 +21,7 @@ class ReportSendTest(unittest.TestCase):
         env['BRAIN_SETTINGS_SNAPSHOT'] = json.dumps(snapshot)
         return env
 
-    def test_default_and_explicit_date_never_analyze_or_publish(self):
+    def test_default_and_explicit_date_reuse_attachments_without_analysis(self):
         for target, expected in [('default', date(2026, 11, 11)), ('2026-01-02', date(2026, 1, 2))]:
             with self.subTest(target=target), contextlib.ExitStack() as stack:
                 stack.enter_context(patch.object(store, 'supervised_account', return_value=contextlib.nullcontext()))
@@ -34,15 +34,17 @@ class ReportSendTest(unittest.TestCase):
                 send = stack.enter_context(patch('report_channel.success', return_value='synthetic-request'))
                 analyze = stack.enter_context(patch.object(report, 'run_supervised', side_effect=AssertionError('analysis forbidden')))
                 writer = stack.enter_context(patch.object(report, 'CodexWriter', side_effect=AssertionError('writer forbidden')))
-                publish = stack.enter_context(patch('report_publish.publish_and_wait', side_effect=AssertionError('publication forbidden')))
+                publish = stack.enter_context(patch('report_publish.saved_send_attachments', return_value=('document', [('01.png', 'graph', 'photo')], 'published')))
                 skills = stack.enter_context(patch.object(runtime, 'install_skills'))
                 env = self.env(target)
                 result = json.loads(runtime.run(env))
-                self.assertEqual(result, {'status': 'queued', 'request_id': 'synthetic-request'})
+                self.assertEqual(result, {'status': 'queued', 'request_id': 'synthetic-request', 'attachments': 'published', 'attachment_reason': None})
                 self.assertEqual(str(validation.call_args.args[1].connection_id), CONNECTION)
                 self.assertEqual(select.call_args.args[1:], (expected, False))
-                self.assertEqual(send.call_args.args[1:], (expected, revisions, None, env))
-                analyze.assert_not_called(); writer.assert_not_called(); publish.assert_not_called(); skills.assert_not_called()
+                self.assertEqual(send.call_args.args[1:], (expected, revisions, 'document', env))
+                self.assertEqual(send.call_args.kwargs['attachment_rows'], [('01.png', 'graph', 'photo')])
+                publish.assert_called_once_with(unittest.mock.ANY, expected, revisions, env)
+                analyze.assert_not_called(); writer.assert_not_called(); skills.assert_not_called()
 
     def test_bad_date_or_connection_never_opens_store(self):
         for value in ('2026-02-30', '20260102', CONNECTION, '2026-1-2'):
@@ -64,3 +66,24 @@ class ReportSendTest(unittest.TestCase):
             send = stack.enter_context(patch('report_channel.success'))
             with self.assertRaises(runtime.InvalidReportInput): runtime.run(self.env())
             send.assert_not_called()
+
+    def test_render_unavailable_is_explicit_but_pending_is_retryable(self):
+        from garmin_pipeline import charts
+        import report_publish
+        for error, fallback in ((report_publish.RenderUnavailable(), True),
+                                (OSError('staging failed'), False),
+                                (report_publish.FilesPending(), False), (report_publish.FilesFailed(), False)):
+            with self.subTest(error=type(error).__name__), contextlib.ExitStack() as stack:
+                for name in ('supervised_account', 'report_session', 'write_session'):
+                    stack.enter_context(patch.object(store, name, return_value=contextlib.nullcontext(object())))
+                stack.enter_context(patch.object(runtime, 'validate_account'))
+                stack.enter_context(patch.object(report, '_work_revisions', return_value={'day':1,'7d':1,'30d':1,'all':1}))
+                stack.enter_context(patch('report_publish.saved_send_attachments', side_effect=error))
+                send = stack.enter_context(patch('report_channel.success', return_value='request'))
+                if fallback:
+                    result = json.loads(runtime.run(self.env('2026-01-02')))
+                    self.assertEqual(result['attachment_reason'], 'artifact_render_unavailable')
+                    self.assertEqual(send.call_args.kwargs['missing_reason'], result['attachment_reason'])
+                else:
+                    with self.assertRaises(type(error)): runtime.run(self.env('2026-01-02'))
+                    send.assert_not_called()

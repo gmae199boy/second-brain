@@ -114,9 +114,18 @@ def send_saved(env):
     with store.supervised_account(account), store.report_session(cfg, blocking=False):
         with store.write_session(cfg) as conn:
             validate_account(conn, account, cfg)
-        # 각 attempt는 첫 선택 revision을 유지한다. 파일 생성과 분석기는 호출하지 않는다.
+        # 각 attempt는 첫 선택 revision을 유지한다. 분석기는 호출하지 않는다.
         revisions = report._work_revisions(cfg, day, False)
         if set(revisions) != {'day', '7d', '30d', 'all'}:
             raise InvalidReportInput('missing saved evaluation')
-        request = report_channel.success(cfg, day, revisions, None, env, regenerate=True)
-    return json.dumps({'status': 'queued', 'request_id': str(request)})
+        import report_publish
+        reason = None
+        try:
+            document, rows, source = report_publish.saved_send_attachments(cfg, day, revisions, env)
+        except report_publish.RenderUnavailable:
+            # 결정적 렌더링을 사용할 수 없을 때만 문구 전용으로 명시한다.
+            document, rows, source, reason = None, [], 'unavailable', 'artifact_render_unavailable'
+        request = report_channel.success(cfg, day, revisions, document, env, regenerate=True,
+                                         attachment_rows=rows, missing_reason=reason)
+    return json.dumps({'status': 'queued', 'request_id': str(request),
+                       'attachments': source, 'attachment_reason': reason})

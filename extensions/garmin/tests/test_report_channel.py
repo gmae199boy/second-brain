@@ -54,7 +54,7 @@ class ChannelTest(unittest.TestCase):
         self.assertEqual(calls[0][2], 'garmin.report')
         self.assertIsNone(calls[0][9])
         self.assertEqual(calls[0][3], report_channel._key(str(conn.user_id), str(conn.connection_id), DAY.isoformat(), 'report', calls[0][5]))
-        self.assertEqual(calls[0][5], report_channel._key(report_channel.report_message.FORMAT_VERSION, *[f'{scope}:{REVISIONS[scope]}' for scope in ('day', '7d', '30d', 'all')]))
+        self.assertEqual(calls[0][5], report_channel._key(report_channel.report_message.FORMAT_VERSION, *[f'{scope}:{REVISIONS[scope]}' for scope in ('day', '7d', '30d', 'all')], 'attachments-v1', str(UUID(int=10)), json.loads(calls[0][8]), None))
         self.assertEqual(calls[0][4], 'report')
         self.assertIn('7일: synthetic 7d', calls[0][6])
         self.assertEqual(calls[0][7], UUID(int=10))
@@ -172,3 +172,14 @@ class ChannelTest(unittest.TestCase):
         with patch.object(report, '_work_revisions', return_value=REVISIONS), patch('report_publish.publish_and_wait'), patch.object(report_channel, 'success', side_effect=RuntimeError('synthetic delivery failure')), patch.object(report.body, 'pending') as intake:
             with self.assertRaises(RuntimeError): report.run_supervised(None, object(), regenerate=True, today=DAY)
             intake.assert_not_called()
+
+    def test_attachment_upgrade_and_manifest_changes_have_stable_distinct_keys(self):
+        conn = Conn(); self.setup_conn(conn)
+        legacy = report_channel.success(None, DAY, REVISIONS, None, ENV, regenerate=True)
+        photos = [('01.png', 'graph', UUID(int=8))]
+        attached = report_channel.success(None, DAY, REVISIONS, UUID(int=10), ENV, regenerate=True, attachment_rows=photos)
+        retry = report_channel.success(None, DAY, REVISIONS, UUID(int=10), ENV, regenerate=True, attachment_rows=photos)
+        changed = report_channel.success(None, DAY, REVISIONS, UUID(int=12), ENV, regenerate=True, attachment_rows=photos)
+        self.assertNotEqual(legacy, attached); self.assertEqual(attached, retry); self.assertNotEqual(attached, changed)
+        report_channel.success(None, DAY, REVISIONS, None, ENV, regenerate=True, missing_reason='artifact_render_unavailable')
+        self.assertIn('보고서·그래프 없음', conn.calls[-1][1][6])

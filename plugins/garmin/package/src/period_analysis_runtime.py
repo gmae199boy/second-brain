@@ -2,7 +2,7 @@
 import json
 import os
 import tempfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import query
@@ -87,10 +87,31 @@ def _analyze(cfg, data, writer):
 
 def _send(cfg, saved, env):
     import report_channel
+    import report_publish
+    import time
     start, end, revision, summary = saved
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
-            key = report_channel._key(str(conn.user_id), str(conn.connection_id), start, end, revision)
+            artifact = conn.execute('''select report_md,created_at from garmin.period_evaluations
+                where user_id=%s and connection_id=%s and work_id=%s''',
+                (conn.user_id, conn.connection_id, env['BRAIN_WORK_ID'])).fetchone()
+    # 임의 기간용 그래프 렌더러는 없다. 저장된 기간 문서는 분석 없이 게시한다.
+    deadline = time.monotonic() + report_publish.PENDING_WAIT_SECONDS
+    while True:
+        report._assert_attempt_current(cfg)
+        try:
+            document = report_publish.publish_send_copy(cfg, env, 'report.md', artifact[0].encode('utf-8'),
+                datetime.fromtimestamp(artifact[1] / 1000, timezone.utc),
+                ['period', start, end, revision], 'text/markdown')
+            break
+        except report_publish.FilesPending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise
+            report._abi_progress()
+            time.sleep(min(report_publish.PENDING_POLL_SECONDS, remaining))
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            key = report_channel._key(str(conn.user_id), str(conn.connection_id), start, end, revision, report_message.FORMAT_VERSION, 'attachments-v1', str(document))
             row = conn.execute('''select summary,judgments,next_checks,message from garmin.period_evaluations
                 where user_id=%s and connection_id=%s and work_id=%s''',
                 (conn.user_id, conn.connection_id, env['BRAIN_WORK_ID'])).fetchone()
@@ -98,7 +119,7 @@ def _send(cfg, saved, env):
                 dict(zip(('summary', 'judgments', 'next_checks', 'message'), row)))
             conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
                 (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.period_report', key,
-                 'period_report', str(revision), text, None, None, None)).fetchone()
+                 'period_report', str(revision), text, document, '[]', None)).fetchone()
 
 
 def run(env=None, *, writer=None):
