@@ -377,6 +377,9 @@ it('수동 기간 분석은 양끝·초점·본문을 저장 조회하고 완료
     expect(await t.fixture.db.rows("select count(*)::int n from brain.channel_dispatches where topic='garmin.period_report'")).toEqual([{n:1}]);
     expect(await t.fixture.db.rows("select state from brain.channel_dispatches where topic='garmin.period_report'")).toEqual([{state:'unrouted'}]);
     expect((await t.fixture.db.rows("select body from brain.channel_dispatches where topic='garmin.period_report'"))[0]?.body).toContain('[brain-markup-v1]\n# 🩺 Garmin 기간 리포트');
+    const periodBody = String((await t.fixture.db.rows("select body from brain.channel_dispatches where topic='garmin.period_report'"))[0]?.body);
+    for (const text of ['기간 회복 판단','기간 운동 부담을 줄인다','기간 후반 추세','직전 기간 자료가 없다']) expect(periodBody).toContain(text);
+    expect((await t.fixture.db.rows('select message from garmin.period_evaluations'))[0]?.message).toMatchObject({headline:'기간 회복 판단'});
     const recent=await t.fixture.run(['ext','garmin','recent-period-evaluations','--input',JSON.stringify({connection_id:t.account,timezone:'UTC',limit:10}),'--json']);
     expect(recent.body.data.evaluations).toHaveLength(1);
     expect(recent.body.data.evaluations[0]).toMatchObject({start_date:input.start_date,end_date:input.end_date,revision:1,focus:{metric:'steps'},summary:expect.any(String),report_md:expect.stringContaining('custom')});
@@ -384,12 +387,12 @@ it('수동 기간 분석은 양끝·초점·본문을 저장 조회하고 완료
     // 라우트 없이도 core dispatch 접수만 검증한다. 실제 메신저로 보내지 않는다.
     const send=await enqueue(input); expect(send.code,send.stdout+send.stderr).toBe(0);
     const sendWork=String(send.body.data.work_id); await t.outcome(sendWork,'succeeded');
-    const dispatch=await t.fixture.db.rows("select semantic_key,revision from brain.channel_dispatches where topic='garmin.period_report' order by revision");
+    const dispatch=await t.fixture.db.rows("select semantic_key,revision,body from brain.channel_dispatches where topic='garmin.period_report' order by revision");
     expect(dispatch).toHaveLength(2); expect(dispatch.map(row=>row.revision).sort()).toEqual(['1','2']);
     // 같은 work를 새 attempt로 재실행해도 평가와 의미 키는 그대로다.
     await t.fixture.db.query(`update brain.work_items set completed_at=null,outcome=null,next_attempt_at=now() where id='${sendWork}'`);
     await t.outcome(sendWork,'succeeded');
-    expect(await t.fixture.db.rows("select semantic_key,revision from brain.channel_dispatches where topic='garmin.period_report' order by revision")).toEqual(dispatch);
+    expect(await t.fixture.db.rows("select semantic_key,revision,body from brain.channel_dispatches where topic='garmin.period_report' order by revision")).toEqual(dispatch);
     expect((await t.calls()).filter(c=>c.work===sendWork)).toHaveLength(1);
     expect(await t.fixture.db.rows('select count(*)::int n from garmin.period_evaluations')).toEqual([{n:2}]);
     const focus={metric:input.metric,aggregation:input.aggregation,activity_type:input.activity_type,exercise:input.exercise};

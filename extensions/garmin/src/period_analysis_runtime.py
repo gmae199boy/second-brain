@@ -44,13 +44,13 @@ def _save(cfg, data, result, work):
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             row = conn.execute('''insert into garmin.period_evaluations
-                (user_id,connection_id,start_date,end_date,revision,work_id,focus,summary,report_md,judgments,evidence,next_checks,model,created_at)
-                select %s,%s,%s,%s,coalesce(max(revision),0)+1,%s,%s::jsonb,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s
+                (user_id,connection_id,start_date,end_date,revision,work_id,focus,summary,report_md,judgments,evidence,next_checks,model,created_at,message)
+                select %s,%s,%s,%s,coalesce(max(revision),0)+1,%s,%s::jsonb,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s,%s::jsonb
                 from garmin.period_evaluations where user_id=%s and connection_id=%s and start_date=%s and end_date=%s
                 returning start_date,end_date,revision,summary''',
                 (conn.user_id, conn.connection_id, data['start_date'], data['end_date'], work,
                  json.dumps(focus), result.summary, result.report_md, json.dumps(result.judgments),
-                 json.dumps(result.evidence), json.dumps(result.next_checks), cfg.report_model, dates.now_ms(),
+                 json.dumps(result.evidence), json.dumps(result.next_checks), cfg.report_model, dates.now_ms(), json.dumps(result.message),
                  conn.user_id, conn.connection_id, data['start_date'], data['end_date'])).fetchone()
     return row
 
@@ -91,11 +91,11 @@ def _send(cfg, saved, env):
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             key = report_channel._key(str(conn.user_id), str(conn.connection_id), start, end, revision)
-            row = conn.execute('''select summary,judgments,next_checks from garmin.period_evaluations
+            row = conn.execute('''select summary,judgments,next_checks,message from garmin.period_evaluations
                 where user_id=%s and connection_id=%s and work_id=%s''',
                 (conn.user_id, conn.connection_id, env['BRAIN_WORK_ID'])).fetchone()
             text = report_message.render_period(start, end, revision,
-                dict(zip(('summary', 'judgments', 'next_checks'), row)))
+                dict(zip(('summary', 'judgments', 'next_checks', 'message'), row)))
             conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
                 (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.period_report', key,
                  'period_report', str(revision), text, None, None, None)).fetchone()
