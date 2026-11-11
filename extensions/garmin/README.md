@@ -294,3 +294,11 @@ fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest�
 기존 native_artifacts 정책으로 중립 파일 보존하며 근거 없는 evaluation/revision을
 만들지 않는다. 제품 package는 공식 packaging 명령으로 재생성한다. 이 변경의 배포에는
 수정 commit 이후의 Garmin plugin release가 필요하며 app-ref 갱신은 별도 release 단계다.
+
+## 수동 기간 분석
+
+`brain ext run garmin period-analysis --target <connection-id> --input '{"start_date":"2026-10-01","end_date":"2026-10-31"}' --json`으로 연결 시간대의 현지 날짜를 양끝 포함 분석한다. 선택 초점은 `metric`, `aggregation`, `activity_type`, `exercise`이며 period-summary의 지표·집계 규칙을 사용한다. metric 없이 aggregation은 허용하지 않는다. 상대 날짜는 연결 시간대 DB로 계산한 뒤 절대 날짜로 접수한다.
+
+성공적으로 완료되면 항상 발신하며 `send` 선택 플래그는 없다. 발신 계약은 core `brain.extension_channel_send`, topic `garmin.period_report`이며 메신저·경로는 core가 선택한다. 기간·revision의 의미 키는 재시도에 동일하다. 라우트 미설정은 core의 보류 정책을 따른다.
+
+`brain ext garmin recent-period-evaluations --input '{"connection_id":"<connection-id>","timezone":"Asia/Seoul","limit":10}' --json`으로 전체 본문·근거·초점·기간·revision을 조회한다. 별도 요청은 새 revision, 같은 work 재시도는 저장된 revision을 재사용한다. 같은 연결의 열린 일감에 다른 입력을 겹쳐 접수하면 거부한다. 기존 일일 report의 day·7d·30d·all 평가와 발신은 그대로다.

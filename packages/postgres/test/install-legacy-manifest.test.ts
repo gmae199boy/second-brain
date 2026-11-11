@@ -383,7 +383,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     }
     const first = await ttyRun(); expect(first.answered,first.output).toBe(true); expect(first.code,first.output).toBe(0);
     const again = await ttyRun(); expect(again.code,again.output).toBe(0);
-    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:45});
+    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:46});
   } finally {
     for (const child of localChildren) if (child.exitCode===null && child.signalCode===null) child.kill('SIGTERM');
     const killTimer = setTimeout(()=>{for(const child of localChildren)if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},2000);
@@ -460,7 +460,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   expect(history).toHaveLength(8);
   await setupViaCli(k);
   expect(await preserved(k,name)).toBe(before);
-  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:45}]);
+  expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:46}]);
   const gates = await k.db.rows('select name,owner from brain.extension_quiesce'); expect(gates).toHaveLength(1);
   expect(await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`)).toEqual(history);
   const cli = await cliForWorld(k);
@@ -480,7 +480,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   else expect(result.code,result.stdout+result.stderr).toBe(0);
   const after = await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`);
   expect(after.slice(0,8)).toEqual(history);
-  expect(after.map(row=>row.version)).toEqual(Array.from({length:name==='garmin'?16:9},(_,i)=>i+1));
+  expect(after.map(row=>row.version)).toEqual(Array.from({length:name==='garmin'?17:9},(_,i)=>i+1));
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   const progress = await k.db.rows(`select progress from brain.extension_install_progress where name='${name}'`);
   expect(progress[0]?.progress).not.toHaveProperty('replacement'); expect(progress[0]?.progress).not.toHaveProperty('transition');

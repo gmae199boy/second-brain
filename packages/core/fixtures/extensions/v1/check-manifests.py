@@ -84,6 +84,19 @@ def _valid(value, schema_adapter=None):
     if len(aliases) != len(set(aliases)):
         return False
     for item in work:
+        if 'input_schema' in item:
+            schema = item['input_schema']
+            if asynchronous(schema):
+                return False
+            try:
+                jsonschema.Draft202012Validator.check_schema(schema)
+                adapter = Path(schema_adapter) if schema_adapter else root.parent.parent / 'apps/cli/dist/runtime/json-schema.js'
+                script = "import {pathToFileURL} from 'node:url';let s='';for await(const c of process.stdin)s+=c;const {validateSchema}=await import(pathToFileURL(process.argv[1]));process.stdout.write(validateSchema(JSON.parse(s))?'1':'0')"
+                result = subprocess.run(['node', '--input-type=module', '-e', script, str(adapter)], input=json.dumps(schema), text=True, capture_output=True, check=True)
+                if result.stdout != '1':
+                    return False
+            except (OSError, subprocess.SubprocessError, jsonschema.SchemaError):
+                return False
         if any(k not in keys for k in item.get('required_settings', [])):
             return False
         report = item.get('public_report')

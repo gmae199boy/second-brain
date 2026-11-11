@@ -301,15 +301,16 @@ while (!existsSync(join(dir,'ready'))) await new Promise(r=>setTimeout(r,40)); c
   const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
   const launch = () => {
     const child = spawn(process.execPath, [bin, 'ext', 'install', 'resumext', '--json'], { env: fixture.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = ''; child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr.resume();
-    return { child, result: new Promise<{ code: number | null; stdout: string }>(resolve => child.once('close', code => resolve({ code, stdout }))) };
+    let stdout = '', stderr = ''; child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    return { child, get stderr() { return stderr; }, result: new Promise<{ code: number | null; stdout: string }>(resolve => child.once('close', code => resolve({ code, stdout }))) };
   };
   const owner = launch(); let waiter: ReturnType<typeof launch> | undefined;
   const dir = join(fixture.home, 'extensions/resumext/tokenstore');
   try {
     await expect.poll(async () => { try { return await readFile(join(dir, 'owner'), 'utf8'); } catch { return ''; } }, { timeout: 10000 }).not.toBe('');
     const before = await fixture.db.rows("select revision,progress from brain.extension_install_progress where name='resumext'");
-    waiter = launch(); await new Promise(resolve => setTimeout(resolve, 300));
+    waiter = launch();
+    await expect.poll(() => waiter!.stderr, {timeout:10000}).toContain('다른 설치가 진행 중');
     const started = Date.now(); waiter.child.kill('SIGINT');
     const stopped = await waiter.result; expect(Date.now() - started).toBeLessThan(2000);
     expect(stopped.code).toBe(1); expect(JSON.parse(stopped.stdout).error.code).toBe('EXTENSION_INSTALL_CANCELLED');
@@ -346,7 +347,8 @@ it('실제 데몬 인증 일감 조회 중 취소하면 자식 종료를 확인�
     child = spawn(process.execPath, [bin, 'ext', 'install', 'resumext', '--json'], { env: fixture.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; child.stdout!.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr!.resume();
     const ended = new Promise<number | null>(resolve => child!.once('close', code => resolve(code)));
-    await new Promise(resolve => setTimeout(resolve, 300)); child.kill('SIGINT'); await blocker.query('rollback');
+    await expect.poll(async()=> (await fixture.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and application_name='second-brain-command' and wait_event_type='Lock' and query like '%work_items%') as waiting"))[0]?.waiting, {timeout:10000}).toBe(true);
+    child.kill('SIGINT'); await blocker.query('rollback');
     expect(await ended, stdout).toBe(1); expect(JSON.parse(stdout).error.code).toBe('EXTENSION_INSTALL_CANCELLED');
     expect(() => process.kill(pid, 0)).toThrow();
     const journal = (await fixture.db.rows("select progress from brain.extension_install_progress where name='resumext'"))[0]!.progress as ExtensionInstallProgress;
@@ -420,6 +422,8 @@ it('migration 대기 중 프로세스 중단 후 같은 owner로 재개하고 �
     await expect.poll(async () => (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).length, { timeout: 10000 }).toBe(1);
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8')).phase; } catch { return ''; } }, { timeout: 10000 }).toBe('prepared');
     const owner = (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner;
+    // prepared는 역할 준비 전에도 보인다. 실제 migration 잠금 대기를 확인한 뒤 중단한다.
+    await expect.poll(async()=> (await fixture.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%pg_advisory_xact_lock%') as waiting"))[0]?.waiting, {timeout:10000}).toBe(true);
     child.kill('SIGKILL'); await exited; child = undefined; await blocker.query('rollback');
     // This synthetic installer has no spawned writer; its process has exited.
     await rm(join(fixture.home, 'install.lock'), { recursive: true });

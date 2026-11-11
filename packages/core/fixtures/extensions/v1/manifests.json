@@ -1971,5 +1971,125 @@
       ]
     },
     "expect": "invalid"
+  },
+  {
+    "name": "work-input-object",
+    "expect": "valid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.period",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "period.py",
+          "manual": "period",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "send": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "work-input-wrong-root",
+    "expect": "invalid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.period",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "period.py",
+          "manual": "period",
+          "input_schema": {
+            "type": "array"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "work-input-invalid-keyword",
+    "expect": "invalid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.period",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "period.py",
+          "manual": "period",
+          "input_schema": {
+            "type": "object",
+            "required": "wrong"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "work-input-async",
+    "expect": "invalid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.period",
+          "execution": "supervised",
+          "runtime": "python",
+          "entry": "period.py",
+          "manual": "period",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "$async": true
+              }
+            }
+          }
+        }
+      ]
+    }
   }
 ]

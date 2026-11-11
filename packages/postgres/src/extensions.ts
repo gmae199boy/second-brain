@@ -29,7 +29,7 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
       const result = await withWrite(opened.connection, async held => (await sql`delete from brain.extension_quiesce where name=${name} and owner=${owner} returning name`.execute(held)).rows.length > 0);
       return result.ok ? { ok: true, released: result.value } : result;
     },
-    async enqueueExtensionWork({ name, version, work }) {
+    async enqueueExtensionWork({ name, version, input, work }) {
       const opened = connect(); if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
         const rows = await sql<{ enabled: boolean; version: string }>`select enabled, version from brain.extensions where name=${name} for update`.execute(held);
@@ -49,6 +49,14 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
         if (requires.rows.length && !upstream.rows.length) return { state: 'changed' as const };
         const parent = upstream.rows[0]?.id;
         const queued = await ensureWork(held, parent ? { ...work, targetId: parent } : work);
+        if (input !== undefined) {
+          const serialized = JSON.stringify(input);
+          if (queued.created) await sql`insert into brain.extension_work_inputs(work_id,input) values (${queued.row.id},${serialized}::jsonb)`.execute(held);
+          else {
+            const same = await sql`select 1 from brain.extension_work_inputs where work_id=${queued.row.id} and input=${serialized}::jsonb`.execute(held);
+            if (!same.rows.length) return { state: 'changed' as const };
+          }
+        }
         if (parent) await sql`insert into brain.work_dependencies(work_item_id,prerequisite_id) values (${queued.row.id},${parent}) on conflict do nothing`.execute(held);
         return { state: 'queued' as const, workId: queued.row.id, created: queued.created };
       });

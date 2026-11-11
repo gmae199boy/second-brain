@@ -1,15 +1,15 @@
 ---
 name: garmin-period-review
-description: 코드가 준비한 7d·30d·all 기간 입력으로 회복과 운동 흐름을 평가한다.
+description: 코드가 준비한 7d·30d·all·custom 기간 입력으로 회복과 운동 흐름을 평가한다.
 ---
 
 # garmin-period-review
 
-인자는 `7d`, `30d`, `all` 중 하나다. 프롬프트가 준 `profile.md`를 먼저 읽고 사용자의 목표와 선호를 따른다. 다음으로 지정된 범위 폴더의 `scope.json`, `day_values.json`, `evaluations.json`, `previous.json`만 읽는다. 날짜와 창, 월 묶음은 scope.json에서 가져오고 날짜 계산을 하지 않는다. 지정된 입력 폴더 밖을 읽지 않는다.
+인자는 `7d`, `30d`, `all`, `custom` 중 하나다. custom은 사용자가 지정한 양끝 포함 기간이며 scope.json의 from·to·timezone·focus를 따른다. focus의 metric·activity_type·exercise 조건을 벗어난 일반론을 만들지 않는다. day_values.json의 focus·values는 기존 조회 계약의 단위·NULL/0·집계 의미 그대로 해석한다. 프롬프트가 준 `profile.md`를 먼저 읽고 사용자의 목표와 선호를 따른다. 다음으로 지정된 범위 폴더의 `scope.json`, `day_values.json`, `evaluations.json`, `previous.json`만 읽는다. 날짜와 창, 월 묶음은 scope.json에서 가져오고 날짜 계산을 하지 않는다. 지정된 입력 폴더 밖을 읽지 않는다.
 
-실제 하루 값 일수(`actual_days`)를 밝힌다. 기록이 짧거나 일부 빠져도 있는 것으로 판단한다. `partial_date` 날짜의 활동량은 data_cutoff까지의 부분 값이므로 끝난 날과 같은 기준으로 비교하지 않는다. 수면, HRV, 안정 심박, 기상 Body Battery와 스트레스, 근력·HIIT 기록을 함께 본다. 전체 범위는 월별 SQL 묶음으로 흐름을 판단한다.
+실제 하루 값 일수(`actual_days`)를 밝힌다. 기록이 짧거나 일부 빠져도 있는 것으로 판단한다. `partial_date`가 비어 있으면 끝난 날짜다. 값이 있는 `partial_date` 날짜의 활동량은 data_cutoff까지의 부분 값이므로 끝난 날과 같은 기준으로 비교하지 않는다. 수면, HRV, 안정 심박, 기상 Body Battery와 스트레스, 근력·HIIT 기록을 함께 본다. 전체 범위는 월별 SQL 묶음으로 흐름을 판단한다.
 
-기준은 직전 같은 길이 기간이다. `previous.json`은 이전 같은 범위 평가이며 겹치는 창일 수 있다. 입력에 비교 기간 측정값이 부족하면 그 한계를 밝히고 숫자를 만들지 않는다. 지난 평가는 가설이다. 현재 데이터와 다르면 바로잡았다고 적는다. 이전 `next_checks`를 확인하고 결과를 판단에 포함한다.
+기준은 직전 같은 길이 기간이다. `previous.json`은 이전 같은 범위 평가이며 겹치는 창일 수 있다. custom에서는 동일 초점·같은 길이 중 이번 창과 겹치지 않는 가장 최근 기간의 최신 revision이다. 해당 평가가 없으면 null이며 비교 숫자를 만들지 않는다. 입력에 비교 기간 측정값이 부족하면 그 한계를 밝히고 숫자를 만들지 않는다. 지난 평가는 가설이다. 현재 데이터와 다르면 바로잡았다고 적는다. 이전 `next_checks`를 확인하고 결과를 판단에 포함한다.
 
 진단명이나 질병 이름을 쓰지 않는다. 유산소·따로 걷기를 권하지 않는다. 무게 제안은 기록과 회복 상태를 근거로 AI가 판단한다. 사용자가 하지 않는 활동을 권하지 않는다.
 

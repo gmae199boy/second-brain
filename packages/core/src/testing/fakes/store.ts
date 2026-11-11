@@ -183,6 +183,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
   const { health = DEFAULT_HEALTH } = options;
 
   const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
+  const extensionWorkInputs = new Map<string, unknown>();
   const extensionWorkKinds = new Map<string, readonly string[]>();
   const extensionMissedPolicies = new Map<string, Readonly<Record<string, 'latest' | 'coalesce' | 'skip'>>>();
   const extensionFollowups = new Map<string, Readonly<Record<string, string>>>();
@@ -808,7 +809,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       Object.assign(row, { connectionStatus: status, connectionCode: code, connectionMessage: message, connectionCheckedAt: new Date(checkedAt) });
       return { ok: true };
     },
-    async enqueueExtensionWork({ name, version, work }) {
+    async enqueueExtensionWork({ name, version, input, work }) {
       const row = extensions.get(name);
       if (!row) return { ok: true, state: 'missing' };
       if (row.version !== version) return { ok: true, state: 'changed' };
@@ -820,6 +821,10 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       if (predecessors.length && !candidates.length) return { ok: true, state: 'changed' };
       const parent = candidates[0];
       const result = addWork(parent ? { ...work, targetId: parent.id } : work);
+      if (result.ok && input !== undefined) {
+        if (result.created) extensionWorkInputs.set(result.item.id, structuredClone(input));
+        else if (JSON.stringify(extensionWorkInputs.get(result.item.id)) !== JSON.stringify(input)) return { ok: true, state: 'changed' };
+      }
       if (result.ok && parent && !workDependencies.some(edge => edge.workItemId === result.item.id && edge.prerequisiteId === parent.id)) workDependencies.push({ workItemId: result.item.id, prerequisiteId: parent.id });
       return result.ok ? { ok: true, state: 'queued', workId: result.item.id, created: result.created } : result;
     },

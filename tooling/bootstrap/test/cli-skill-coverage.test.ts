@@ -74,3 +74,14 @@ it('배포 스킬의 폴더명과 name은 하네스 namespace 없이도 구별�
   const deployedNames = [...core, ...garmin].map(path => basename(dirname(path)));
   expect(new Set(deployedNames).size).toBe(deployedNames.length);
 });
+
+it('Garmin 분석 요청은 일일·기간·주간/월간 리뷰와 완료 후 발신 계약을 찾을 수 있다', () => {
+  const text=read('plugins/garmin/skills/brain-garmin-operations/SKILL.md');
+  const description=text.match(/^description: (.+)$/m)?.[1] ?? '';
+  for (const trigger of ['분석','기간 분석','주간/월간 리뷰']) expect(description).toContain(trigger);
+  expect(text).toContain('ext run garmin period-analysis');
+  expect(text).toContain('recent-period-evaluations');
+  expect(text).toContain('시간대 DB');
+  expect(text).toContain('`send` 선택 플래그는 없다');
+  expect(text).toContain('성공적으로 완료되면 항상 발신한다');
+});

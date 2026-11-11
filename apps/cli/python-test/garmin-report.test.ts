@@ -358,3 +358,60 @@ it.each(['fail','invalid','status-failed'])('model %s on 7d keeps later successe
     expect(await t.revisions()).toHaveLength(4);
   } finally {await t.close();}
 },180000);
+
+it('수동 기간 분석은 양끝·초점·본문을 저장 조회하고 완료 시 발신과 재시도 멱등을 지킨다', async()=>{
+  const t=await setup();
+  const input={start_date:'2026-01-01',end_date:'2026-01-03',metric:'steps',aggregation:'sum',activity_type:'strength',exercise:'squat'};
+  const enqueue=async(value:unknown)=>t.fixture.run(['ext','run','garmin','period-analysis','--target',t.account,'--input',JSON.stringify(value),'--json']);
+  try {
+    await t.fixture.db.query(`insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${t.account}','2025-12-31',999),('${self}','${t.account}','2026-01-01',10),('${self}','${t.account}','2026-01-03',30),('${self}','${t.account}','2026-01-04',999);
+      insert into garmin.workout(user_id,connection_id,activity_id,date,type) values ('${self}','${t.account}',1,'2026-01-01','strength'),('${self}','${t.account}',2,'2026-01-03','strength');
+      insert into garmin.exercise_log(user_id,connection_id,activity_id,exercise) values ('${self}','${t.account}',1,'squat'),('${self}','${t.account}',2,'squat')`);
+    const first=await enqueue(input); expect(first.code,first.stdout+first.stderr).toBe(0);
+    const work=String(first.body.data.work_id); await t.outcome(work,'succeeded');
+    const call=await t.waitCall(work,'custom');
+    expect(call.observed.scope).toMatchObject({from:input.start_date,to:input.end_date,timezone:'UTC',focus:{metric:'steps'},partial_date:{}});
+    expect(call.observed.day_values).toMatchObject({values:{value:40,observed_count:2}});
+    expect(call.observed.previous).toBeNull();
+    expect(await t.fixture.db.rows("select count(*)::int n from brain.channel_dispatches where topic='garmin.period_report'")).toEqual([{n:1}]);
+    expect(await t.fixture.db.rows("select state from brain.channel_dispatches where topic='garmin.period_report'")).toEqual([{state:'unrouted'}]);
+    const recent=await t.fixture.run(['ext','garmin','recent-period-evaluations','--input',JSON.stringify({connection_id:t.account,timezone:'UTC',limit:10}),'--json']);
+    expect(recent.body.data.evaluations).toHaveLength(1);
+    expect(recent.body.data.evaluations[0]).toMatchObject({start_date:input.start_date,end_date:input.end_date,revision:1,focus:{metric:'steps'},summary:expect.any(String),report_md:expect.stringContaining('custom')});
+    expect(await t.revisions()).toEqual([]);
+    // 라우트 없이도 core dispatch 접수만 검증한다. 실제 메신저로 보내지 않는다.
+    const send=await enqueue(input); expect(send.code,send.stdout+send.stderr).toBe(0);
+    const sendWork=String(send.body.data.work_id); await t.outcome(sendWork,'succeeded');
+    const dispatch=await t.fixture.db.rows("select semantic_key,revision from brain.channel_dispatches where topic='garmin.period_report' order by revision");
+    expect(dispatch).toHaveLength(2); expect(dispatch.map(row=>row.revision).sort()).toEqual(['1','2']);
+    // 같은 work를 새 attempt로 재실행해도 평가와 의미 키는 그대로다.
+    await t.fixture.db.query(`update brain.work_items set completed_at=null,outcome=null,next_attempt_at=now() where id='${sendWork}'`);
+    await t.outcome(sendWork,'succeeded');
+    expect(await t.fixture.db.rows("select semantic_key,revision from brain.channel_dispatches where topic='garmin.period_report' order by revision")).toEqual(dispatch);
+    expect((await t.calls()).filter(c=>c.work===sendWork)).toHaveLength(1);
+    expect(await t.fixture.db.rows('select count(*)::int n from garmin.period_evaluations')).toEqual([{n:2}]);
+    const focus={metric:input.metric,aggregation:input.aggregation,activity_type:input.activity_type,exercise:input.exercise};
+    // 더 최근인 잘못된 초점·다른 길이·중첩 후보는 이전 평가로 선택하지 않는다.
+    for(const target of [t.account,t.other]) for(const [start,end,selection] of [
+      ['2026-01-01','2026-01-03',{...focus,exercise:'press'}],
+      ['2026-01-02','2026-01-03',focus],
+      ['2026-01-03','2026-01-05',focus],
+    ] as const) {
+      await t.fixture.db.query(`insert into garmin.period_evaluations(user_id,connection_id,start_date,end_date,revision,work_id,focus,summary,report_md,judgments,evidence,next_checks,model,created_at)
+        values ('${self}','${target}','${start}','${end}',3,'${t.ids.next()}','${JSON.stringify(selection)}'::jsonb,'excluded','excluded','[]','[]','[]','synthetic',1)`);
+    }
+    const next=await enqueue({...input,start_date:'2026-01-04',end_date:'2026-01-06'});
+    await t.outcome(String(next.body.data.work_id),'succeeded');
+    const nextCall=await t.waitCall(String(next.body.data.work_id),'custom');
+    expect(nextCall.observed.previous).toMatchObject({start_date:'2026-01-01',end_date:'2026-01-03',revision:2,focus:{metric:'steps'},summary:expect.any(String),next_checks:expect.any(Array)});
+    const onlyExcluded=await t.fixture.run(['ext','run','garmin','period-analysis','--target',t.other,'--input',JSON.stringify({...input,start_date:'2026-01-04',end_date:'2026-01-06'}),'--json']);
+    await t.outcome(String(onlyExcluded.body.data.work_id),'succeeded');
+    expect((await t.waitCall(String(onlyExcluded.body.data.work_id),'custom')).observed.previous).toBeNull();
+    const bad=await enqueue({...input,start_date:'2026-02-30'}); expect(bad.code).toBe(0);
+    await t.outcome(String(bad.body.data.work_id),'failed');
+    expect((await t.calls()).some(c=>c.work===bad.body.data.work_id)).toBe(false);
+    expect(await t.fixture.db.rows("select count(*)::int n from brain.channel_dispatches where topic='garmin.period_report'")).toEqual([{n:4}]);
+    for(const send of [true,false,'true']) expect((await enqueue({...input,send})).code).not.toBe(0);
+    const missing=await t.fixture.run(['ext','run','garmin','period-analysis','--target',t.account,'--json']); expect(missing.code).not.toBe(0);
+  } finally { await t.close(); }
+},180000);

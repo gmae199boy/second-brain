@@ -74,6 +74,13 @@ it('enforces the role, public view and fenced provenance contracts over real con
     await admin.query('insert into brain.extension_work_kinds(extension_name,kind) values ($1,$2)', [names[0],workKind]);
     expect(await store.addWork({ id, kind: workKind, targetKind: 'probe', targetId: 'extension', createdAt: now, nextAttemptAt: now })).toMatchObject({ ok: true });
     expect(await store.claimSupervisedWork({ now, claimedBy: 'test', kinds: [workKind], attemptToken: token })).toMatchObject({ ok: true, attemptToken: token });
+    const manualInput = {start_date:'2026-01-01',end_date:'2026-01-31',send:false};
+    await admin.query('insert into brain.extension_work_inputs(work_id,input) values ($1,$2::jsonb)',[id,JSON.stringify(manualInput)]);
+    const readInput='select brain.extension_work_input($1,$2) as input';
+    expect((await a.query(readInput,[id,token])).rows[0].input).toEqual(manualInput);
+    await expect(b.query(readInput,[id,token])).rejects.toMatchObject({code:'42501'});
+    await expect(a.query(readInput,[id,randomUUID()])).rejects.toMatchObject({code:'42501'});
+    await expect(a.query('select input from brain.extension_work_inputs')).rejects.toMatchObject({code:'42501'});
     const channel = randomUUID(), conversation = randomUUID();
     await admin.query('insert into brain.channels values ($1,$2,$3)', [channel, 'telegram', 'bot']);
     await admin.query('insert into brain.channel_conversations(id,channel_id,external_ref,thread_ref,user_id) values ($1,$2,$3,null,$4)', [conversation, channel, 'chat', sampleSelfUserInput().id]);
@@ -166,6 +173,7 @@ it('enforces the role, public view and fenced provenance contracts over real con
     expect((await admin.query('select * from brain.channel_requests order by id')).rows).toEqual(requests);
 
     await store.settleSupervisedAttempt({ id, attemptToken: token, now, outcome: 'died' });
+    await expect(a.query(readInput,[id,token])).rejects.toMatchObject({code:'42501'});
     await expect(a.query(validate, [id,token,conversation])).rejects.toMatchObject({code:'42501'});
     await expect(a.query(publish, args)).rejects.toMatchObject({ code: '42501' });
     await expect(a.query('insert into contract_test.results values ($1,$2,$3)', [names[0], id, token])).rejects.toMatchObject({ code: 'BRS01' });
@@ -293,4 +301,23 @@ it('topic 접수는 확장 소유 attempt·접두사·파일 권한을 검증하
     expect(await store.channelControl!.sendPending({topic:name+'.report',id:first,now:due})).toEqual({ok:true,count:0});
     await provisionExtension(db.url,name,password);
   }finally{await client?.end();await store.close();await admin.query(`drop owned by "${role}";drop role if exists "${role}"`).catch(()=>{});await admin.end();await db.drop();}
+});
+
+it('수동 일감 입력 migration은 현재 DB 소유 확장 역할에만 권한을 부여한다', async()=>{
+  const {runMigrations}=await import('../src/index.js');
+  const db=await database(false), admin=new pg.Client({connectionString:db.url});
+  const own=`x${randomBytes(5).toString('hex')}`, foreign=`brain_ext_x${randomBytes(5).toString('hex')}`, password=randomBytes(24).toString('hex');
+  try {
+    await admin.connect();
+    expect(await runMigrations({databaseUrl:db.url,clock,coreMaxVersion:45})).toMatchObject({ok:true,to:45});
+    await provisionExtension(db.url,own,password);
+    await admin.query(`create role "${foreign}" login; comment on role "${foreign}" is 'second-brain extension:synthetic_other_database'`);
+    expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,to:46,applied:['0046_extension_work_inputs.sql']});
+    const allowed=async(role:string)=>(await admin.query("select has_function_privilege($1,'brain.extension_work_input(uuid,uuid)','execute') as allowed",[role])).rows[0].allowed;
+    expect(await allowed(`brain_ext_${own}`)).toBe(true); expect(await allowed(foreign)).toBe(false);
+    await provisionExtension(db.url,own,password);
+  } finally {
+    for(const role of [`brain_ext_${own}`,foreign]) await admin.query(`drop owned by "${role}"; drop role if exists "${role}"`).catch(()=>{});
+    await admin.end(); await db.drop();
+  }
 });

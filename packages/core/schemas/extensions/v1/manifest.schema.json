@@ -121,6 +121,17 @@
               "coalesce",
               "skip"
             ]
+          },
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "type"
+            ]
           }
         }
       }
