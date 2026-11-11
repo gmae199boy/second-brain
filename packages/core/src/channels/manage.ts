@@ -1,4 +1,4 @@
-import { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } from '../settings/index.js';
+import { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, normalizeTimeZone } from '../settings/index.js';
 import { resolveSelfUser } from '../users/self.js';
 import type { Store } from '../ports/store.js';
 import type { IdGen } from '../ports/id-gen.js';
@@ -27,14 +27,23 @@ export function channelManagement(store: Store, clock: Clock, ids: IdGen) {
       if (!['set','list','remove'].includes(input.action) || (input.action !== 'list' && !topic(input.topic)) || (input.action === 'set' && (!ref(input.messengerId) || !ref(input.channelId)))) return invalid();
       return store.channelControl?.route(input) ?? unavailable();
     },
+    async subscribe(input: Parameters<ChannelControlStore['subscribe']>[0]) {
+      if (!['set','list','remove'].includes(input.action) || (input.action !== 'list' && !topic(input.event)) ||
+        (input.action === 'set' && (!ref(input.messengerId) || !ref(input.channelId))) ||
+        (input.action !== 'set' && (input.at !== undefined || input.timeZone !== undefined)) ||
+        (input.at !== undefined && input.at !== 'immediate' && !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(input.at))) return invalid();
+      const zone = input.timeZone === undefined ? undefined : normalizeTimeZone(input.timeZone);
+      if (zone && (!zone.ok || (input.at ?? 'immediate') === 'immediate')) return invalid();
+      return store.channelControl?.subscribe({ ...input, ...(zone?.ok ? { timeZone: zone.value } : {}) }) ?? unavailable();
+    },
     async send(input: { topic?: string; messengerId?: string; channelId?: string; text: string; at?: string; key?: string }) {
       if ((input.topic !== undefined ? (!topic(input.topic) || input.messengerId !== undefined || input.channelId !== undefined) : (!ref(input.messengerId) || !ref(input.channelId))) || !input.text || input.text.length > 4000 || (input.key !== undefined && (!input.key || input.key.length > 512))) return invalid();
       const sendAt = input.at === undefined ? undefined : new Date(input.at);
       if (sendAt && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(input.at!) || !Number.isFinite(sendAt.getTime()))) return invalid();
       return store.channelControl?.send({ id: ids.next(), topic: input.topic, messengerId: input.messengerId, channelId: input.channelId, text: input.text, key: input.key ?? ids.next(), now: clock.now(), sendAt }) ?? unavailable();
     },
-    async sendPending(input: { topic: string; id?: string; date?: string }) {
-      if (!topic(input.topic) || (input.id && !uuid(input.id)) || (input.id && input.date) ||
+    async sendPending(input: { topic?: string; event?: string; id?: string; date?: string }) {
+      if ((input.event !== undefined ? (!topic(input.event) || input.topic !== undefined) : !topic(input.topic)) || (input.id && !uuid(input.id)) || (input.id && input.date) ||
         (input.date && (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !Number.isFinite(Date.parse(input.date)) || new Date(input.date).toISOString().slice(0,10) !== input.date))) return invalid();
       return store.channelControl?.sendPending({ ...input, now: clock.now() }) ?? unavailable();
     },

@@ -186,7 +186,7 @@ export async function runDoctor(
     checks.push(await failuresCheck(options.store));
     if (options.channelControl) {
       const channels = await options.channelControl.health();
-      checks.push(channels.ok ? { id: 'channels', status: channels.unrouted ? 'warn' : 'ok', detail: `메신저 ${channels.channels}, 메신저 자격 증명 설정 ${channels.configured}, 경로 ${channels.routes}, 예약 ${channels.scheduled}, 미경로 ${channels.unrouted}${channels.unrouted ? ' (channels send-pending으로 명시적 발신)' : ''}` } : { id: 'channels', status: 'fail', code: channels.code, detail: channels.message });
+      checks.push(channels.ok ? { id: 'channels', status: channels.unrouted ? 'warn' : 'ok', detail: `메신저 ${channels.channels}, 메신저 자격 증명 설정 ${channels.configured}, 경로 ${channels.routes}, 구독 ${channels.subscriptions}, 보관 이벤트 ${channels.archivedEvents}, 예약 ${channels.scheduled}, 미경로 ${channels.unrouted}${channels.unrouted ? ' (channels send-pending으로 명시적 발신)' : ''}` } : { id: 'channels', status: 'fail', code: channels.code, detail: channels.message });
     }
     const untagged = await options.store.countUntaggedSessions();
     checks.push(untagged.ok

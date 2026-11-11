@@ -57,6 +57,7 @@ export function postgresExtensionStore(connect: PgConnect): ExtensionStore {
             if (!same.rows.length) return { state: 'changed' as const };
           }
         }
+        await sql`insert into brain.work_manual_requests(work_id) values (${queued.row.id}) on conflict do nothing`.execute(held);
         if (parent) await sql`insert into brain.work_dependencies(work_item_id,prerequisite_id) values (${queued.row.id},${parent}) on conflict do nothing`.execute(held);
         return { state: 'queued' as const, workId: queued.row.id, created: queued.created };
       });

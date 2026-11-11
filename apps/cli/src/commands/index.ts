@@ -1,5 +1,5 @@
 import { messengersAddCommand, messengersListCommand } from './messengers-add.js';
-import { channelsRouteCommand, channelsSendCommand, channelsSendPendingCommand } from './channels-control.js';
+import { channelsRouteCommand, channelsSubscribeCommand, channelsSendCommand, channelsSendPendingCommand } from './channels-control.js';
 import { sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesDisconnectCommand } from './sources-control.js';
 import { sourcesSyncCommand } from './sources-sync.js';
 import { recallDocsCommand } from './recall-docs.js';
@@ -62,7 +62,7 @@ import { setupRun } from './setup-run.js';
  */
 export const commands: readonly CommandSpec[] = [
   mcpServeCommand,
-  messengersAddCommand, messengersListCommand, channelsRouteCommand, channelsSendCommand, channelsSendPendingCommand,
+  messengersAddCommand, messengersListCommand, channelsRouteCommand, channelsSubscribeCommand, channelsSendCommand, channelsSendPendingCommand,
   channelsAddCommand, channelsListCommand, channelsStatusCommand, channelsResendCommand,
   recallChunksCommand, recallToolsCommand, recallDocsCommand, recallExpandCommand, sessionsReadCommand,
   extInstallCommand,

@@ -12,6 +12,19 @@ export const channelsRouteCommand: CommandSpec = {
     return result.ok ? { ok: true, data: { routes: result.routes }, text: result.routes.map(r => `${r.topic}: ${r.messengerId} / ${r.channelId}`) } : result;
   },
 };
+export const channelsSubscribeCommand: CommandSpec = {
+  ...meta, verb: 'subscribe', required: ['action'], arguments: ['<action>', '[event]'], usedFor: '결과 이벤트의 발송 목적지와 시각 구독을 set/list/remove 합니다',
+  options: [{ flags: '--messenger <id>', description: '메신저 ID 또는 별칭' }, { flags: '--channel <id>', description: '채널 ID 또는 별칭' },
+    { flags: '--at <time>', description: 'immediate(기본) 또는 매일 현지 HH:MM' }, { flags: '--tz <zone>', description: 'IANA 시간대(생략하면 사용자 timezone)' }],
+  examples: ['brain channels subscribe set garmin.report.completed --messenger personal --channel reports --at 08:20'], output: '이벤트 구독과 유효 발송 시각·시간대',
+  async run({ brain, args, options }) {
+    if (!['set','list','remove'].includes(args[0]!)) return invalid('subscribe set/list/remove 중 하나를 지정하세요');
+    const result = await brain.channels.subscribe({ action: args[0] as 'set' | 'list' | 'remove', event: args[1],
+      messengerId: options['messenger'] as string | undefined, channelId: options['channel'] as string | undefined,
+      at: options['at'] as string | undefined, timeZone: options['tz'] as string | undefined });
+    return result.ok ? { ok: true, data: { subscriptions: result.subscriptions }, text: result.subscriptions.map(s => `${s.event}: ${s.messengerId} / ${s.channelId}, ${s.at} (${s.timeZone}, ${s.timeZoneSource})`) } : result;
+  },
+};
 export const channelsSendCommand: CommandSpec = {
   ...meta, verb: 'send', required: [], usedFor: 'topic으로 지금 또는 지정 시각에 발신을 접수합니다',
   options: [{ flags: '--topic <topic>', description: '발신 topic' }, { flags: '--messenger <id>', description: '직접 발신 메신저' }, { flags: '--channel <id>', description: '직접 발신 채널' }, { flags: '--text <text>', description: '메시지 본문(-는 stdin)' },
@@ -29,10 +42,10 @@ export const channelsSendCommand: CommandSpec = {
 };
 export const channelsSendPendingCommand: CommandSpec = {
   ...meta, verb: 'send-pending', required: [], usedFor: '보관된 미경로 요청과 닫힌 실패를 명시적으로 발신 대기열에 넣습니다',
-  options: [{ flags: '--topic <topic>', description: '발신 topic', required: true }, { flags: '--date <date>', description: 'UTC 접수 날짜 YYYY-MM-DD' }, { flags: '--id <uuid>', description: '발신 요청 ID' }],
+  options: [{ flags: '--topic <topic>', description: '기존 발신 topic(--event와 택일)' }, { flags: '--event <event>', description: '보관한 결과 이벤트 이름' }, { flags: '--date <date>', description: 'topic은 UTC 접수일, event는 대상 날짜 YYYY-MM-DD' }, { flags: '--id <uuid>', description: 'topic은 발신 요청 ID, event는 이벤트 ID' }],
   examples: ['brain channels send-pending --topic garmin.report --id <uuid>'], output: '이번에 발신 접수한 요청 수',
   async run({ brain, options }) {
-    const result = await brain.channels.sendPending({ topic: String(options['topic']), id: options['id'] as string | undefined, date: options['date'] as string | undefined });
+    const result = await brain.channels.sendPending({ topic: options['topic'] as string | undefined, event: options['event'] as string | undefined, id: options['id'] as string | undefined, date: options['date'] as string | undefined });
     return result.ok ? { ok: true, data: { count: result.count }, text: [`${result.count}건을 발신 대기열에 넣었습니다`] } : result;
   },
 };

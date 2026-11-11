@@ -312,7 +312,7 @@ it('수동 일감 입력 migration은 현재 DB 소유 확장 역할에만 권�
     expect(await runMigrations({databaseUrl:db.url,clock,coreMaxVersion:45})).toMatchObject({ok:true,to:45});
     await provisionExtension(db.url,own,password);
     await admin.query(`create role "${foreign}" login; comment on role "${foreign}" is 'second-brain extension:synthetic_other_database'`);
-    expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,to:46,applied:['0046_extension_work_inputs.sql']});
+    expect(await runMigrations({databaseUrl:db.url,clock})).toMatchObject({ok:true,to:47,applied:['0046_extension_work_inputs.sql','0047_result_events.sql']});
     const allowed=async(role:string)=>(await admin.query("select has_function_privilege($1,'brain.extension_work_input(uuid,uuid)','execute') as allowed",[role])).rows[0].allowed;
     expect(await allowed(`brain_ext_${own}`)).toBe(true); expect(await allowed(foreign)).toBe(false);
     await provisionExtension(db.url,own,password);
