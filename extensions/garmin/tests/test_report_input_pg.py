@@ -239,5 +239,10 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             measurement = json.loads((fixture_path.parent / 'report_v8/measurement.json').read_text(encoding='utf-8'))
             self.assertIsNone(expected['measurement_error'])
             self.assertEqual(body._first_error(body._measurement_schema(body.load_schema()),measurement),expected['measurement_error'])
+            # 메시지 구조는 의도적으로 확장했다. 원래 계약의 나머지는 oracle과 같아야 한다.
+            for name in ('daily_analysis_output.schema.json', 'period_review_output.schema.json'):
+                message = contracts['schemas'][name]['properties'].pop('message')
+                self.assertEqual(message['required'], ['headline', 'recommendations', 'trend_line', 'limitations'])
+                contracts['schemas'][name]['required'].remove('message')
             self.assertEqual(contracts,expected['contracts'])
             self.assertEqual(digest.build(result.manifest,result.days,result.activities,result.labels,result.body),expected['digest'])

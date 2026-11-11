@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -206,6 +206,17 @@
       "required_settings": [
         "garmin.timezone",
         "garmin.analysis_model"
+      ]
+    },
+    {
+      "kind": "garmin.report_send",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report-send",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.connection_id"
       ]
     }
   ],

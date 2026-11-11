@@ -32,6 +32,7 @@ from garmin_pipeline import (
     errors,
     ports,
     report_input,
+    report_message,
     store,
 )
 
@@ -94,6 +95,7 @@ class DailyAnalysis:
     evidence: list[str] = field(default_factory=list)
     next_checks: list[str] = field(default_factory=list)
     usage: dict[str, int] | None = None
+    message: dict | None = None
 
 
 class WriterFailed(Exception):
@@ -333,6 +335,7 @@ def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
         data["judgments"],
         data["evidence"],
         data["next_checks"],
+        message=data.get("message"),
     )
 
 
@@ -999,9 +1002,10 @@ def run(
                     period_summary = "평가를 쓰지 못했다"
             report_md += f"\n\n### {label}\n\n{period_md.rstrip()}"
             period_summaries.append(f"{label}: {' '.join(period_summary.split())}")
-        text = _combined_summary(
-            text or SUMMARY_FALLBACK.format(report_date=today), period_summaries
-        )
+        text = report_message.saved_or_fallback(cfg, today, {
+            'day': text or SUMMARY_FALLBACK.format(report_date=today),
+            **{scope: value.split(': ', 1)[-1] for scope, value in zip(('7d', '30d', 'all'), period_summaries)},
+        })
         totals = [u for u in session_usage if u is not None]
         if len(totals) == 4:
             logger.info(
@@ -1139,6 +1143,7 @@ def _save_evaluation(cfg, day, scope, analysis):
                 report_md=analysis.report_md,
                 model=cfg.report_model or "",
                 created_at=dates.now_ms(),
+                message=getattr(analysis, "message", None),
             )
             conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
                          (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, day.isoformat(), scope, revision))

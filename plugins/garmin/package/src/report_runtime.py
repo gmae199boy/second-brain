@@ -1,7 +1,7 @@
 """Validated supervised report context; no standalone config file is loaded."""
 import json
 import shutil
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,13 +14,13 @@ class InvalidReportInput(Exception):
     pass
 
 
-def envelope(env):
+def envelope(env, *, sending=False):
     try:
-        account, values = decode_envelope(env, work_kinds=('garmin.report', 'garmin.report_regenerate'),
+        account, values = decode_envelope(env, work_kinds=(('garmin.report_send',) if sending else ('garmin.report', 'garmin.report_regenerate')),
                                           reject_duplicate_keys=True)
         # Collect shares settings validation but does not require an analysis model.
-        model = values['garmin.analysis_model']
-        if not model.strip():
+        model = values.get('garmin.analysis_model') if sending else values['garmin.analysis_model']
+        if not sending and not model.strip():
             raise ValueError('missing analysis model')
         timezone = values['garmin.timezone']
         ZoneInfo(timezone)
@@ -65,6 +65,8 @@ def run(env=None, *, writer=None):
     import os
     from garmin_pipeline import report
     actual = os.environ if env is None else env
+    if actual.get('BRAIN_WORK_KIND') == 'garmin.report_send':
+        return send_saved(actual)
     account, cfg = envelope(actual)
     try:
         day = scheduled_date(actual, cfg.timezone)
@@ -88,3 +90,30 @@ def run(env=None, *, writer=None):
             from garmin_pipeline import dates
             report_channel.failure(cfg, day if day is not None else dates.today(cfg), actual)
             raise
+
+
+def send_saved(env):
+    """manual의 target은 선택 계정의 리포트 날짜이며 기본값은 오늘이다."""
+    from garmin_pipeline import dates, report
+    import report_channel
+    try:
+        target = env['BRAIN_TARGET_ID']
+        day = None if target == 'default' else date.fromisoformat(target)
+        if day is not None and day.isoformat() != target:
+            raise ValueError('invalid report date')
+        # [ASSUMPTION] 날짜가 target인 이 manual만 연결은 검증된 사용자 설정에서 읽는다.
+        snapshot = json.loads(env['BRAIN_SETTINGS_SNAPSHOT'])
+        selected = dict(env, BRAIN_TARGET_ID=snapshot['values']['garmin.connection_id'])
+        account, cfg = envelope(selected, sending=True)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise InvalidReportInput('invalid report-send input') from exc
+    day = day or dates.today(cfg)
+    with store.supervised_account(account), store.report_session(cfg, blocking=False):
+        with store.write_session(cfg) as conn:
+            validate_account(conn, account, cfg)
+        # 각 attempt는 첫 선택 revision을 유지한다. 파일 생성과 분석기는 호출하지 않는다.
+        revisions = report._work_revisions(cfg, day, False)
+        if set(revisions) != {'day', '7d', '30d', 'all'}:
+            raise InvalidReportInput('missing saved evaluation')
+        request = report_channel.success(cfg, day, revisions, None, env, regenerate=True)
+    return json.dumps({'status': 'queued', 'request_id': str(request)})

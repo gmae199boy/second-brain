@@ -4,6 +4,7 @@ const rules = [
   { prefix:'tooling/skills-eval/', reason:'offline CLI skill behavior subprocess fixtures' },
   { prefix:'tooling/skill-coverage/', reason:'public CLI skill coverage policy inputs' },
   { prefix:'apps/cli/src/commands/messengers-', reason:'messenger credential CLI used by channel workers' },
+  { prefix:'apps/cli/src/adapters/telegram', reason:'Telegram adapter and markup used by supervised channel child process' },
   { prefix:'apps/cli/src/workers/channel-send.ts', reason:'channel adapter credential selection child process' },
   { prefix:'apps/cli/src/commands/channels-', reason:'core channel CLI and dispatch integration' },
   // Includes Garmin native SQL, pinned SQLite oracle, Python fixtures and subprocess readers.

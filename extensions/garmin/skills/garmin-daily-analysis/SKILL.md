@@ -228,7 +228,7 @@ description: Garmin 원본으로 하루 리포트를 쓴다. 수면, Body Batter
 - 시간 길이는 h:mm(운동 세트는 초), 시각은 한국 시각 HH:MM, 심박 bpm, HRV ms, 무게 kg(소수 한 자리)으로 쓴다.
 - 섹션에 데이터가 없으면 "데이터 없음 — <이유>" 한 줄을 쓴다. 섹션을 지우지 않는다(6 인바디는 예외).
 - 표 아래에 계산 방법을 설명하는 문장을 쓰지 않는다. 비교 일수처럼 꼭 알아야 할 것만 표 칸에 괄호로 넣는다(예: `5:16 (3일)`).
-- 최종 메시지는 `daily_analysis_output.schema.json`에 맞는 JSON 객체 하나다. `status`는 `ok` 또는 `failed`, `summary`는 Telegram용 평문 한두 문장, `report_md`는 위 틀의 Markdown 전문이다. `judgments`·`evidence`·`next_checks`는 필수 문자열 배열이다. `next_checks`는 섹션 8과 같은 항목이다. 실패에도 summary와 report_md에 실패 이유를 쓴다. JSON 앞뒤에 설명이나 코드 블록 울타리를 붙이지 않는다.
+- 최종 메시지는 `daily_analysis_output.schema.json`에 맞는 JSON 객체 하나다. `status`는 `ok` 또는 `failed`, `summary`는 메신저 중립 평문 한두 문장, `report_md`는 위 틀의 Markdown 전문이다. `judgments`·`evidence`·`next_checks`는 필수 문자열 배열이다. `next_checks`는 섹션 8과 같은 항목이다. 실패에도 summary와 report_md에 실패 이유를 쓴다. JSON 앞뒤에 설명이나 코드 블록 울타리를 붙이지 않는다.
 
 ## 금지
 - `<입력 폴더>/` 밖을 읽지 않는다. 계산용 임시 파일은 `<입력 폴더>/scratch/`에만 쓴다. SQLite를 열지 않는다. reports/를 포함한 다른 경로에는 쓰지 않는다.
@@ -237,3 +237,7 @@ description: Garmin 원본으로 하루 리포트를 쓴다. 수면, Body Batter
 - 계정 번호 같은 식별자를 리포트에 쓰지 않는다.
 
 - 유산소·따로 걷기를 권하지 않는다. 무게 제안은 기록과 회복 상태를 근거로 AI가 판단한다.
+
+## 짧은 메시지 필드
+
+최종 JSON의 `message`는 `headline`, `recommendations`, `trend_line`, `limitations`를 가진 객체다. `headline`은 회복 판정 한 줄(예: 약함)이며 연속 일수는 입력 근거가 있을 때만 붙인다. `recommendations`는 오늘과 다음 운동의 구체적 권고 최대 2개다. `trend_line`은 해당 범위의 흐름과 필요한 조치 한 줄이다. `limitations`에는 비교 기준·프로필 등 부족한 근거만 넣고 다른 필드에서 반복하지 않는다. 핵심 수치는 코드가 DB에서 읽으므로 이 필드들에 수치 목록을 다시 쓰지 않는다. 실패 시에는 `message`를 null로 둔다.

@@ -62,3 +62,47 @@ it('오류를 보수적으로 분류하고 재시도 하한을 추출한다', as
   expect(await sender.sendMessage({ ...input, text: '😀'.repeat(2049) })).toMatchObject({ outcome: 'definite_failed', code: 'too_large', retryable: false });
   expect(send).toHaveBeenCalledTimes(7);
 });
+
+it('명시된 중립 마크업만 HTML로 바꾸며 특수문자를 escape한다', async () => {
+  const send = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"ok":true}'));
+  await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: '2', text: '[brain-markup-v1]\n# 제목 <>&\n\n**회복**\n- <script>&' });
+  expect(JSON.parse(String(send.mock.calls[0]![1]!.body))).toEqual({ chat_id: 'chat', message_thread_id: '2',
+    text: '<b>제목 &lt;&gt;&amp;</b>\n\n<b>회복</b>\n• &lt;script&gt;&amp;', parse_mode: 'HTML' });
+});
+
+it('접두어 없는 기존 생산자의 마크업과 HTML 문자는 평문으로 보낸다', async () => {
+  const send = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"ok":true}'));
+  const text = '# 제목 **강조** <>&';
+  await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text });
+  expect(JSON.parse(String(send.mock.calls[0]![1]!.body))).toEqual({ chat_id: 'chat', text });
+});
+
+it('HTML 길이 상한·잘못된 강조는 평문으로 내리고 UTF-16 경계를 지킨다', async () => {
+  for (const body of ['# ' + '&'.repeat(1000), '**닫히지 않은 강조', '😀'.repeat(3000)]) {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"ok":true}'));
+    await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text: '[brain-markup-v1]\n' + body });
+    const payload = JSON.parse(String(send.mock.calls[0]![1]!.body));
+    expect(payload.parse_mode).toBeUndefined();
+    expect(payload.text.length).toBeLessThanOrEqual(4096);
+    expect(payload.text.isWellFormed()).toBe(true);
+    expect(payload.text).not.toContain('[brain-markup-v1]');
+  }
+});
+
+it('확정 HTML parse 거부만 같은 시도에서 평문으로 다시 보낸다', async () => {
+  const send = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, description: "Bad Request: can't parse entities" }), { status: 400 }))
+    .mockResolvedValueOnce(new Response('{"ok":true,"result":{"message_id":5}}'));
+  expect(await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text: '[brain-markup-v1]\n# 제목' })).toMatchObject({ ok: true, messageId: '5' });
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(String(send.mock.calls[1]![1]!.body))).toEqual({ chat_id: 'chat', text: '제목' });
+});
+
+it('HTML 전송 결과가 불명확하거나 일반 400이면 재전송하지 않는다', async () => {
+  for (const failure of [new TypeError('unknown'), new Response('', { status: 400 }), new Response('{"ok":false}'), new Response('', { status: 503 })]) {
+    const send = vi.fn<typeof fetch>();
+    if (failure instanceof Error) send.mockRejectedValueOnce(failure);
+    else send.mockResolvedValueOnce(failure);
+    expect(await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text: '[brain-markup-v1]\n# 제목' })).toMatchObject({ ok: false });
+    expect(send).toHaveBeenCalledTimes(1);
+  }
+});

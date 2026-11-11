@@ -8,11 +8,11 @@ import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
 import { provisionExtension, runMigrations } from 'second_brain/postgres';
 
-it('새 설치는 core 31과 Garmin 16 및 native 표를 적용한다', async () => {
+it('새 설치는 core 31과 Garmin 17 및 native 표를 적용한다', async () => {
  const fixture=await extHome();
  try {
   const installed=await fixture.run(['ext','install','garmin','--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
-  expect((await fixture.ledger('garmin')).map(row=>row.version)).toEqual(Array.from({length:16},(_,i)=>i+1));
+  expect((await fixture.ledger('garmin')).map(row=>row.version)).toEqual(Array.from({length:17},(_,i)=>i+1));
   expect(await fixture.ledger('core')).toContainEqual({owner:'core',version:31});
   expect(await fixture.db.rows("select to_regclass('garmin.raw_records') as raw, to_regclass('garmin.collect_state') as collect")).toEqual([{raw:null,collect:null}]);
   expect(await fixture.db.rows("select to_regclass('garmin.account_connections') is not null as accounts, to_regclass('garmin.evaluation_revisions') is not null as revisions, to_regclass('garmin.evaluation_files') is not null as files")).toEqual([{accounts:true,revisions:true,files:true}]);
@@ -99,7 +99,8 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   const upgraded=await fixture.run(['ext','install','--package',current,'--json']);
   expect(upgraded.code,upgraded.stdout+upgraded.stderr).toBe(0);
   expect(await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'")).toEqual([{version:currentManifest.version,package_digest:currentDigest,plugin_version:currentManifest.plugin_version}]);
-  expect(await saved()).toEqual(before);
+  expect(await saved()).toEqual({...before,ledger:[...before.ledger,{owner:'garmin',version:17}]});
+  expect(await fixture.db.rows("select data_type,is_nullable from information_schema.columns where table_schema='garmin' and table_name='evaluation_revisions' and column_name='message'")).toEqual([{data_type:'jsonb',is_nullable:'YES'}]);
   expect(probe()).toMatchObject({no_excess_functions:true,send_execute:true});
   for(const path of ['src/role_probe.py','src/batch_import.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
  } finally {await store.close();await fixture.cleanup();await rm(temp,{recursive:true,force:true});}

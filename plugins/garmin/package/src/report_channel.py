@@ -2,7 +2,7 @@
 import hashlib
 import json
 import os
-from garmin_pipeline import dates, errors, ports, report, store
+from garmin_pipeline import dates, errors, ports, report, report_message, store
 
 
 def _key(*parts):
@@ -26,15 +26,8 @@ def success(cfg, day, revisions, document, env=None, *, regenerate=False):
         return
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
-            summaries = {}
-            for scope in ('day', '7d', '30d', 'all'):
-                row = conn.execute('''select summary from garmin.evaluation_revisions where
-                    (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,%s,%s)''',
-                    (conn.user_id, conn.connection_id, day.isoformat(), scope, revisions[scope])).fetchone()
-                if row is None: raise ValueError('missing evaluation')
-                summaries[scope] = ' '.join(row[0].split())
-            summary = report._combined_summary(summaries['day'], [f'{label}: {summaries[scope]}' for scope, label in (('7d','7일'),('30d','30일'),('all','전체'))])
-            rows = conn.execute('''select i.name,i.kind,i.request_id from garmin.report_publication_items i
+            summary = report_message.load(conn, day, revisions)
+            rows = [] if document is None else conn.execute('''select i.name,i.kind,i.request_id from garmin.report_publication_items i
                 join garmin.evaluation_files f on (f.user_id,f.connection_id,f.report_date,f.scope,f.revision,f.request_id)=(i.user_id,i.connection_id,i.report_date,i.scope,i.revision,i.request_id)
                 where (i.user_id,i.connection_id,i.report_date,i.scope,i.revision)=(%s,%s,%s,%s,%s) and f.file_id is not null order by i.name''',
                 (conn.user_id, conn.connection_id, day.isoformat(), 'day', revisions['day'])).fetchall()
@@ -48,10 +41,10 @@ def success(cfg, day, revisions, document, env=None, *, regenerate=False):
                 else: raise ValueError('invalid graph group')
                 groups[index].append({'request_id': str(request), 'filename': name})
             albums = [group[start:start + 10] for group in groups for start in range(0, len(group), 10)]
-            version = _key(*[f'{scope}:{revisions[scope]}' for scope in ('day','7d','30d','all')])
+            version = _key(report_message.FORMAT_VERSION, *[f'{scope}:{revisions[scope]}' for scope in ('day','7d','30d','all')])
             # 새 revision은 새 발신이고, 같은 revision의 재시도는 같은 요청이다.
             identity = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report', version)
-            return _submit(conn, env, identity, 'report', version, summary, document, albums)
+            return _submit(conn, env, identity, 'report', version, summary, document, None if document is None else albums)
 
 
 def failure(cfg, day, env=None):

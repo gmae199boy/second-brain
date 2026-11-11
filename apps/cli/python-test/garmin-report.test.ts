@@ -358,3 +358,30 @@ it.each(['fail','invalid','status-failed'])('model %s on 7d keeps later successe
     expect(await t.revisions()).toHaveLength(4);
   } finally {await t.close();}
 },180000);
+
+it('저장된 과거 평가를 분석 없이 새 서식으로 발신하고 같은 revision은 한 번만 접수한다', async () => {
+  const t = await setup();
+  try {
+    await t.store.setSetting({ userId: self, key: 'garmin.connection_id', value: t.account, updatedAt: new Date() });
+    const day = '2026-01-02';
+    await t.fixture.db.query(`insert into garmin.day_summary(user_id,connection_id,date,sleep_total_s,sleep_score,hrv_avg,wake_bb) values ('${self}','${t.account}','${day}',19920,45,27,22)`);
+    for (const scope of ['day', '7d', '30d', 'all']) await t.fixture.db.query(`insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision)
+      values ('${self}','${t.account}','${day}','${scope}','회복이 약하다. 직전 기간 측정값이 부족하다.','[]','[]','["다음 운동 부담을 줄인다"]','합성 평가','fixture',1,1)`);
+    const before = await t.revisions();
+    const send = async () => {
+      const result = await t.fixture.run(['ext','run','garmin','report-send','--target',day,'--json']);
+      expect(result.code, result.stdout + result.stderr).toBe(0);
+      const work = String(result.body.data.work_id); await t.outcome(work, 'succeeded'); return work;
+    };
+    await send(); await send();
+    expect(await t.calls()).toEqual([]);
+    expect(await t.revisions()).toEqual(before);
+    const requests = await t.fixture.db.rows(`select body,revision,bundle from brain.channel_dispatches where topic='garmin.report'`);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.bundle).toBeNull();
+    expect(requests[0]?.body).toContain('[brain-markup-v1]\n# 🩺 Garmin 일일 리포트 · 01/02 (금)');
+    expect(requests[0]?.body).toContain('수면 5:32 · 점수 45');
+    expect(String(requests[0]?.body).match(/직전 기간 측정값이 부족하다/g)).toHaveLength(1);
+    expect(await t.fixture.db.rows(`select count(*)::int n from brain.file_requests where source='garmin'`)).toEqual([{ n: 0 }]);
+  } finally { await t.close(); }
+}, 180000);

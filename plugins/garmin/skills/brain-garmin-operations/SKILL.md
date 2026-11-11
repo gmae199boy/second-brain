@@ -1,6 +1,6 @@
 ---
 name: brain-garmin-operations
-description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 리포트 생성·재생성 또는 건강 수치·최근 평가 조회 요청에 사용합니다.
+description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 리포트 생성·재생성·저장 평가 재발신 또는 건강 수치·최근 평가 조회 요청에 사용합니다.
 ---
 
 # Garmin 운영
@@ -13,6 +13,7 @@ description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 리포�
 - `brain ext run garmin collect --target <connection-id> --json`: 외부 계정에서 실제 수집한다. 계정·기간·변경 영향을 확인하고 명시적 동의 후 실행한다. 로그인은 사용자가 직접 터미널에서 한다.
 - `brain ext run garmin report --target <connection-id> --json`: 리포트 생성을 요청한다. 결과가 외부로 발신될 수 있으므로 날짜·대상·발신 범위를 설명하고 명시적 동의 후 실행한다.
 - `brain ext run garmin report-regenerate --target <connection-id> --json`: 기존 리포트 재생성을 요청한다. 대체 범위와 외부 발신 가능성에 대해 명시적 확인 후 실행한다.
+- `brain ext run garmin report-send --target <YYYY-MM-DD> --json`: 분석을 실행하지 않고 저장된 평가 revision과 DB 일일 지표로 메시지만 다시 렌더링해 발신한다. 이 manual의 target은 날짜이며 생략하면 설정된 계정 시간대의 오늘이다. 연결은 `garmin.connection_id` 설정을 사용한다. 네 범위 평가가 없으면 실패하며 같은 서식 버전·revision은 한 번만 접수한다. 날짜·계정·외부 발신 범위를 설명하고 명시적 동의 후 실행한다. 재발신의 완료와 실제 채널 전달 성공은 구별한다.
 - 조회는 `brain ext garmin daily-values --input '<json>' --json`, `brain ext garmin period-summary --input '<json>' --json`, `brain ext garmin recent-evaluations --input '<json>' --json`을 사용한다. 입력 키·허용 지표는 현재 schema에서만 가져오고 연결·시간대는 brain-config 스킬의 일반 키 조회로 확인한다. 건강 기간·NULL/0 구분과 집계는 core brain-recall 스킬을 따른다. 최근 평가는 실제 반환된 근거와 범위만 보고한다.
 
 수집·리포트·재생성의 target은 일반 설정 `garmin.connection_id`에서 읽은 정규형 UUID다. `brain guide schema config --json` 지원 확인 후 `brain config get garmin.connection_id --json`과 `brain config get garmin.timezone --json`으로 연결·시간대를 읽는다. 연결 ID가 없거나 UUID 형식이 잘못되었으면 접수하지 말고 설정 필요를 보고한다. 사용자 제공 값도 설정과 대조하고 다르면 확인한다. 이관 3개 manual은 capture manifest를 쓰므로 같은 target 계약을 임의 적용하지 않는다.

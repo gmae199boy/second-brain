@@ -28,7 +28,8 @@ class Conn:
     def __init__(self): self.calls, self.requests = [], {}
     def execute(self, sql, args):
         self.calls.append((sql,args))
-        if 'select summary' in sql: return Cursor(('synthetic '+args[3],))
+        if 'select summary' in sql: return Cursor(('synthetic '+args[3], '[]', '[]', None))
+        if 'select sleep_total_s' in sql: return Cursor((19920,45,27,22))
         if 'select i.name' in sql: return Cursor(rows=[('01.png','graph',UUID(int=8)),('50.png','graph',UUID(int=9)),('report.md','report',UUID(int=10))])
         if 'extension_channel_send' in sql:
             identity = (args[2], args[3])
@@ -53,12 +54,28 @@ class ChannelTest(unittest.TestCase):
         self.assertEqual(calls[0][2], 'garmin.report')
         self.assertIsNone(calls[0][9])
         self.assertEqual(calls[0][3], report_channel._key(str(conn.user_id), str(conn.connection_id), DAY.isoformat(), 'report', calls[0][5]))
-        self.assertEqual(calls[0][5], report_channel._key(*[f'{scope}:{REVISIONS[scope]}' for scope in ('day', '7d', '30d', 'all')]))
+        self.assertEqual(calls[0][5], report_channel._key(report_channel.report_message.FORMAT_VERSION, *[f'{scope}:{REVISIONS[scope]}' for scope in ('day', '7d', '30d', 'all')]))
         self.assertEqual(calls[0][4], 'report')
         self.assertIn('7일: synthetic 7d', calls[0][6])
         self.assertEqual(calls[0][7], UUID(int=10))
         self.assertEqual([[photo['filename'] for photo in album] for album in json.loads(calls[0][8])], [['01.png'],['50.png']])
         self.assertFalse(any('delete' in sql.lower() for sql,_ in conn.calls))
+
+
+    def test_message_only_resend_and_format_version_idempotency(self):
+        conn = Conn(); self.setup_conn(conn)
+        first = report_channel.success(None, DAY, REVISIONS, None, ENV, regenerate=True)
+        retry = report_channel.success(None, DAY, REVISIONS, None, ENV, regenerate=True)
+        self.assertEqual(first, retry)
+        with patch.object(report_channel.report_message, 'FORMAT_VERSION', 'report-v2'):
+            changed = report_channel.success(None, DAY, REVISIONS, None, ENV, regenerate=True)
+        self.assertNotEqual(first, changed)
+        for sql, args in conn.calls:
+            if 'extension_channel_send' in sql:
+                self.assertIsNone(args[7]); self.assertIsNone(args[8])
+                self.assertTrue(args[6].startswith('[brain-markup-v1]'))
+                self.assertIn('수면 5:32 · 점수 45', args[6])
+        self.assertFalse(any('select i.name' in sql for sql, _ in conn.calls))
 
     def test_regenerate_new_revision_sends_once_and_same_revision_retry_reuses_id(self):
         conn = Conn(); self.setup_conn(conn)
