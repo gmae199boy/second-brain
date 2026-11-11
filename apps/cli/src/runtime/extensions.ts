@@ -1,3 +1,4 @@
+import { detectCodexPath } from './executable.js';
 import { extensionTransitions } from './extension-transition.js';
 import { randomUUID } from 'node:crypto';
 import { prepareExtensionPackage, checkPackageCore, checkInstalledCore, digestPackageFiles, needsPython, observePackage, readPackageObservation } from './extension-package.js';
@@ -102,7 +103,7 @@ export async function installedExtensionMigrations(home: string, names: readonly
   }
   return owners;
 }
-export function extensionRuntime({ home, env, config, clock }: { home: string; env: NodeJS.ProcessEnv; config: ReadConfigResult; clock: Clock }): ExtensionRuntime {
+export function extensionRuntime({ home, env, config, clock, settingsStore }: { settingsStore?: import('second_brain').SettingsStore; home: string; env: NodeJS.ProcessEnv; config: ReadConfigResult; clock: Clock }): ExtensionRuntime {
   const transition = extensionTransitions(home);
   const databaseUrl = async () => {
     if (!config.ok) throw new Error('설정을 읽을 수 없습니다');
@@ -121,6 +122,7 @@ export function extensionRuntime({ home, env, config, clock }: { home: string; e
     finally { await file.close(); }
   }
   return {
+    prepareAnalysisAgent: async name => name === 'garmin' && settingsStore ? detectCodexPath(settingsStore, env) : undefined,
     validateSchema, validateValue, installedDirectory: name => join(home, 'extensions', name),
     async installedManifest(name) { if (!isExtensionName(name)) throw new Error('invalid extension'); return safeFile(['extensions', name, 'manifest.json']); },
     // [ASSUMPTION] 공개 보고 파일의 고정 이름은 public.json이다.

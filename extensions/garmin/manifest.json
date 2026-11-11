@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -284,6 +284,7 @@
     "REPORT_STALE",
     "REPORT_LOCKED",
     "REPORT_FAILED",
+    "ANALYSIS_AGENT_NOT_FOUND",
     "REPORT_UNAVAILABLE",
     "COLLECT_INCOMPLETE"
   ],

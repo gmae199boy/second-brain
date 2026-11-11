@@ -74,3 +74,11 @@ it('배포 스킬의 폴더명과 name은 하네스 namespace 없이도 구별�
   const deployedNames = [...core, ...garmin].map(path => basename(dirname(path)));
   expect(new Set(deployedNames).size).toBe(deployedNames.length);
 });
+
+it('Codex 실행 경로 설정과 doctor 복구를 배포 설정 스킬이 덮는다', () => {
+  const text = body('plugin/skills/brain-config/SKILL.md');
+  expect(text).toContain('`brain config get agent.codex_path --json`');
+  expect(text).toContain('`brain config set agent.codex_path <절대경로> --json`');
+  expect(text).toContain('`brain doctor run --json`');
+  expect(text).toContain('--version');
+});

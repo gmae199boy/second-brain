@@ -27,6 +27,21 @@ class ModelProcessTest(unittest.TestCase):
         group.start(); cleanup.start()
         self.addCleanup(group.stop); self.addCleanup(cleanup.stop)
 
+    def test_missing_configured_agent_has_actionable_error_without_spawn(self):
+        with patch.dict(os.environ, {'PATH': '/usr/bin:/bin'}, clear=True), patch.object(report.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(report.AnalysisAgentNotFound, 'ANALYSIS_AGENT_NOT_FOUND.*brain config set agent.codex_path'):
+                report.CodexWriter().write(self.cfg, [])
+            spawn.assert_not_called()
+        for path in ('codex', '/synthetic/missing/codex'):
+            with self.assertRaises(report.AnalysisAgentNotFound):
+                report.codex_executable({'BRAIN_CODEX_PATH': path})
+
+    def test_supervised_runtime_rejects_missing_agent_before_database(self):
+        with patch.object(report_runtime.store, 'report_session') as session:
+            with self.assertRaises(report.AnalysisAgentNotFound):
+                report_runtime.run(report_env())
+            session.assert_not_called()
+
     def test_cleanup_rejects_non_owned_group_without_signalling(self):
         with patch.object(report.os, 'getpid', return_value=9), patch.object(report.os, 'getpgrp', return_value=8), patch.object(report.os, 'getsid', return_value=8), patch.object(report.os, 'kill') as kill:
             # The shared group must be owned by this report entry.
@@ -100,7 +115,7 @@ class ModelProcessTest(unittest.TestCase):
                 kwargs['stdout'].flush()
                 return proc
             out = io.StringIO()
-            with patch.dict(os.environ, {'BRAIN_ABI_VERSION':'1'}), \
+            with patch.dict(os.environ, {'BRAIN_ABI_VERSION':'1', 'BRAIN_CODEX_PATH': sys.executable}), \
                  patch.object(report.subprocess, 'Popen', side_effect=spawn), \
                  patch.object(report, '_trap_sigterm', return_value=(False, None)), \
                  patch.object(report.time, 'monotonic', side_effect=[0, 0, 30, 30, 31]), \

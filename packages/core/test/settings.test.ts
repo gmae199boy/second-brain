@@ -170,3 +170,15 @@ it('Telegram 사용자 설정은 빈 값으로 해제하고 토큰·chat id 형�
   }
   for (const value of ['0', '-0', '1.2', '+1', '-100x', '1\n', '9007199254740992']) expect(await brain.config.set({ key: 'telegram.chat_id', value })).toMatchObject({ ok: false, code: 'CONFIG_INVALID' });
 });
+
+it('Codex 경로는 global로 저장하며 절대 경로와 실행 검증을 요구한다', async () => {
+  const store = { ...memorySettingsStore(), ...memorySchemaStore({version:1}), async readSelfUser() { throw Error('global은 self가 필요 없다'); } };
+  const validateExecutablePath = vi.fn(async (value: string) => value === '/synthetic/codex' ? {ok:true as const,value} : {ok:false as const,message:'실행 불가'});
+  const brain = createSettingsBrain({store,clock:{now:()=>at},schemaVersions:{core:1},validateExecutablePath});
+  expect(await brain.config.get({key:'agent.codex_path'})).toMatchObject({ok:true,scope:'global',source:'default',value:''});
+  expect(await brain.config.set({key:'agent.codex_path',value:'codex'})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+  expect(validateExecutablePath).not.toHaveBeenCalled();
+  expect(await brain.config.set({key:'agent.codex_path',value:'/bad/codex'})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+  expect(await brain.config.set({key:'agent.codex_path',value:'/synthetic/codex'})).toMatchObject({ok:true,scope:'global',source:'db',value:'/synthetic/codex'});
+  expect(await store.getSetting({userId:null,key:'agent.codex_path'})).toMatchObject({setting:{value:'/synthetic/codex'}});
+});

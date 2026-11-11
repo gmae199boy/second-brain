@@ -32,6 +32,7 @@ async function setup(startDaemon=true) {
   const bin=join(home,'fake-bin'), control=join(extension,'report-fixture');
   await mkdir(bin,{recursive:true}); await mkdir(control,{recursive:true});
   await copyFile(join(root,'codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
+  await store.setSetting({userId:null,key:'agent.codex_path',value:join(bin,'codex'),updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.timezone',value:'UTC',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_model',value:'synthetic',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_reasoning_effort',value:'medium',updatedAt:new Date()});
@@ -43,7 +44,7 @@ async function setup(startDaemon=true) {
     const runtime=join(extension,'reports/accounts',self,target); await mkdir(runtime,{recursive:true});
     await writeFile(join(runtime,'profile.md'),`profile-${target}`);
   }
-  const env={...fixture.env,HOME:home,PATH:`${bin}:${fixture.env.PATH ?? ''}`,BRAIN_TELEGRAM_BOT_TOKEN:'synthetic-token',BRAIN_TELEGRAM_CHAT_ID:'synthetic-chat'};
+  const env={...fixture.env,HOME:home,PATH:'/usr/bin:/bin',BRAIN_TELEGRAM_BOT_TOKEN:'synthetic-token',BRAIN_TELEGRAM_CHAT_ID:'synthetic-chat'};
   const daemon=startDaemon ? runDaemon({home,env,clock:systemClock,idGen:ids,signal:controller.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200,channelTestEndpoint}}) : undefined;
   const calls=async():Promise<Call[]> => (await readFile(join(control,'calls.jsonl'),'utf8').catch(()=>'')) .split('\n').filter(Boolean).map(line=>JSON.parse(line) as Call);
   const enqueue=async(target=account,regenerate=false)=>{

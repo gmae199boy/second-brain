@@ -334,3 +334,5 @@ export * from './sources/sync.js';
 export type { WorkProgress, WorkProgressSink } from './queue/progress.js';
 
 export type { ChannelControlStore, ChannelControlFailure, ChannelRoute } from './channels/control.js';
+
+export * from './executable.js';
