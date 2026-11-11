@@ -19,7 +19,7 @@ import { readBuildIdentity } from '../install/installed.js';
 import { daemonLiveness } from '../daemon/liveness.js';
 import { readDaemonLock } from '../daemon/lock.js';
 import { systemTimer } from './clock.js';
-import { systemProcessLauncher } from './process-group.js';
+import { trackedProcessLauncher } from './process-registry.js';
 import { systemProcessInspector } from './process-inspector.js';
 
 // Capture at module load, before an install command can wait for the shared
@@ -140,7 +140,7 @@ export function extensionRuntime({ home, env, config, clock, settingsStore }: { 
     withHomeInstallLock: (run, signal) => withHomeInstallLock(home, run, signal),
     async withCommandLock(name, run, signal) {
       const { withExtensionInstallLock } = await import('second_brain/postgres');
-      return withExtensionInstallLock(await databaseUrl(), name, run, signal, { queryTimeoutMs: 1000 });
+      return withHomeInstallLock(home, async () => withExtensionInstallLock(await databaseUrl(), name, run, signal, { queryTimeoutMs: 1000 }), signal);
     },
     async withInstallLock(name, run, signal) {
       const { withExtensionInstallLock } = await import('second_brain/postgres');
@@ -159,7 +159,7 @@ export function extensionRuntime({ home, env, config, clock, settingsStore }: { 
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}; throw error; }
     },
     machineValues: name => ({ tokenstore: join(home, 'extensions', name, 'tokenstore') }),
-    databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal, resetOwnedStage) => prepareExtensionPython(directory, env, signal, resetOwnedStage), validatePreparedPython: (directory, signal) => validatePreparedPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => systemProcessLauncher.start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
+    databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal, resetOwnedStage) => prepareExtensionPython(directory, env, signal, resetOwnedStage), validatePreparedPython: (directory, signal) => validatePreparedPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => trackedProcessLauncher(home).start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
       prepareExternal: prepareExtensionPackage,
       captureRunningCore: async () => { await runningBuildIdentity; },

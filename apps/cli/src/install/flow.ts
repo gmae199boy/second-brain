@@ -315,6 +315,14 @@ export async function runInstall(
   deps: InstallDeps,
 ): Promise<InstallResult> {
   const home = configHome(env);
+  const previousInstall = await deps.installed.read(home);
+  const priorConfig = previousInstall ? await deps.config.read(home) : undefined;
+  const updating = priorConfig?.ok === true && priorConfig.recorded !== undefined;
+  if (updating) {
+    deps = { ...deps, isTTY: false };
+    flags = { ...flags, yes: true };
+    deps.log('기존 설치를 갱신합니다. 저장된 선택을 그대로 사용합니다');
+  }
   const warnings: WarningCode[] = [];
   /** One failure, with whatever warnings had been collected by then. */
   const fail = (failure: Failure): InstallResult => ({ ok: false, failure, warnings });
@@ -361,7 +369,7 @@ export async function runInstall(
   // re-run offers as its defaults, and what it must not overwrite with them. A
   // file that cannot be read at all stops the install here, with nothing
   // written: one typo must not cost the keys nothing asks about (F1).
-  const read = await deps.config.read(home);
+  const read = priorConfig ?? await deps.config.read(home);
   if (!read.ok) return fail({ code: read.code, message: read.message, exit: 2 });
   const recorded = read.recorded;
   const urlEnv = recorded?.storeUrlEnv ?? DEFAULT_STORE_URL_ENV;
@@ -516,7 +524,7 @@ export async function runInstall(
     });
   }
 
-  const previous = await deps.installed.read(home);
+  const previous = previousInstall;
   const build = await deps.installed.build();
   const registration = await deps.daemon.register(shim.path, env);
   const { message: daemonMessage, ...registered } = registration;

@@ -204,3 +204,31 @@ describe('PG installer flow', () => {
     expect(parseFlags(['--plugin-root', 'relative']).ok).toBe(false);
   });
 });
+
+describe('기존 홈 무인 갱신', () => {
+  it.each([true, false])('TTY %s에서도 기존 선택을 질문 없이 보존한다', async tty => {
+    const kit = harness(); kit.deps.isTTY = tty;
+    kit.deps.installed.read = async () => ({ commit: 'a'.repeat(40), schema_version: 46, node: '/usr/bin/node', plugin_root: null, installed_at: '2026-11-01T00:00:00Z' });
+    kit.deps.config.read = async () => ({ ok: true, warnings: [], recorded: { mirrorPath: '/tmp/custom-mirror', filesPath: '/tmp/custom-files', timezone: 'Europe/Berlin', updateAuto: false, extra: { custom: '보존' } } });
+    const detect = vi.fn(async () => true), connect = vi.fn(async () => ({ ok: true as const, target: '/tmp/settings', changed: false }));
+    kit.deps.connectors = [{ harness: 'synthetic', label: '시험', detect, connect } as never];
+    expect(await kit.run([])).toMatchObject({ ok: true, report: { mirror_path: '/tmp/custom-mirror', timezone: 'Europe/Berlin', update: { auto: false } } });
+    for (const prompt of Object.values(kit.deps.prompts)) expect(prompt).not.toHaveBeenCalled();
+    expect(detect).not.toHaveBeenCalled(); expect(connect).not.toHaveBeenCalled();
+    expect(kit.deps.config.write).toHaveBeenCalledWith(home, expect.objectContaining({ mirrorPath: '/tmp/custom-mirror', filesPath: '/tmp/custom-files', updateAuto: false, extra: { custom: '보존' } }));
+  });
+  it('새 필수 선택은 기본값을 적용하고 출력한다', async () => {
+    const kit = harness(); kit.deps.isTTY = true;
+    kit.deps.installed.read = async () => ({ commit: 'a'.repeat(40), schema_version: 46, node: '/usr/bin/node', plugin_root: null, installed_at: '2026-11-01T00:00:00Z' });
+    kit.deps.config.read = async () => ({ ok: true, warnings: [], recorded: { extra: {} } });
+    expect(await kit.run([])).toMatchObject({ ok: true, report: { timezone: 'Asia/Seoul', update: { auto: true } } });
+    for (const prompt of Object.values(kit.deps.prompts)) expect(prompt).not.toHaveBeenCalled();
+    expect(kit.lines.join('\n')).toContain('자동 업데이트는 켜져 있습니다');
+    expect(kit.lines.join('\n')).toContain('시간대: Asia/Seoul');
+  });
+  it('최초 TTY 설치 질문은 유지한다', async () => {
+    const kit = harness(); kit.deps.isTTY = true;
+    expect(await kit.run()).toMatchObject({ ok: true });
+    expect(kit.deps.prompts.text).toHaveBeenCalled(); expect(kit.deps.prompts.confirm).toHaveBeenCalled();
+  });
+});

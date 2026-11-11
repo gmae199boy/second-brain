@@ -16,3 +16,5 @@ description: 확장의 설치, 로그인, 연결 및 예약 상태를 확인하�
 5. 성공, 실패, 취소, 인증 미완료, 이미 완료된 경우 모두 마지막으로 `brain ext status <name> --json`을 재조회한다. 재조회에 실패하면 최종 상태를 미확인으로 보고하며 완료를 주장하지 않는다.
 
 마지막 상태의 `installed`, `enabled`, `install.result`, `install.stages`, `login`, `connection`, `schedule`을 근거로 완료된 단계와 미완료 단계를 구분하고 다음 행동을 안내한다. `skipped`는 해당 단계가 필요 없어 건너뛴 것이므로 성공과 구분해 보고한다. 기록이 없거나 `pending`, `failed`, 누락된 단계는 완료로 간주하지 않는다. `install.failed_stage`, `install.last_failure`와 명령 오류의 고정 코드가 있으면 보고한다. `connection_failed`는 연결과 예약 미완료를, `scheduler_unavailable`은 설치·연결과 예약 미완료를 구분한다. 최종 상태가 완료 조건을 뒷받침할 때만 완료라고 말한다. 공개 상태에 없는 사실을 추정하지 않는다.
+
+core 갱신은 brain-setup 스킬을 따른다. 기존 설치의 갱신에는 설정 질문과 offline 확인 문구가 없으며, 설치기의 자동 정지 검증 실패를 확장 재설치로 우회하지 않는다.

@@ -1,3 +1,4 @@
+import { runtimeFencePath, RUNTIME_FENCE_RECOVERY } from '../install/runtime-fence.js';
 import { daemonLiveness, daemonDeadReason } from '../daemon/liveness.js';
 import { execFile as execFileCallback } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -330,6 +331,7 @@ async function pluginCheck(
   config: ReadConfigResult,
   runGit: RunGit,
 ): Promise<DoctorCheck> {
+  if (await access(runtimeFencePath(home)).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) return { id: 'plugin', status: 'fail', detail: RUNTIME_FENCE_RECOVERY };
   const record = await readInstalled(home);
   const seen = await readPluginRun(home);
   // What is added to whatever the comparison below comes to. Both are about

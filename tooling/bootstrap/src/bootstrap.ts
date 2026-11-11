@@ -462,7 +462,7 @@ async function interactiveRefMode(ref: string, argv: readonly string[], env: Nod
 }
 
 /** Validate the incomplete promotion before allowing the installer to re-enter.
- * Its journal is an audit record only: the installer must ask again and recheck
+ * Its journal is an audit record only: the installer must automatically recheck
  * its own database and daemon fences before doing any migration. */
 async function validateInterruptedPromotion(home: string, repo: string, ref: string, installed: string, deps: BootstrapDeps): Promise<boolean> {
   const app = join(home, APP_FOLDER), previous = join(home, '.app-previous');
@@ -473,7 +473,7 @@ async function validateInterruptedPromotion(home: string, repo: string, ref: str
     const owner = typeof marker.owner === 'string' ? /^(\d+) ([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\n$/.exec(marker.owner) : null;
     const pid = Number(owner?.[1]);
     const confirmation = journal.offlineConfirmation;
-    if (marker.target !== ref || marker.hadPrevious !== true || !owner || !Number.isSafeInteger(pid) || pid < 1 || deps.alive(pid) || journal.promotionOwner !== marker.owner || !isCommit(marker.previousHead) || marker.previousHead !== journal.previousHead || journal.commit !== ref || !Array.isArray(journal.names) || journal.names.length === 0 || journal.names.some(name => typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,30}$/.test(name)) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner) || confirmation?.home !== deps.realpath(home) || confirmation.previous_commit !== installed || confirmation.target_commit !== ref || confirmation.method !== 'operator') return false;
+    if (marker.target !== ref || marker.hadPrevious !== true || !owner || !Number.isSafeInteger(pid) || pid < 1 || deps.alive(pid) || journal.promotionOwner !== marker.owner || !isCommit(marker.previousHead) || marker.previousHead !== journal.previousHead || journal.commit !== ref || !Array.isArray(journal.names) || journal.names.some(name => typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,30}$/.test(name)) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner) || confirmation?.home !== deps.realpath(home) || confirmation.previous_commit !== installed || confirmation.target_commit !== ref || (confirmation.method !== 'operator' && confirmation.method !== 'automatic')) return false;
     if (stagedTarget(app, deps) !== ref || await checkClone(app, repo, deps) !== 0 || await checkClone(previous, repo, deps) !== 0) return false;
     const [activeHead, oldHead] = await Promise.all([capture(['rev-parse', 'HEAD'], app, deps), capture(['rev-parse', 'HEAD'], previous, deps)]);
     if (activeHead.code !== 0 || activeHead.stdout.trim() !== ref || oldHead.code !== 0 || oldHead.stdout.trim() !== marker.previousHead) return false;
@@ -567,6 +567,9 @@ async function hookMode(
       return await finishAppPromotion(home, repo, ref, lockOwner, deps) ? 0 : failed('중단된 app 전환 복구');
     }
 
+    const interrupted = deps.exists(join(home, '.app-promotion.json'));
+    if (interrupted && (!taken.commit || !await validateInterruptedPromotion(home, repo, ref, taken.commit, deps))) return failed('중단된 app 전환 신원 확인');
+    if (!interrupted && deps.exists(join(home, '.app-previous'))) return failed('중단된 app 전환 복구');
     if (deps.exists(join(home, '.app-next'))) return failed('중단된 app 전환 복구');
     const prepared = deps.exists(app) ? await prepareAppAt(app, repo, ref, taken.commit, deps, true) : 0;
     if (prepared === 'quiet') return 0;

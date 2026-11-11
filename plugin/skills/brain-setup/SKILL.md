@@ -7,7 +7,7 @@ description: Personal Brain core 설치·재설정, 하네스 연결 또는 설�
 
 먼저 `brain guide schema setup --json`으로 요청 명령·옵션을 확인한다. CLI가 없으면 공식 README의 core 설치 안내만 제공한다. 명령이 없거나 schema 확인이 실패하면 미구현 또는 확인 불가로 보고 중단하며 임의 설치 스크립트를 만들지 않는다. 확장 설치는 brain-install 스킬이다.
 
-사용자가 실행을 요청한 경우에만 대상과 설치·데몬·하네스 변경 영향을 설명하고 동의를 받는다. 이미 구체적인 변경을 요청했다면 그 요청을 동의로 쓴다. `brain setup run`은 사용자 터미널에서 설치기를 실행하도록 안내한다. 자동 실행이 필요하면 schema의 동의 옵션에 대해 먼저 명시적 확인을 받는다. `brain setup connect <harness> --json`은 확인한 하네스만 연결한다.
+사용자가 실행을 요청한 경우에만 대상과 설치·데몬·하네스 변경 영향을 설명하고 동의를 받는다. 이미 구체적인 변경을 요청했다면 그 요청을 동의로 쓴다. `brain setup run`의 최초 설치는 사용자 터미널에서 설정 질문에 답하도록 안내한다. 이미 설치된 홈의 갱신은 기존 선택을 질문 없이 보존하며, 구체적인 갱신 요청이 있으면 schema의 동의 옵션으로 실행한다. core 갱신은 설치기가 자동 정지를 검증하므로 offline 확인 문구를 요청하지 않는다. 자동 갱신 중 수집은 spool에 보류되고 이후 drain된다. 실패하면 `brain doctor run --json`과 bootstrap.log를 확인하고, core-update.json이 남았다면 이전 설치와 자식 종료 뒤 같은 설치기를 재실행하여 로그인 상태를 복구한다. 정지 기록을 삭제하거나 DB 역할을 임의로 바꾸지 않는다. `brain setup connect <harness> --json`은 확인한 하네스만 연결한다.
 
 `brain setup uninstall --json`은 데몬·설치 흔적을 제거하므로 대상과 영향을 제시하고 명시적 확인을 받은 뒤에만 실행한다. PostgreSQL 볼륨은 기본 보존이다. 볼륨 삭제를 요청해도 복구 불가한 데이터 손실 범위를 별도로 명시해 확인받은 뒤에만 schema의 `--delete-volume --yes`를 사용한다. 단순 제거 문의를 삭제 동의로 쓰지 않는다.
 

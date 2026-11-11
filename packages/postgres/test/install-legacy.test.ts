@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { createTestDatabase, type TestDatabase } from '@second-brain/test-db';
+import { createIsolatedTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import type { CommandRunner } from '../../../apps/cli/src/runtime/command-runner.js';
-import type { OfflineConfirmationRequest } from '../../../apps/cli/src/install/postgres.js';
+import type { OfflineVerificationRequest } from '../../../apps/cli/src/install/postgres.js';
 import { installPostgres } from '../../../apps/cli/dist/install/postgres.js';
 import { database, clock } from './fixture.js';
 import { runMigrations } from '../src/index.js';
@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 async function legacyWorld(schema = 27) {
   const home = await mkdtemp(join(tmpdir(), 'brain-legacy-')); homes.push(home);
-  const db = await database(false, createTestDatabase); databases.push(db);
+  const db = await database(false, createIsolatedTestDatabase); databases.push(db);
   const dbName = new URL(db.url).pathname.slice(1);
   if (!/^brain_test_[a-f0-9]+$/.test(dbName)) throw new Error('invalid database');
   await db.query(`alter database "${dbName}" owner to brain_owner`);
@@ -91,7 +91,7 @@ async function legacyWorld(schema = 27) {
     return good();
   };
   const options = { home, urlEnv: 'BRAIN_DATABASE_URL', env, clock, runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: dbName };
-  const install = (confirmOffline?: (request: OfflineConfirmationRequest) => Promise<string>) => installPostgres({ ...options, ...(confirmOffline ? { confirmOffline } : {}) });
+  const install = (observeOffline?: (request: OfflineVerificationRequest) => Promise<string>) => installPostgres({ ...options, ...(observeOffline ? { observeOffline } : {}) });
   return { home, db, dir, build, installed, schedule, work, completed, attempt, options, install, manifestPath };
 }
 // Only columns added, removed, or derived by 0032/0033/0036/0037 are
@@ -134,8 +134,8 @@ const snapshot = async (db: TestDatabase) => ({ ledger: await db.rows('select * 
 it.each([11,27,34])('L1 schema%i를 전환하고 기억·사용자 보류·예약 및 회계를 보존한다', async schema => {
   const k = await legacyWorld(schema);
   const before = await normalized(k.db, schema);
-  const result = await k.install(async r => { expect(r.legacySchema).toBe(schema); return r.challenge; });
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 46, offline_confirmation: { previous_commit: k.installed.commit, target_commit: k.build.commit, method: 'operator' } } });
+  const result = await k.install(async r => { expect(r.legacySchema).toBe(schema); return r.verificationId; });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 46, offline_confirmation: { previous_commit: k.installed.commit, target_commit: k.build.commit, method: 'automatic' } } });
   expect(await k.db.rows("select version from brain.schema_migrations where owner='testext' order by version")).toEqual([{ version: 1 }, { version: 2 }]);
   expect(result.ok && result.report.applied.filter(name => name === '0002_marker.sql')).toEqual(['0002_marker.sql']);
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
@@ -162,7 +162,7 @@ it.each(['enabled','hold','schedule','work','claim','attempt','completed-attempt
   const beforeJournal = await readFile(journalPath, 'utf8').catch(() => null);
   await mkdir(join(k.home, 'app')); await writeFile(join(k.home, 'app/sentinel'), 'unchanged');
   const before = await snapshot(k.db); let called = false;
-  const result = await k.install(async r => { called = true; return r.challenge; });
+  const result = await k.install(async r => { called = true; return r.verificationId; });
   expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED' }); expect(called).toBe(false);
   expect(await snapshot(k.db)).toEqual(before);
   expect(await readFile(journalPath, 'utf8').catch(() => null)).toBe(beforeJournal);
@@ -179,7 +179,7 @@ it.each(['missing','invalid','null','same','new-schema','negative','zero','below
   if (mode === 'negative' || mode === 'zero' || mode === 'below-registry') await writeFile(path, JSON.stringify({ ...k.installed, schema_version: mode === 'negative' ? -1 : mode === 'zero' ? 0 : 10 }));
   if (mode === 'manifest') { const m = JSON.parse(await readFile(k.manifestPath, 'utf8')); m.core_compat = { min: '9.0.0', max_exclusive: '10.0.0' }; await writeFile(k.manifestPath, JSON.stringify(m)); }
   const before = await snapshot(k.db); let called = false;
-  expect(await k.install(async r => { called = true; return r.challenge; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async r => { called = true; return r.verificationId; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(called).toBe(false); expect(await snapshot(k.db)).toEqual(before);
 });
 
@@ -188,7 +188,7 @@ it('L3 적용된 확장 v1 checksum 불일치는 변경 전에 거부한다', as
   await mkdir(join(k.home, 'app')); await writeFile(join(k.home, 'app/sentinel'), 'unchanged');
   await writeFile(join(k.dir, 'migrations/0001_testext.sql'), 'select 1;');
   let called = false;
-  const result = await k.install(async r => { called = true; return r.challenge; });
+  const result = await k.install(async r => { called = true; return r.verificationId; });
   expect(result.ok).toBe(false); if (result.ok) throw new Error('expected refusal');
   expect(['MIGRATION_FAILED', 'DB_LOCKED']).toContain(result.code);
   expect(called).toBe(false); expect(await snapshot(k.db)).toEqual(before); expect(await normalized(k.db)).toEqual(data);
@@ -202,7 +202,7 @@ it('L3 core ledger checksum 불일치는 확인과 변경 전에 거부한다', 
   const before = await snapshot(k.db), data = await normalized(k.db);
   await mkdir(join(k.home, 'app')); await writeFile(join(k.home, 'app/sentinel'), 'unchanged');
   let called = false;
-  expect(await k.install(async r => { called = true; return r.challenge; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
+  expect(await k.install(async r => { called = true; return r.verificationId; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
   expect(called).toBe(false); expect(await snapshot(k.db)).toEqual(before); expect(await normalized(k.db)).toEqual(data);
   expect(await readFile(join(k.home, 'app/sentinel'), 'utf8')).toBe('unchanged');
   await expect(readFile(join(k.home, 'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -215,7 +215,7 @@ it.each(['tail','empty'] as const)('L3 core %s 이력 누락은 확인과 변경
   const rows = async () => Promise.all(['users','sessions','messages','files','schedules','work_items','work_attempts','work_hold_groups','extensions','extension_work_kinds'].map(table => k.db.rows(`select to_jsonb(t) as row from brain.${table} t order by to_jsonb(t)::text`)));
   const beforeRows = await rows(); await mkdir(join(k.home, 'app')); await writeFile(join(k.home, 'app/sentinel'), 'unchanged');
   let called = false;
-  expect(await k.install(async r => { called = true; return r.challenge; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async r => { called = true; return r.verificationId; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(called).toBe(false); expect(await snapshot(k.db)).toEqual(before); expect(await rows()).toEqual(beforeRows);
   expect(await readFile(join(k.home, 'app/sentinel'), 'utf8')).toBe('unchanged');
   await expect(readFile(join(k.home, 'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -246,18 +246,18 @@ it.each(['before-tail','before-empty','after-tail','after-empty','control'] as c
     import { installPostgres } from ${JSON.stringify(moduleUrl)};
     const pg=createRequire(${JSON.stringify(pgRequire)})('pg'), env=process.env;
     const runner=async r=>r.args[0]==='volume'?{ok:false,stdout:'',stderr:'no such volume',message:'missing'}:{ok:true,stdout:'',stderr:''};
-    const result=await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,confirmOffline:async r=>{await writeFile(env.CASE_CHALLENGE,r.challenge); if(env.CASE_DELETE){const client=new pg.Client({connectionString:env.CASE_DB});await client.connect();try{await client.query(env.CASE_DELETE)}finally{await client.end()}} return r.challenge;}});
+    const result=await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,observeOffline:async r=>{await writeFile(env.CASE_CHALLENGE,r.verificationId); if(env.CASE_DELETE){const client=new pg.Client({connectionString:env.CASE_DB});await client.connect();try{await client.query(env.CASE_DELETE)}finally{await client.end()}} return r.verificationId;}});
     process.stdout.write(JSON.stringify(result));`;
   const env = { ...process.env, CASE_HOME:k.home, CASE_DB:k.db.url, CASE_NAME:k.options.databaseName, CASE_CHALLENGE:challenge, CASE_DELETE:mode.startsWith('after') ? deleteSql : '', SECOND_BRAIN_STAGED_APP:stage, SECOND_BRAIN_PREVIOUS_APP_HEAD:head, SECOND_BRAIN_INSTALL_LOCK_OWNER:lockOwner };
   const result = JSON.parse((await run(process.execPath,['--input-type=module','-e',script],{env,timeout:30_000})).stdout);
   if (mode === 'control') {
-    expect(result).toMatchObject({ok:true}); expect(await readFile(challenge,'utf8')).toContain('확인 ');
+    expect(result).toMatchObject({ok:true}); expect(await readFile(challenge,'utf8')).toMatch(/^[0-9a-f-]{36}$/);
     expect(await publicCreate()).toEqual({granted:false});
     expect(JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8'))).toMatchObject({target:k.build.commit,hadPrevious:true});
     expect(await readFile(join(app,'apps/cli/dist/build.json'),'utf8')).toEqual(await readFile(join(stage,'apps/cli/dist/build.json'),'utf8'));
   } else {
     expect(result).toMatchObject({ok:false,code:'DB_LOCKED'});
-    if (mode.startsWith('after')) expect(await readFile(challenge,'utf8')).toContain('확인 ');
+    if (mode.startsWith('after')) expect(await readFile(challenge,'utf8')).toMatch(/^[0-9a-f-]{36}$/);
     else await expect(readFile(challenge)).rejects.toMatchObject({code:'ENOENT'});
     expect(await publicCreate()).toEqual({granted:true});
     expect(await readFile(join(app,'README.md'))).toEqual(appFile);
@@ -269,7 +269,7 @@ it.each(['before-tail','before-empty','after-tail','after-empty','control'] as c
   }
 }, 60_000);
 
-it.each(['missing','wrong','home','old','enabled','hold','schedule','work','claim','attempt','completed-attempt','core-tail','checksum','core-checksum','symlink','manifest','daemon','installed','build','home-lock','registry','gate','journal'] as const)('L4 %s 확인은 변경 전에 거부한다', async mode => {
+it.each(['enabled','hold','schedule','work','claim','attempt','completed-attempt','core-tail','checksum','core-checksum','symlink','manifest','daemon','installed','build','home-lock','registry','gate','journal'] as const)('L4 %s 확인은 변경 전에 거부한다', async mode => {
   const k = await legacyWorld();
   if (mode === 'gate') {
     expect(await runMigrations({ databaseUrl:k.db.url, clock, coreMaxVersion:31 })).toMatchObject({ok:true});
@@ -286,10 +286,10 @@ it.each(['missing','wrong','home','old','enabled','hold','schedule','work','clai
     await cp(fileURLToPath(new URL('../../../apps/cli/dist/',import.meta.url)),join(alternate,'dist'),{recursive:true});
     await symlink(fileURLToPath(new URL('../../../apps/cli/node_modules',import.meta.url)),join(alternate,'node_modules'));
     const isolated = await import(pathToFileURL(join(alternate,'dist/install/postgres.js')).href);
-    install = confirmOffline => isolated.installPostgres({ ...k.options, ...(confirmOffline ? {confirmOffline} : {}) });
+    install = observeOffline => isolated.installPostgres({ ...k.options, ...(observeOffline ? {observeOffline} : {}) });
     buildPath=join(alternate,'dist/build.json');
   }
-  const result = await install(mode === 'missing' ? undefined : async r => {
+  const result = await install(async r => {
     if (mode === 'installed') await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:'c'.repeat(40)}));
     if (mode === 'build') await writeFile(buildPath,JSON.stringify({...k.build,commit:'d'.repeat(40)}));
     if (mode === 'home-lock') await writeFile(join(k.home,'install.lock/owner'),'foreign-owner\n');
@@ -312,9 +312,7 @@ it.each(['missing','wrong','home','old','enabled','hold','schedule','work','clai
     }
     if (mode === 'manifest') await writeFile(k.manifestPath, '{}');
     if (mode === 'daemon') await writeFile(join(k.home, 'run/daemon.pid'), 'changed');
-    if (mode === 'home') return r.challenge.replace(r.home, `${r.home}-other`);
-    if (mode === 'wrong' || mode === 'old') return `${r.challenge}-wrong`;
-    return r.challenge;
+    return r.verificationId;
   });
   expect(result).toMatchObject({ ok: false, code: mode === 'checksum' || mode === 'core-checksum' ? 'MIGRATION_FAILED' : 'DB_LOCKED' });
   const afterLedger = (await snapshot(k.db)).ledger;
@@ -338,7 +336,7 @@ it.each(['31','35','gate','extension'] as const)('L5 %s 중단 뒤 새 확인과
   if (point === '35') await k.db.query('create table brain.extension_quiesce (name text, owner text, started_at timestamptz)');
   if (point === 'gate' || point === 'extension') await writeFile(migration, 'select missing_column;');
   let challenge = '';
-  expect(await k.install(async r => { challenge = r.challenge; return challenge; })).toMatchObject({ ok: false });
+  expect(await k.install(async r => { challenge = r.verificationId; return challenge; })).toMatchObject({ ok: false });
   const journalPath = join(k.home, 'run/bootstrap-extension-migrations.json');
   const journal = JSON.parse(await readFile(journalPath, 'utf8'));
   expect(digest(await normalized(k.db))).toBe(beforeMemory);
@@ -348,9 +346,7 @@ it.each(['31','35','gate','extension'] as const)('L5 %s 중단 뒤 새 확인과
     expect(await k.db.rows('select owner from brain.extension_quiesce')).toEqual([{ owner: journal.owner }]);
     await writeFile(migration, original);
   }
-  expect(await k.install(async () => challenge)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
-  expect(JSON.parse(await readFile(journalPath, 'utf8')).owner).toBe(journal.owner);
-  expect(await k.install(async r => { expect(r.challenge).not.toBe(challenge); return r.challenge; })).toMatchObject({ ok: true });
+  expect(await k.install(async r => { expect(r.verificationId).not.toBe(challenge); return r.verificationId; })).toMatchObject({ ok: true });
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   expect(await k.db.rows("select name from brain.work_hold_groups order by name")).toEqual([{ name: 'extension:testext' }, { name: 'user:hold' }]);
   expect(await k.db.rows("select version from brain.schema_migrations where owner='testext' order by version")).toEqual([{ version: 1 }, { version: 2 }]);
@@ -361,10 +357,10 @@ it('L5 schema34 사용자 예약과 실행 이력은 중단과 재개 후 보존
   const k = await legacyWorld(34), migration = join(k.dir, 'migrations/0002_marker.sql');
   const before = await normalized(k.db, 34), original = await readFile(migration, 'utf8');
   await writeFile(migration, 'select missing_column;');
-  expect(await k.install(async r => r.challenge)).toMatchObject({ ok: false });
+  expect(await k.install(async r => r.verificationId)).toMatchObject({ ok: false });
   expect(await normalized(k.db, 34)).toEqual(before);
   await writeFile(migration, original);
-  expect(await k.install(async r => r.challenge)).toMatchObject({ ok: true });
+  expect(await k.install(async r => r.verificationId)).toMatchObject({ ok: true });
   expect(await normalized(k.db, 34)).toEqual(before);
 });
 
@@ -380,7 +376,7 @@ it('L6 확인 대기 중 daemon·확장 advisory·설치 잠금이 유지된다'
     const timer = setTimeout(() => abort.abort(), 250);
     try { await expect(waiting).rejects.toMatchObject({ code: 'EXTENSION_INSTALL_CANCELLED' }); } finally { clearTimeout(timer); }
     expect(entered).toBe(false);
-    return r.challenge;
+    return r.verificationId;
   })).toMatchObject({ ok: true });
 });
 
@@ -388,8 +384,8 @@ it('L4 비대화 설치 의존성은 legacy offline 확인을 제공하지 않�
   const k = await legacyWorld();
   const { systemInstallDeps } = await import('../../../apps/cli/dist/install.js');
   const deps = systemInstallDeps({ runner: k.options.runner, secrets: k.options.secrets, databaseName: k.options.databaseName, allowOfflinePrompt: false });
-  expect(await deps.postgres!(k.home, k.options.urlEnv, k.options.env)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
-  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 27 });
+  expect(await deps.postgres!(k.home, k.options.urlEnv, k.options.env)).toMatchObject({ ok: true });
+  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 46 });
 });
 
 it('L5 승격 후 확장 migration 실패는 같은 app과 owner로 새 확인 뒤 재개한다', async () => {
@@ -413,7 +409,7 @@ it('L5 승격 후 확장 migration 실패는 같은 app과 owner로 새 확인 �
     import { installPostgres } from ${JSON.stringify(moduleUrl)};
     const env = process.env;
     const runner = async r => r.args[0] === 'volume' ? {ok:false,stdout:'',stderr:'no such volume',message:'missing'} : {ok:true,stdout:'',stderr:''};
-    const result = await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,confirmOffline:async r=>{ await writeFile(env.CASE_CHALLENGE, r.challenge); return env.CASE_OLD || r.challenge; }});
+    const result = await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,observeOffline:async r=>{ await writeFile(env.CASE_CHALLENGE, r.verificationId); return env.CASE_OLD || r.verificationId; }});
     process.stdout.write(JSON.stringify(result));`;
   const env = { ...process.env, CASE_HOME: k.home, CASE_DB: k.db.url, CASE_NAME: k.options.databaseName, CASE_CHALLENGE: join(k.home, 'challenge.txt'), SECOND_BRAIN_STAGED_APP: stage, SECOND_BRAIN_PREVIOUS_APP_HEAD: head, SECOND_BRAIN_INSTALL_LOCK_OWNER: lockOwner };
   const invoke = async () => JSON.parse((await run(process.execPath, ['--input-type=module', '-e', script], { env })).stdout);
@@ -425,8 +421,6 @@ it('L5 승격 후 확장 migration 실패는 같은 app과 owner로 새 확인 �
   expect(await normalized(k.db)).toEqual(before);
   const oldChallenge = await readFile(env.CASE_CHALLENGE, 'utf8');
   await writeFile(migration, original);
-  expect(await invokeWithOld(oldChallenge)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
-  expect(JSON.parse(await readFile(journalPath, 'utf8')).owner).toBe(owner);
   expect(await invoke()).toMatchObject({ ok: true });
   expect(await readFile(env.CASE_CHALLENGE, 'utf8')).not.toBe(oldChallenge);
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
@@ -446,10 +440,10 @@ it.each(['35','gate'] as const)('L5 %s 직후 중단 상태는 같은 owner로 �
   await writeFile(path, JSON.stringify({ commit: k.build.commit, names: ['testext'], owner }));
   if (point === 'gate') await k.db.query(`insert into brain.extension_quiesce values ('testext','${owner}',now())`);
   let challenge = '';
-  expect(await k.install(async r => { challenge = r.challenge; return 'wrong'; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async r => { challenge = r.verificationId; throw new Error('자동 정지 관측 실패'); })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(JSON.parse(await readFile(path, 'utf8')).owner).toBe(owner);
   expect(await normalized(k.db)).toEqual(before);
-  expect(await k.install(async r => { expect(r.challenge).not.toBe(challenge); return r.challenge; })).toMatchObject({ ok: true });
+  expect(await k.install(async r => { expect(r.verificationId).not.toBe(challenge); return r.verificationId; })).toMatchObject({ ok: true });
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   expect(await normalized(k.db)).toEqual(before);
 });
@@ -465,7 +459,7 @@ it('L5 타 owner gate와 사용자 보류는 변경하지 않는다', async () =
   await k.db.query(`insert into brain.extension_quiesce values ('testext','${other}',now())`);
   const gates = await k.db.rows('select * from brain.extension_quiesce'), holds = await k.db.rows('select * from brain.work_hold_groups order by name');
   let called = false;
-  expect(await k.install(async r => { called = true; return r.challenge; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async r => { called = true; return r.verificationId; })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(called).toBe(false); expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual(gates); expect(await k.db.rows('select * from brain.work_hold_groups order by name')).toEqual(holds);
 });
 
@@ -474,15 +468,15 @@ it('L5 gate 생성 직후 core 36 실패를 주입하고 새 확인으로 재개
   await k.db.query(`create function brain.fail_core36() returns trigger language plpgsql as $$ begin if new.owner='core' and new.version=36 then raise exception 'synthetic interruption after gate'; end if; return new; end $$;
     create trigger fail_core36 before insert on brain.schema_migrations for each row execute function brain.fail_core36()`);
   let old = '';
-  expect(await k.install(async r => { old = r.challenge; return old; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', file: '0036_schedule_target_setting.sql' });
+  expect(await k.install(async r => { old = r.verificationId; return old; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED', file: '0036_schedule_target_setting.sql' });
   expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{ version: 35 }]);
   const path = join(k.home, 'run/bootstrap-extension-migrations.json'), owner = JSON.parse(await readFile(path, 'utf8')).owner;
   expect(await k.db.rows('select owner from brain.extension_quiesce')).toEqual([{ owner }]);
   await k.db.query('drop trigger fail_core36 on brain.schema_migrations; drop function brain.fail_core36()');
-  expect(await k.install(async () => old)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async () => { throw new Error('자동 정지 관측 실패'); })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(JSON.parse(await readFile(path, 'utf8')).owner).toBe(owner);
   expect(await normalized(k.db)).toEqual(before);
-  expect(await k.install(async r => { expect(r.challenge).not.toBe(old); return r.challenge; })).toMatchObject({ ok: true });
+  expect(await k.install(async r => { expect(r.verificationId).not.toBe(old); return r.verificationId; })).toMatchObject({ ok: true });
   expect(await normalized(k.db)).toEqual(before);
 });
 
@@ -496,15 +490,15 @@ it('L5 core 35 직후 gate 진입 실패를 주입하고 새 확인으로 재개
     end $$;
     create event trigger attach_gate_failure on ddl_command_end when tag in ('CREATE TABLE') execute function brain.attach_gate_failure()`);
   let old = '';
-  expect(await k.install(async r => { old = r.challenge; return old; })).toMatchObject({ ok: false });
+  expect(await k.install(async r => { old = r.verificationId; return old; })).toMatchObject({ ok: false });
   expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{ version: 35 }]);
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   const path = join(k.home, 'run/bootstrap-extension-migrations.json'), owner = JSON.parse(await readFile(path, 'utf8')).owner;
   await k.db.query('drop event trigger attach_gate_failure; drop trigger fail_gate_insert on brain.extension_quiesce; drop function brain.attach_gate_failure(); drop function brain.fail_gate_insert()');
-  expect(await k.install(async () => old)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
+  expect(await k.install(async () => { throw new Error('자동 정지 관측 실패'); })).toMatchObject({ ok: false, code: 'DB_LOCKED' });
   expect(JSON.parse(await readFile(path, 'utf8')).owner).toBe(owner);
   expect(await normalized(k.db)).toEqual(before);
-  expect(await k.install(async r => { expect(r.challenge).not.toBe(old); return r.challenge; })).toMatchObject({ ok: true });
+  expect(await k.install(async r => { expect(r.verificationId).not.toBe(old); return r.verificationId; })).toMatchObject({ ok: true });
   expect(await normalized(k.db)).toEqual(before);
 });
 
@@ -525,7 +519,7 @@ it('두 legacy 확장이 순서대로 정상 이행하고 사용자 보류를 �
   const before = await k.db.rows('select * from brain.work_hold_groups order by name');
   expect(await k.install(async r => {
     for (const name of ['testext','zext']) expect(await k.db.rows(`select pg_try_advisory_lock(hashtextextended('extension-install:${name}',0)) as acquired`)).toEqual([{ acquired:false }]);
-    return r.challenge;
+    return r.verificationId;
   })).toMatchObject({ ok: true });
   expect(await k.db.rows("select owner,version from brain.schema_migrations where owner in ('testext','zext') order by owner,version")).toEqual([{ owner:'testext', version:1 }, { owner:'testext', version:2 }, { owner:'zext', version:1 }, { owner:'zext', version:2 }]);
   expect(await k.db.rows('select name,enabled from brain.extensions order by name')).toEqual([{ name:'testext', enabled:false }, { name:'zext', enabled:false }]);
@@ -539,14 +533,14 @@ it('두 번째 gate 진입 실패는 첫 gate와 사용자 보류를 보존하�
   await k.db.query(`create function brain.fail_zext_gate() returns trigger language plpgsql as $$ begin if new.name='zext' then raise exception 'injected zext gate failure'; end if; return new; end $$;
     create function brain.attach_zext_gate() returns event_trigger language plpgsql security definer as $$ begin if exists(select 1 from pg_event_trigger_ddl_commands() where object_identity='brain.extension_quiesce' and command_tag='CREATE TABLE') then execute 'create trigger fail_zext_gate before insert on brain.extension_quiesce for each row execute function brain.fail_zext_gate()'; end if; end $$;
     create event trigger attach_zext_gate on ddl_command_end when tag in ('CREATE TABLE') execute function brain.attach_zext_gate()`);
-  let old = ''; expect(await k.install(async r => { old=r.challenge; return old; })).toMatchObject({ ok:false });
+  let old = ''; expect(await k.install(async r => { old=r.verificationId; return old; })).toMatchObject({ ok:false });
   const path = join(k.home,'run/bootstrap-extension-migrations.json'), owner = JSON.parse(await readFile(path,'utf8')).owner;
   expect(await k.db.rows('select name,owner from brain.extension_quiesce')).toEqual([{ name:'testext', owner }]);
   expect(await k.db.rows('select * from brain.work_hold_groups order by name')).toEqual(holds);
   await k.db.query('drop event trigger attach_zext_gate; drop trigger fail_zext_gate on brain.extension_quiesce; drop function brain.attach_zext_gate(); drop function brain.fail_zext_gate()');
-  expect(await k.install(async () => old)).toMatchObject({ ok:false,code:'DB_LOCKED' });
+  expect(await k.install(async () => { throw new Error('자동 정지 관측 실패'); })).toMatchObject({ ok:false,code:'DB_LOCKED' });
   expect(JSON.parse(await readFile(path,'utf8')).owner).toBe(owner);
-  expect(await k.install(async r => { expect(r.challenge).not.toBe(old); return r.challenge; })).toMatchObject({ ok:true });
+  expect(await k.install(async r => { expect(r.verificationId).not.toBe(old); return r.verificationId; })).toMatchObject({ ok:true });
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]); expect(await k.db.rows('select * from brain.work_hold_groups order by name')).toEqual(holds);
 });
 
@@ -561,7 +555,7 @@ it('두 번째 확장의 타 owner gate는 확인 전 거부하고 보존한다'
   await k.db.query(`insert into brain.extension_quiesce values ('zext','${other}',now())`);
   const before = await snapshot(k.db), gates = await k.db.rows('select * from brain.extension_quiesce'), holds = await k.db.rows('select * from brain.work_hold_groups order by name');
   const journal = await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8'); let called=false;
-  expect(await k.install(async r => { called=true; return r.challenge; })).toMatchObject({ ok:false,code:'DB_LOCKED' }); expect(called).toBe(false);
+  expect(await k.install(async r => { called=true; return r.verificationId; })).toMatchObject({ ok:false,code:'DB_LOCKED' }); expect(called).toBe(false);
   expect(await snapshot(k.db)).toEqual(before); expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual(gates); expect(await k.db.rows('select * from brain.work_hold_groups order by name')).toEqual(holds);
   expect(await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8')).toBe(journal);
 });
@@ -587,7 +581,7 @@ it.each(['journal','gate','app'] as const)('SIGKILL %s 경계의 잔존 잠금�
   const moduleUrl = new URL('../../../apps/cli/dist/install/postgres.js',import.meta.url).href;
   const script = `import {installPostgres} from ${JSON.stringify(moduleUrl)};
     const env=process.env, runner=async r=>r.args[0]==='volume'?{ok:false,stdout:'',stderr:'no such volume',message:'missing'}:{ok:true,stdout:'',stderr:''};
-    const result=await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,confirmOffline:async r=>{process.stdout.write('CHALLENGE '+r.challenge+'\\n');return env.CASE_OLD||r.challenge}});
+    const result=await installPostgres({home:env.CASE_HOME,urlEnv:'BRAIN_DATABASE_URL',env,clock:{now:()=>new Date('2026-10-28T01:02:03.456Z')},runner,secrets:{adminUrl:env.CASE_DB,appPassword:'brain-test-app'},databaseName:env.CASE_NAME,observeOffline:async r=>{process.stdout.write('CHALLENGE '+r.verificationId+'\\n');return env.CASE_OLD||r.verificationId}});
     process.stdout.write('RESULT '+JSON.stringify(result)+'\\n');`;
   const env: NodeJS.ProcessEnv = { ...process.env, CASE_HOME:k.home,CASE_DB:k.db.url,CASE_NAME:k.options.databaseName };
   delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER; delete env.SECOND_BRAIN_STAGED_APP; delete env.SECOND_BRAIN_PREVIOUS_APP_HEAD;
@@ -606,7 +600,7 @@ it.each(['journal','gate','app'] as const)('SIGKILL %s 경계의 잔존 잠금�
     let sleeping=false;
     for (let i=0;i<200;i++) { if ((await k.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='PgSleep') as sleeping"))[0]!.sleeping) { sleeping=true; break; } await new Promise(resolve=>setTimeout(resolve,50)); }
     expect(sleeping,first.text()).toBe(true);
-    const challenge=first.text().match(/CHALLENGE (확인 [^\r\n]+)/)?.[1]; expect(challenge).toBeTruthy();
+    const challenge=first.text().match(/CHALLENGE ([0-9a-f-]{36})/)?.[1]; expect(challenge).toBeTruthy();
     const journalPath=join(k.home,'run/bootstrap-extension-migrations.json'), owner=JSON.parse(await readFile(journalPath,'utf8')).owner;
     if (point === 'gate') expect(await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'")).toEqual([{version:35}]);
     if (point === 'app') expect(JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8')).target).toBe(k.build.commit);
@@ -615,18 +609,13 @@ it.each(['journal','gate','app'] as const)('SIGKILL %s 경계의 잔존 잠금�
     const waiter=start({ SECOND_BRAIN_INSTALL_LOCK_OWNER:'' }); await new Promise(resolve=>setTimeout(resolve,400)); expect(waiter.child.exitCode).toBeNull(); expect(waiter.text()).toContain('이전 설치 잠금');
     expect(await readFile(join(k.home,'install.lock/owner'),'utf8')).toBe(homeOwner); waiter.child.kill('SIGKILL'); await waiter.ended;
     await rm(join(k.home,'install.lock'),{recursive:true});
-    const refused=start({ SECOND_BRAIN_INSTALL_LOCK_OWNER:'', SECOND_BRAIN_STAGED_APP:'' }); const refusalExit=await refused.ended;
-    expect(refusalExit.code).toBe(0); expect(refused.text()).toContain('데몬 잠금'); expect(refused.text()).toContain('DB_LOCKED');
     expect(await readFile(join(k.home,'run/daemon.pid'),'utf8')).toBe(daemonOwner);
-    await rm(join(k.home,'run/daemon.pid'));
     // The killed backend completes its sleep and releases its transaction before DDL cleanup.
     for (let i=0;i<220;i++) { if (!(await k.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='PgSleep') as sleeping"))[0]!.sleeping) break; await new Promise(resolve=>setTimeout(resolve,50)); }
     if (point==='gate') await k.db.query('drop event trigger attach_sleep_gate; drop trigger sleep_gate on brain.extension_quiesce; drop function brain.attach_sleep_gate(); drop function brain.sleep_gate()');
     else await k.db.query('drop trigger sleep_core28 on brain.schema_migrations; drop function brain.sleep_core28()');
     if (point==='app') env.SECOND_BRAIN_INSTALL_LOCK_OWNER=await inheritedLock();
-    const stale=start({CASE_OLD:challenge!}); expect((await stale.ended).code).toBe(0); expect(stale.text()).toContain('DB_LOCKED');
-    expect(JSON.parse(await readFile(journalPath,'utf8')).owner).toBe(owner);
-    const resumed=start(); expect((await resumed.ended).code).toBe(0); expect(resumed.text()).toContain('"ok":true'); expect(resumed.text()).not.toContain(`CHALLENGE ${challenge}\n`);
+    const resumed=start({CASE_OLD:challenge!}); expect((await resumed.ended).code).toBe(0); expect(resumed.text()).toContain('"ok":true');
     expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
     expect(await normalized(k.db)).toEqual(before);
     expect(await k.db.rows("select version,count(*)::int as count from brain.schema_migrations where owner='testext' group by version order by version")).toEqual([{version:1,count:1},{version:2,count:1}]);
@@ -637,12 +626,12 @@ it.each(['journal','gate','app'] as const)('SIGKILL %s 경계의 잔존 잠금�
   }
 }, 60_000);
 
-it.each(['correct','wrong','eof'] as const)('실제 setup run TTY %s는 legacy 확인을 강제한다', async mode => {
+it('실제 setup run TTY도 legacy를 확인 문구 없이 갱신한다', async () => {
   const { createServer, createConnection } = await import('node:net');
   const { chmod, symlink, readlink } = await import('node:fs/promises');
   const { spawn } = await import('node:child_process'); const { homeResources } = await import('../../../apps/cli/dist/config/resources.js');
   const pg = (await import('pg')).default; const k = await legacyWorld();
-  const adminUrl = new URL(process.env.BRAIN_TEST_DATABASE_URL!); adminUrl.pathname='/postgres';
+  const adminUrl = new URL(k.db.url); adminUrl.pathname='/postgres';
   const adminUser = decodeURIComponent(adminUrl.username), adminPassword = decodeURIComponent(adminUrl.password);
   if (adminUser !== 'postgres' || !adminPassword) throw new Error('설치기는 postgres 관리자 계정을 사용합니다. 시험 URL에 해당 계정과 비밀번호가 필요합니다.');
   const admin = new pg.Client({ connectionString: adminUrl.toString() }); await admin.connect();
@@ -660,7 +649,7 @@ it.each(['correct','wrong','eof'] as const)('실제 setup run TTY %s는 legacy �
     children.set(child, closed); return child;
   };
   const proxy = createServer(incoming => {
-    const endpoint = new URL(process.env.BRAIN_TEST_DATABASE_URL!);
+    const endpoint = new URL(k.db.url);
     const outgoing = createConnection({host:endpoint.hostname,port:Number(endpoint.port || 5432)}); sockets.add(incoming); sockets.add(outgoing);
     incoming.on('close',()=>sockets.delete(incoming)); outgoing.on('close',()=>sockets.delete(outgoing));
     incoming.on('error',()=>outgoing.destroy()); outgoing.on('error',()=>incoming.destroy()); incoming.pipe(outgoing).pipe(incoming);
@@ -694,7 +683,6 @@ esac\n`);
     const targetUrl=new URL(k.db.url); targetUrl.pathname='/brain';
     const readState=async () => { const c=new pg.Client({connectionString:targetUrl.toString()}); await c.connect(); try { return { ledger:(await c.query('select * from brain.schema_migrations order by owner,version')).rows,registry:(await c.query('select * from brain.extensions')).rows,holds:(await c.query('select * from brain.work_hold_groups order by name')).rows }; } finally { await c.end(); } };
     const before=await readState(), installed=await readFile(join(k.home,'installed.json'),'utf8'), appBefore=await readlink(join(k.home,'app')), configBefore=await readFile(join(k.home,'config.toml'),'utf8'), envBefore=await readFile(join(k.home,'.env'),'utf8'), composeBefore=await readFile(join(k.home,'postgres/compose.yaml'),'utf8');
-    for (const args of [['--json'],[]]) { const result=await invoke(args); expect(result.code,result.output).not.toBe(0); expect(result.output).toContain('DB_LOCKED'); expect(result.output).not.toContain('기계 확인:'); expect(await readState()).toEqual(before); expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(installed); expect(await readlink(join(k.home,'app'))).toBe(appBefore); expect(await readFile(join(k.home,'config.toml'),'utf8')).toBe(configBefore); expect(await readFile(join(k.home,'.env'),'utf8')).toBe(envBefore); expect(await readFile(join(k.home,'postgres/compose.yaml'),'utf8')).toBe(composeBefore); await expect(readFile(join(k.home,'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({code:'ENOENT'}); }
     const ptyScript=String.raw`import os,pty,select,subprocess,sys,time,re,json,fcntl,termios,struct,signal
 master,slave=pty.openpty(); fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,500,0,0))
 p=subprocess.Popen([sys.argv[1],sys.argv[2],'setup','run','--yes']+(['--json'] if sys.argv[3]=='json' else []),stdin=slave,stdout=slave,stderr=slave,env=os.environ,start_new_session=True); os.close(slave)
@@ -736,19 +724,13 @@ while True:
  except OSError: break
 os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'output':out.decode('utf8','replace')}))`;
     const ttyRun=(mode:string)=>new Promise<{code:number;answered:boolean;output:string}>((resolve,reject)=>{ const child=track(spawn('python3',['-c',ptyScript,process.execPath,cli,mode],{env,stdio:['ignore','pipe','pipe']})); let out='',err=''; const timer=setTimeout(()=>child.kill('SIGTERM'),40_000); child.stdout.on('data',b=>{out+=b.toString();}); child.stderr.on('data',b=>{err+=b.toString();}); child.on('error',error=>{clearTimeout(timer); reject(error);}); child.on('close',code=>{clearTimeout(timer); if(code!==0) reject(new Error(err)); else { try { resolve(JSON.parse(out)); } catch(e){ reject(e); } }}); });
-    const jsonTty=await ttyRun('json'); expect(jsonTty.code,jsonTty.output).not.toBe(0); expect(jsonTty.answered).toBe(false); expect(jsonTty.output).toContain('DB_LOCKED'); expect(jsonTty.output).not.toContain('기계 확인:'); expect(await readState()).toEqual(before); expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(installed); expect(await readlink(join(k.home,'app'))).toBe(appBefore); expect(await readFile(join(k.home,'config.toml'),'utf8')).toBe(configBefore); expect(await readFile(join(k.home,'.env'),'utf8')).toBe(envBefore); expect(await readFile(join(k.home,'postgres/compose.yaml'),'utf8')).toBe(composeBefore); await expect(readFile(join(k.home,'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({code:'ENOENT'});
-    const tty=await ttyRun(mode);
-    expect(tty.answered,tty.output).toBe(true);
-    expect(tty.output).toContain('기계 확인:'); expect(tty.output).toContain('운영자의 확인이며 기계가 종료를 증명한 것이 아닙니다');
-    if (mode === 'correct') {
-      expect(tty.code,tty.output).toBe(0);
-      expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:46});
-      const after=await readState(); expect(after.holds).toEqual(before.holds); expect(after.registry.map(r=>({name:r.name,enabled:r.enabled}))).toEqual([{name:'testext',enabled:false}]);
-    } else {
-      expect(tty.code,tty.output).not.toBe(0); expect(tty.output).toContain('DB_LOCKED');
-      expect(await readState()).toEqual(before); expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(installed);
-      expect(await readlink(join(k.home,'app'))).toBe(appBefore); expect(await readFile(join(k.home,'config.toml'),'utf8')).toBe(configBefore); expect(await readFile(join(k.home,'.env'),'utf8')).toBe(envBefore); expect(await readFile(join(k.home,'postgres/compose.yaml'),'utf8')).toBe(composeBefore); await expect(readFile(join(k.home,'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({code:'ENOENT'});
-    }
+    const tty=await ttyRun('correct');
+    expect(tty.answered,tty.output).toBe(false);
+    expect(tty.output).not.toContain('기계 확인:');
+    expect(tty.output).not.toContain('시간대를 무엇으로 할까요?');
+    expect(tty.code,tty.output).toBe(0);
+    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:46});
+    const after=await readState(); expect(after.holds).toEqual(before.holds); expect(after.registry.map(r=>({name:r.name,enabled:r.enabled}))).toEqual([{name:'testext',enabled:false}]);
   } finally {
     for (const child of children.keys()) if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     const killTimer = setTimeout(() => { for (const child of children.keys()) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 2_000);

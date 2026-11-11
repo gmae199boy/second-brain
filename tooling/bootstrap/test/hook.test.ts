@@ -339,30 +339,31 @@ describe('the plugin SessionStart hook', () => {
     },
     SLOW,
   );
-  it('restarts a loaded daemon once after updating the plugin ref and exposes the new build', async () => {
-    // The split lifecycle test represents a resident old build using this live
-    // test process. The fake records restart delivery; real transition is 9.8.
+  it('갱신 전에 기존 데몬을 멈추고 새 빌드를 노출한다', async () => {
     mkdirSync(join(home, 'run'), { recursive: true });
-    writeFileSync(join(home, 'run', 'daemon.pid'), JSON.stringify({ pid: process.pid,
-      boot_at: new Date(Date.now() - uptime() * 1000).toISOString(),
-      started_at: new Date().toISOString(), commit: installed().commit }));
-    writeFileSync(join(home, 'run', 'heartbeat'), '');
+    const lock = join(home, 'run/daemon.pid'), ready = join(root, 'synthetic-daemon-ready'), pidFile = join(root, 'synthetic-daemon-pid');
+    const resident = spawn(process.execPath, ['-e', "const fs=require('node:fs');process.on('SIGTERM',()=>{fs.rmSync(process.env.CASE_LOCK,{force:true});process.exit(0)});fs.writeFileSync(process.env.CASE_READY,'ready');setInterval(()=>{},1000)"], { env: { ...isolatedEnvironment(), CASE_LOCK: lock, CASE_READY: ready }, stdio: 'ignore' });
+    const residentClosed = new Promise<void>((resolve, reject) => { resident.once('close', () => resolve()); resident.once('error', reject); });
+    for (let attempt=0; !existsSync(ready) && attempt<100; attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+    expect(existsSync(ready)).toBe(true);
+    writeFileSync(pidFile, String(resident.pid));
+    writeFileSync(lock, JSON.stringify({ pid: resident.pid, boot_at: new Date(Date.now()-uptime()*1000).toISOString(), started_at:new Date().toISOString(), commit:installed().commit }));
+    writeFileSync(join(home, 'run/heartbeat'), '');
     git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'upgrade']);
     git(['-C', work, 'push', '-q', bare, 'main']);
     snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
     writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`, 'utf8');
-    const run = hook('SessionStart');
+    let run;
+    try { run = hook('SessionStart', '', { FAKE_LAUNCHCTL_PID_FILE: pidFile }); }
+    finally { resident.kill('SIGTERM'); await residentClosed; }
     expect(run.status).toBe(0);
     expect(installed().commit).toBe(snapshotCommit);
-    if (process.platform !== 'darwin') { rmSync(join(home, 'run', 'daemon.pid')); return; }
-    expect(log()).toContain('데몬을 다시 띄우지 못했습니다.');
-    expect(log()).toContain('기다리는 동안 새 빌드 데몬을 확인하지 못했습니다');
-    // The installer logs the DAEMON_NOT_RESTARTED explanation without a code or prefix.
-    expect(log()).toContain('데몬을 새 빌드로 다시 띄우지 못해 옛 빌드가 계속 돌 수 있습니다.');
+    if (process.platform !== 'darwin') return;
+    expect(runRecord().last_bootstrap?.result).toBe('installed');
     const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0,12)}`;
     const calls = readFileSync(join(root, 'launchctl', 'calls'), 'utf8').split('\n');
-    expect(calls.filter((line) => line === `kill SIGTERM gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
-    expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(1);
+    expect(calls.filter((line) => line === `bootout gui/${String(process.getuid?.())}/${label}`)).toHaveLength(1);
+    expect(calls.filter((line) => line.startsWith('bootstrap '))).toHaveLength(2);
     const plist = readFileSync(join(root, 'launch-agents', `${label}.plist`), 'utf8');
     expect(plist).toContain(join(home,'bin/brain')); expect(plist).not.toContain('.app-stage-');
     const argumentsXml = plist.match(/<array>(.*?)<\/array>/s)?.[1] ?? '';
@@ -370,7 +371,7 @@ describe('the plugin SessionStart hook', () => {
     const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, CLAUDE_CONFIG_DIR: configDir,
       SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'),
       SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
-    rmSync(join(home, 'run', 'daemon.pid'));
+    rmSync(join(home, 'run', 'daemon.pid'), { force: true });
     const daemon = spawn(args[0]!, args.slice(1), { env, stdio: 'ignore' });
     const closed = new Promise<void>((resolve, reject) => { daemon.on('close', () => resolve()); daemon.on('error', reject); });
     try {
@@ -498,7 +499,7 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
     }
   }, SLOW);
 
-  it('설치된 확장의 다른 commit 자동 갱신은 offline 확인 없이 거부하고 보존한다', async () => {
+  it('설치된 확장의 다른 commit을 SessionStart가 무질문 갱신하고 기억과 이력을 보존한다', async () => {
     const fixtures = join(root, 'extension-fixtures');
     cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/testext'), join(fixtures, 'testext'), { recursive: true });
     const sourceManifest = join(fixtures, 'testext/manifest.json');
@@ -510,135 +511,40 @@ fs.promises.writeFile = async function(file,...args) { const p=String(file); if 
     const result = brain('ext', 'install', 'testext', '--json'); expect(result.status, result.stdout + result.stderr).toBe(0);
     const directory = join(home, 'extensions/testext');
     writeFileSync(join(directory, 'migrations/0002_new.sql'), 'create table testext.new_table (id integer primary key);');
-    const beforeTree = treeHash(directory), previous = installed().commit;
-    const app = join(home,'app'), headBefore = git(['-C',app,'rev-parse','HEAD']).trim();
-    const binBefore = readFileSync(join(app,'apps/cli/dist/bin.js')), buildBefore = readFileSync(join(app,'apps/cli/dist/build.json'));
-    const dependencyFile=join(app,'node_modules/.modules.yaml'), depsBefore=readFileSync(dependencyFile);
-    const pnpmBefore=existsSync(join(root,'pnpm-calls')) ? readFileSync(join(root,'pnpm-calls'),'utf8').length : 0;
+    const beforeTree = treeHash(directory), previous = installed().commit, app = join(home, 'app');
     const db = await homeDatabase(true);
     try {
       const ledger = (await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows;
       const registry = (await db.query("select * from brain.extensions where name='testext'")).rows;
       git(['-C', work, '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '-q', '-m', 'extension upgrade']);
-      git(['-C', work, 'push', '-q', bare, 'main']);
-      snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
+      git(['-C', work, 'push', '-q', bare, 'main']); snapshotCommit = git(['-C', work, 'rev-parse', 'HEAD']).trim();
       writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
-      expect(hook('SessionStart').status).toBe(0);
-      expect(runRecord().last_bootstrap?.result).toBe('failed');
-      expect(installed().commit).toBe(previous);
-      expect(treeHash(directory)).toBe(beforeTree);
-      expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
-      expect((await db.query("select * from brain.extensions where name='testext'")).rows).toEqual(registry);
-      expect((await db.query("select to_regclass('testext.new_table') as name")).rows).toEqual([{ name: null }]);
-      const assertApp = () => {
-        expect(git(['-C',app,'rev-parse','HEAD']).trim()).toBe(headBefore);
-        expect(readFileSync(join(app,'apps/cli/dist/bin.js'))).toEqual(binBefore);
-        expect(readFileSync(join(app,'apps/cli/dist/build.json'))).toEqual(buildBefore);
-        expect(readFileSync(dependencyFile)).toEqual(depsBefore);
-        const calls=readFileSync(join(root,'pnpm-calls'),'utf8').slice(pnpmBefore).split('\n').filter(Boolean);
-        expect(calls.some(line=>line.startsWith(`${app} `))).toBe(false);
-      };
-      assertApp();
-      const installedManifestPath=join(directory,'manifest.json'), originalManifest=readFileSync(installedManifestPath,'utf8');
-      const incompatible=JSON.parse(originalManifest); incompatible.core_compat={min:'1.0.0',max_exclusive:'2.0.0'};
-      writeFileSync(installedManifestPath,JSON.stringify(incompatible));
-      try { expect(hook('SessionStart').status).toBe(0); assertApp(); expect(installed().commit).toBe(previous); }
-      finally { writeFileSync(installedManifestPath,originalManifest); }
-      const core35=(await db.query("delete from brain.schema_migrations where owner='core' and version=35 returning *")).rows[0];
-      try { expect(hook('SessionStart').status).toBe(0); assertApp(); expect(installed().commit).toBe(previous); }
-      finally { await db.query('insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values($1,$2,$3,$4,$5)',[core35.owner,core35.version,core35.name,core35.checksum,core35.applied_at]); }
-      git(['-C',app,'checkout','-q','-B','main',headBefore]);
-      const npx = spawnSync(process.execPath,[join(plugin,'bootstrap.mjs'),'--yes'],{env:{...withoutHarnessFolders(process.env),SECOND_BRAIN_HOME:home,SECOND_BRAIN_REPO:`file://${bare}`,SECOND_BRAIN_NODE_DIRS:join(root,'allowed-tools'),PATH:join(root,'allowed-tools')},encoding:'utf8',timeout:600000});
-      expect(npx.status,npx.stdout+npx.stderr).toBe(1); assertApp(); expect(installed().commit).toBe(previous);
-      git(['-C',app,'checkout','-q','--detach',headBefore]);
-      const alternate=join(root,'alternate-cli'); cpSync(app,alternate,{recursive:true,verbatimSymlinks:true});
-      const altBuild=join(alternate,'apps/cli/dist/build.json'), identity=JSON.parse(readFileSync(altBuild,'utf8')); identity.commit=snapshotCommit; writeFileSync(altBuild,JSON.stringify(identity));
-      const direct=spawnSync(process.execPath,[join(alternate,'apps/cli/dist/bin.js'),'setup','run','--yes','--json'],{env:{...withoutHarnessFolders(process.env),SECOND_BRAIN_HOME:home},encoding:'utf8',timeout:600000});
-      expect(direct.status,direct.stdout+direct.stderr).not.toBe(0); expect(JSON.parse(direct.stdout).error.code).toBe('DB_LOCKED');
-      assertApp(); expect(installed().commit).toBe(previous);
-      // Exercise the real setup command under a pseudo-terminal. The parent
-      // responds only after the fresh challenge has appeared on the terminal.
-      const ptyDriver = String.raw`import os, pty, select, subprocess, sys, time, re, json, fcntl, termios, struct
-master, slave = pty.openpty()
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 500, 0, 0))
-mode, node, cli, manifest = sys.argv[1:]
-args = [node, cli, 'setup', 'run', '--yes'] + (['--json'] if mode == 'json' else [])
-p = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, env=os.environ, start_new_session=True)
-os.close(slave)
-out = b''; answered = False; prompts = set(); deadline = time.monotonic() + 120
-while p.poll() is None and time.monotonic() < deadline:
- r, _, _ = select.select([master], [], [], .2)
- if not r: continue
- try: chunk = os.read(master, 65536)
- except OSError: break
- if not chunk: break
- out += chunk
- clean = re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]', b'', out)
- for prompt in ['미러를 어디에 둘까요?', '임베딩을 켤까요?', '자동 업데이트를 켤까요?', '시간대를 무엇으로 할까요?', '이 brain을 어떤 하네스에 연결할까요?']:
-  key = prompt.encode()
-  if key in clean and key not in prompts:
-   prompts.add(key); os.write(master, b'\r')
- if not answered and b'> ' in clean:
-  match = re.search('확인 [^\r\n]+ [0-9a-f]{40} [0-9a-f]{40} [0-9a-f-]{36}'.encode(), clean)
-  if match:
-   if mode == 'manifest':
-    with open(manifest, 'r+') as f:
-     data = json.load(f); data['core_compat'] = {'min':'1.0.0','max_exclusive':'2.0.0'}; f.seek(0); json.dump(data, f); f.truncate()
-   os.write(master, (match.group(0) if mode in ('correct','manifest') else b'wrong') + b'\n' if mode != 'eof' else b'\x04')
-   answered = True
-if p.poll() is None: p.kill()
-p.wait()
-while True:
- try:
-  r, _, _ = select.select([master], [], [], 0)
-  if not r: break
-  chunk = os.read(master, 65536)
-  if not chunk: break
-  out += chunk
- except OSError: break
-os.close(master)
-print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'answered':answered}))`;
-      const ttyEnv = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_LAUNCHCTL: join(repoRoot, 'apps/cli/test/fixtures/fake-launchctl.sh'), SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl'), CLAUDE_CONFIG_DIR: configDir };
-      const noninteractive = spawnSync(process.execPath, [join(alternate,'apps/cli/dist/bin.js'), 'setup', 'run', '--yes'], { env: ttyEnv, encoding: 'utf8', timeout: 120000 });
-      expect(noninteractive.status).not.toBe(0); expect(noninteractive.stdout + noninteractive.stderr).not.toContain('공유 상태 쓰기가 끝났음');
-      const tty = (mode: string) => {
-        const run = spawnSync('python3', ['-c', ptyDriver, mode, process.execPath, join(alternate,'apps/cli/dist/bin.js'), installedManifestPath], { env: ttyEnv, encoding: 'utf8', timeout: 130000 });
-        expect(run.status, run.stderr).toBe(0); return JSON.parse(run.stdout) as { code: number; output: string; answered: boolean };
-      };
-      for (const mode of ['wrong', 'eof', 'manifest', 'json']) {
-        const result = tty(mode); expect(result.code, result.output).not.toBe(0);
-        expect(result.answered, result.output).toBe(mode !== 'json');
-        if (mode === 'json') expect(result.output).not.toContain('공유 상태 쓰기가 끝났음');
-        if (mode === 'manifest') writeFileSync(installedManifestPath, originalManifest);
+      const manifestPath = join(directory, 'manifest.json'), original = readFileSync(manifestPath, 'utf8');
+      const incompatible = JSON.parse(original); incompatible.core_compat = { min:'1.0.0', max_exclusive:'2.0.0' };
+      writeFileSync(manifestPath, JSON.stringify(incompatible));
+      try {
+        expect(hook('SessionStart').status).toBe(0); expect(runRecord().last_bootstrap?.result).toBe('failed');
+        expect(installed().commit).toBe(previous); expect(git(['-C', app, 'rev-parse', 'HEAD']).trim()).toBe(previous);
         expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
-        expect((await db.query('select * from brain.extension_quiesce')).rows).toEqual([]);
-      }
-      const recordPath = join(home, 'installed.json'); const originalRecord = readFileSync(recordPath, 'utf8');
-      const shimPath = join(home, 'bin/brain'); const originalShim = readFileSync(shimPath);
-      const accepted = tty('correct'); expect(accepted.answered).toBe(true); expect(accepted.code, accepted.output).toBe(0);
-      expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{version:1},{version:2}]);
-      // Restore the synthetic setup state for the remaining preservation checks.
-      await db.query('drop table testext.new_table');
-      await db.query('delete from brain.schema_migrations where owner=$1 and version=2', ['testext']);
-      writeFileSync(recordPath, originalRecord); writeFileSync(shimPath, originalShim);
+      } finally { writeFileSync(manifestPath, original); }
+      expect(hook('SessionStart').status, log()).toBe(0);
+      expect(runRecord().last_bootstrap?.result, log()).toBe('installed'); expect(installed().commit).toBe(snapshotCommit);
+      expect(git(['-C', app, 'rev-parse', 'HEAD']).trim()).toBe(snapshotCommit);
       expect(treeHash(directory)).toBe(beforeTree);
-      expect((await db.query("select * from brain.schema_migrations where owner='testext' order by version")).rows).toEqual(ledger);
       expect((await db.query("select * from brain.extensions where name='testext'")).rows).toEqual(registry);
+      expect((await db.query("select version from brain.schema_migrations where owner='testext' order by version")).rows).toEqual([{version:1},{version:2}]);
+      expect((await db.query("select * from brain.schema_migrations where owner='testext' and version=1")).rows).toEqual(ledger);
+      expect((await db.query("select to_regclass('testext.new_table') as name")).rows).toEqual([{name:'testext.new_table'}]);
+      expect(JSON.parse(readFileSync(join(home, 'run/last-core-update.json'), 'utf8'))).toMatchObject({method:'automatic',evidence:{runtime_backends:0}});
+      expect(existsSync(join(home, 'run/core-update.json'))).toBe(false);
       const { installedExtensionMigrations } = await import('../../../apps/cli/dist/runtime/extensions.js');
-      const external = join(root,'external.sql'); writeFileSync(external,'select 1;');
-      const linked = join(directory,'migrations/0003_external.sql'); symlinkSync(external,linked);
-      await expect(installedExtensionMigrations(home,['testext'])).rejects.toThrow(); rmSync(linked);
-      const installedManifest = join(directory,'manifest.json'), saved = join(root,'saved-manifest.json');
-      renameSync(installedManifest,saved); symlinkSync(saved,installedManifest);
-      try { await expect(installedExtensionMigrations(home,['testext'])).rejects.toThrow(); }
-      finally { rmSync(installedManifest); renameSync(saved,installedManifest); }
-    } finally {
-      await db.end();
-      if (previous) { snapshotCommit=previous; writeFileSync(join(plugin,'app-ref'),`${previous}\n`); }
-    }
+      const external = join(root, 'external.sql'); writeFileSync(external, 'select 1;');
+      const linked = join(directory, 'migrations/0003_external.sql'); symlinkSync(external, linked);
+      try { await expect(installedExtensionMigrations(home,['testext'])).rejects.toThrow(); } finally { rmSync(linked); }
+    } finally { await db.end(); }
   }, SLOW);
 
-  it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('offline 확인 없는 bootstrap 갱신을 거부하고 Python 확장을 보존한다', async () => {
+  it.skipIf(process.env.BRAIN_PYTHON_UPDATE_TEST !== '1')('무인 bootstrap 갱신이 Python 확장 환경과 데이터를 보존한다', async () => {
     process.stdout.write('HOOK_PYTHON_PRESERVATION_START\n');
     const spyDir = join(root, 'spy'); mkdirSync(spyDir);
     const spyLog = join(root, 'uv-calls');
@@ -646,8 +552,12 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
     const wrapper = join(spyDir, 'uv');
     writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\n' "$*" >> "${spyLog}"\nexec "${uv}" "$@"\n`);
     chmodSync(wrapper, 0o755);
+    const fixtures = join(root, 'python-fixtures'); cpSync(join(repoRoot, 'apps/cli/test/fixtures/extensions/pyfixture'), join(fixtures, 'pyfixture'), { recursive: true });
+    const sourceManifest = join(fixtures, 'pyfixture/manifest.json'), compatible = JSON.parse(readFileSync(sourceManifest, 'utf8'));
+    Object.assign(compatible, { files: ['.python-version', 'check.py', 'judge.py', 'manifest.json', 'migrations/0001_pyfixture.sql', 'pyproject.toml', 'uv.lock'], core_compat: { min: '0.0.0', max_exclusive: '1.0.0' }, plugin_version: '1.0.0' });
+    writeFileSync(sourceManifest, JSON.stringify(compatible));
     const env = { ...isolatedEnvironment(), SECOND_BRAIN_HOME: home, PATH: `${spyDir}:${process.env.PATH ?? ''}`,
-      SECOND_BRAIN_TEST_EXTENSIONS: join(repoRoot, 'apps/cli/test/fixtures/extensions') };
+      SECOND_BRAIN_TEST_EXTENSIONS: fixtures };
     const brain = (...args: string[]) => spawnSync(join(home, 'bin/brain'), args, { env, encoding: 'utf8' });
     const result = brain('ext', 'install', 'pyfixture', '--json');
     expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -667,8 +577,8 @@ print(json.dumps({'code':p.returncode,'output':out.decode('utf8','replace'),'ans
       writeFileSync(join(plugin, 'app-ref'), `${snapshotCommit}\n`);
       const previous=installed().commit;
       expect(hook('SessionStart', '', { PATH: env.PATH, NODE_OPTIONS: '', BRAIN_PROCESS_SPY: '', BRAIN_RESTRICTED_PATH: '' }).status, log()).toBe(0);
-      expect(runRecord().last_bootstrap).toMatchObject({ result: 'failed', step: '설치기' });
-      expect(installed().commit).toBe(previous);
+      expect(runRecord().last_bootstrap, log()).toMatchObject({ result: 'installed' });
+      expect(installed().commit).toBe(snapshotCommit);
       expect(readFileSync(spyLog, 'utf8')).toBe('');
       expect(treeHash(directory)).toBe(environment);
       expect(readFileSync(join(home, 'config.toml'), 'utf8')).toBe(config);
