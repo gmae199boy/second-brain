@@ -178,6 +178,8 @@ it('외부 package 이행 중 프로세스 종료 후 같은 패키지로 정지
     child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', '--package', f.dir, '--json'], { env: world.env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout!.resume(); child.stderr!.resume(); const exited = new Promise<void>(resolve => child!.once('close', () => resolve()));
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(world.home, 'extensions/.transition-testext.json'), 'utf8')).phase; } catch { return ''; } }, { timeout: 10000 }).toBe('prepared');
+    // prepared는 역할 준비 전에도 보인다. 실제 migration 잠금 대기를 확인한 뒤 중단한다.
+    await expect.poll(async()=> (await world.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%pg_advisory_xact_lock%') as waiting"))[0]?.waiting, {timeout:10000}).toBe(true);
     child.kill('SIGKILL'); await exited; child = undefined; await blocker.query('rollback');
     await rm(join(world.home, 'install.lock'), { recursive: true });
     const resumed = await world.run(['ext', 'install', '--package', f.dir, '--json']);

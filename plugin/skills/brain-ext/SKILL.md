@@ -14,3 +14,5 @@ description: Brain 확장의 목록·상태 확인, 설치·로그인 안내, �
 `brain ext run <name> <job> --json`은 설치된 확장의 허용 일감만 접수한다. 작업·대상은 schema와 공개 상태로 확인하고 모르면 묻는다. 외부 발신·자료 변경 가능성과 대상 범위를 설명하고 명시적 확인 후 실행한다. Garmin 수집·이관·리포트는 brain-garmin-operations 스킬을 사용한다.
 
 변경 후 status를 다시 읽는다. 접수·로그인 안내를 완료로 말하지 않는다. 오류는 종료 코드와 공개 코드만 보고하고 중단하며 상태 확인 실패는 미확인이다. 비밀이나 건강 원문을 보고에 복사하지 않는다.
+
+선언된 입력이 있는 수동 일감은 `brain ext run <name> <job> --target <id> --input '<json>' --json`으로 요청한다. 입력은 설치된 manifest의 work.input_schema를 따르며 입력을 선언하지 않은 일감에는 보내지 않는다.

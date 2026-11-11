@@ -10,7 +10,7 @@ export interface ExtensionManifest {
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
-  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; followup?: string; missed?: 'latest' | 'coalesce' | 'skip'; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
+  work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; input_schema?: Record<string, unknown>; followup?: string; missed?: 'latest' | 'coalesce' | 'skip'; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
   auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
   default_schedules?: { kind: string; target_kind: string; target_id: string; target_setting?: string; after_schedule?: string; key?: string; local_time?: string; cron?: string; time_zone?: string }[];
   requires?: ('channel.send')[];
@@ -96,9 +96,14 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
     const seen = new Set<string>();
     const aliases = new Set<string>();
     for (const work of v['work']) {
-      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'followup', 'public_report', 'required_settings', 'missed'].includes(k)) || typeof work['kind'] !== 'string' ||
+      if (!object(work) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(work, k)) || !Object.keys(work).every(k => ['kind', 'execution', 'runtime', 'entry', 'manual', 'input_schema', 'followup', 'public_report', 'required_settings', 'missed'].includes(k)) || typeof work['kind'] !== 'string' ||
           !work['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(work['kind']) || seen.has(work['kind']) ||
           work['execution'] !== 'supervised' || !['node', 'python'].includes(work['runtime'] as string) || !inside(work['entry'])) return invalid;
+      if (work['input_schema'] !== undefined) {
+        const schema = work['input_schema'];
+        if (!object(schema) || schema['type'] !== 'object' || hasAsyncSchema(schema)) return invalid;
+        try { if (!validateSchema || validateSchema(schema) !== true) return invalid; } catch { return invalid; }
+      }
       if (work['missed'] !== undefined && !['latest', 'coalesce', 'skip'].includes(work['missed'] as string)) return invalid;
       if (work['manual'] !== undefined && (typeof work['manual'] !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(work['manual']) || aliases.has(work['manual']))) return invalid;
       if (typeof work['manual'] === 'string') aliases.add(work['manual']);

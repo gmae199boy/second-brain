@@ -1,8 +1,9 @@
+import { hasOnlyFiniteNumbers } from './json-values.js';
 import { checkExtensionExecution } from './replacement.js';
 import { decodeExtensionManifest, isExtensionName } from './manifest.js';
 import type { ExtensionDependencies } from './install.js';
 
-export async function runExtension(deps: ExtensionDependencies, input: { name: string; job: string; target?: string; waitMs?: number }) {
+export async function runExtension(deps: ExtensionDependencies, input: { name: string; job: string; target?: string; input?: unknown; waitMs?: number }) {
   const invalid = () => ({ ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 일감 선언이나 요청이 올바르지 않습니다' });
   // [ASSUMPTION] 대상 식별자는 최대 64자의 제한된 ASCII 문자를 사용한다.
   if (!isExtensionName(input.name) || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(input.job) || !/^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/.test(input.target ?? 'default')) return invalid();
@@ -18,8 +19,11 @@ export async function runExtension(deps: ExtensionDependencies, input: { name: s
     if (!decoded.ok || decoded.manifest.name !== input.name || decoded.manifest.version !== installed.extension.version) return invalid();
     const job = decoded.manifest.work?.find(w => w.manual === input.job);
     if (!job) return invalid();
+    if (job.input_schema !== undefined) {
+      try { if (!hasOnlyFiniteNumbers(input.input) || !runtime.validateValue || runtime.validateValue(job.input_schema, input.input) !== true || new TextEncoder().encode(JSON.stringify(input.input)).length > 16384) return invalid(); } catch { return invalid(); }
+    } else if (input.input !== undefined) return invalid();
     const now = deps.clock.now();
-    const result = await deps.store.enqueueExtensionWork({ name: input.name, version: decoded.manifest.version, work: { id: deps.idGen.next(), kind: job.kind, targetKind: 'extension', targetId: input.target ?? 'default', createdAt: now, nextAttemptAt: now } });
+    const result = await deps.store.enqueueExtensionWork({ name: input.name, version: decoded.manifest.version, ...(input.input === undefined ? {} : { input: input.input }), work: { id: deps.idGen.next(), kind: job.kind, targetKind: 'extension', targetId: input.target ?? 'default', createdAt: now, nextAttemptAt: now } });
     if (!result.ok) return result;
     if (result.state !== 'queued') return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장이 비활성 상태이거나 설치 상태가 변경되었습니다' };
     return { ok: true as const, result, report: job.public_report };

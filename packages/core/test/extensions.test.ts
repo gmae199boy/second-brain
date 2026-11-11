@@ -1,4 +1,4 @@
-import { validateSchema } from '../../../apps/cli/src/runtime/json-schema.js';
+import { validateSchema, validateValue } from '../../../apps/cli/src/runtime/json-schema.js';
 const decodeExtensionManifest = (text: string) => decodeManifest(text, validateSchema);
 import { expect, it } from 'vitest';
 import { decodeExtensionManifest as decodeManifest, isExtensionName, installExtension, extensionStatus, runExtensionCheck, decodeAbiEnv } from '../src/index.js';
@@ -1017,4 +1017,21 @@ it.each(['unknown-property','wrong-name'] as const)('gate 없는 무효 진행 �
   expect(await runExtension(deps,{name:'testext',job:'sync'})).toMatchObject({ok:true,status:'queued'});
   await deps.store.beginExtensionQuiesce({name:'testext',owner:'12345678-1234-1234-1234-123456789abc',now});
   expect(await checkExtensionExecution(deps.store,'testext')).toMatchObject({ok:false,code:'DB_LOCKED'});
+});
+
+
+it('수동 일감 입력은 선언 schema로 검증하고 열린 일감의 다른 입력을 덮어쓰지 않는다', async()=>{
+ const {deps}=setup();
+ const job={kind:'testext.period',execution:'supervised',runtime:'node',entry:'job.mjs',manual:'period',input_schema:{type:'object',properties:{start_date:{type:'string'},send:{type:'boolean'}},required:['start_date'],additionalProperties:false}};
+ deps.extensions.installedManifest=async()=>JSON.stringify({...manifest,work:[job]});
+ deps.extensions.validateValue=validateValue;
+ await deps.store.recordExtensionInstall({name:'testext',version:manifest.version,now,workKinds:[job.kind]});
+ const {runExtension}=await import('../src/extensions/run.js');
+ for(const input of [undefined,{},null,{start_date:'2026-01-01',send:'true'},{start_date:'2026-01-01',extra:1}]) expect(await runExtension(deps,{name:'testext',job:'period',input})).toMatchObject({ok:false});
+ const first=await runExtension(deps,{name:'testext',job:'period',input:{start_date:'2026-01-01'}});
+ expect(first).toMatchObject({ok:true,created:true});
+ expect(await runExtension(deps,{name:'testext',job:'period',input:{start_date:'2026-01-01'}})).toMatchObject({ok:true,created:false});
+ expect(await runExtension(deps,{name:'testext',job:'period',input:{start_date:'2026-01-02',send:true}})).toMatchObject({ok:false});
+ deps.extensions.installedManifest=async()=>JSON.stringify({...manifest,work:[{...job,input_schema:undefined}]});
+ expect(await runExtension(deps,{name:'testext',job:'period',input:{start_date:'2026-01-01'}})).toMatchObject({ok:false});
 });

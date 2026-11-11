@@ -417,10 +417,10 @@ def _previous_evaluations(cfg, folder, yesterday, notes):
 
 
 def build_period(
-    cfg: config.Config, folder: Path, report_date: date, scope: str
+    cfg: config.Config, folder: Path, report_date: date, scope: str, *, focus=None
 ) -> Path:
     """Export a period from one PostgreSQL read snapshot immediately before its session."""
-    if scope not in ("7d", "30d", "all"):
+    if scope not in ("7d", "30d", "all", "custom"):
         raise ValueError("invalid period scope")
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     window = manifest["period_windows"][scope]
@@ -439,11 +439,11 @@ def build_period(
             "to": end,
             "actual_days": actual,
             "months": [m for m in manifest["months"] if start[:7] <= m <= end[:7]],
-            "partial_date": {
+            "partial_date": manifest.get("partial_date", {
                 "date": report_date.isoformat(),
                 "description": "data_cutoff까지의 부분 값",
                 "data_cutoff": manifest["data_cutoff"],
-            },
+            }),
         }
         # Explicit original SQLite column lists exclude the new account keys.
         with conn.cursor(row_factory=dict_row) as cur:
@@ -482,7 +482,28 @@ def build_period(
                         (*account, start, end),
                     ),
                 }
-        if scope == "7d":
+        if scope == "custom":
+            scope_info['timezone'] = cfg.timezone
+            scope_info['focus'] = focus or {}
+            if focus and 'metric' in focus:
+                import query
+                data = {'connection_id': str(conn.connection_id), 'timezone': cfg.timezone,
+                        'start_date': start, 'end_date': end, **focus}
+                command = 'period-summary' if 'aggregation' in focus else 'daily-values'
+                values = {'focus': focus, 'values': query.execute(conn, conn.user_id, command, data)}
+            elif focus:
+                workouts = values['workout']
+                if 'activity_type' in focus:
+                    workouts = [w for w in workouts if w['type'] == focus['activity_type']]
+                if 'exercise' in focus:
+                    ids = {e['activity_id'] for e in values['exercise_log'] if e['exercise'] == focus['exercise']}
+                    workouts = [w for w in workouts if w['activity_id'] in ids]
+                ids = {w['activity_id'] for w in workouts}
+                days = {w['date'] for w in workouts}
+                values = {'workout': workouts,
+                          'day_summary': [d for d in values['day_summary'] if d['date'] in days],
+                          'exercise_log': [e for e in values['exercise_log'] if e['activity_id'] in ids and ('exercise' not in focus or e['exercise'] == focus['exercise'])]}
+        if scope in ("7d", "custom"):
             evaluations = _evaluations(
                 conn,
                 f"SELECT {_EVALUATION_FIELDS} FROM garmin.evaluation WHERE user_id=%s AND connection_id=%s AND scope='day' AND report_date BETWEEN %s AND %s ORDER BY report_date COLLATE \"C\"",
@@ -500,11 +521,21 @@ def build_period(
                 f"SELECT {_EVALUATION_FIELDS} FROM garmin.evaluation e WHERE e.user_id=%s AND e.connection_id=%s AND e.scope='30d' AND e.report_date IN (SELECT MAX(m.report_date COLLATE \"C\") FROM garmin.evaluation m WHERE m.user_id=e.user_id AND m.connection_id=e.connection_id AND m.scope='30d' AND m.report_date<=%s GROUP BY substr(m.report_date,1,7)) ORDER BY e.report_date COLLATE \"C\"",
                 (*account, end),
             )
-        previous = _evaluations(
-            conn,
-            f"SELECT {_EVALUATION_FIELDS} FROM garmin.evaluation WHERE user_id=%s AND connection_id=%s AND scope=%s AND report_date<%s ORDER BY report_date COLLATE \"C\" DESC LIMIT 1",
-            (*account, scope, end),
-        )
+        if scope == "custom":
+            # 같은 초점·길이 중 이번 창과 겹치지 않는 가장 최근 기간의 최신 revision이다.
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("""select start_date,end_date,revision,focus,summary,report_md,judgments,evidence,next_checks
+                    from garmin.period_evaluations where user_id=%s and connection_id=%s and focus=%s::jsonb
+                    and end_date<%s and (end_date::date-start_date::date)=(%s::date-%s::date)
+                    order by end_date desc,start_date desc,revision desc limit 1""",
+                    (*account, json.dumps(focus or {}), start, end, start))
+                previous = cur.fetchall()
+        else:
+            previous = _evaluations(
+                conn,
+                f"SELECT {_EVALUATION_FIELDS} FROM garmin.evaluation WHERE user_id=%s AND connection_id=%s AND scope=%s AND report_date<%s ORDER BY report_date COLLATE \"C\" DESC LIMIT 1",
+                (*account, scope, end),
+            )
     finally:
         conn.close()
     parent = folder / "period"

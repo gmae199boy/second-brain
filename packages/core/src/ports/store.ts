@@ -1525,7 +1525,7 @@ export interface ExtensionStore {
   beginExtensionQuiesce(input: { name: string; owner: string; now: Date }): Promise<{ ok: true; acquired: boolean } | ExtensionStoreFailure>;
   readExtensionQuiesce(name: string): Promise<{ ok: true; owner: string | null; running: number } | ExtensionStoreFailure>;
   endExtensionQuiesce(input: { name: string; owner: string }): Promise<{ ok: true; released: boolean } | ExtensionStoreFailure>;
-  enqueueExtensionWork(input: { name: string; version: string; work: AddWorkInput }): Promise<{ ok: true; state: 'queued'; workId: string; created: boolean } | { ok: true; state: 'missing' | 'disabled' | 'changed' } | ExtensionStoreFailure>;
+  enqueueExtensionWork(input: { name: string; version: string; input?: unknown; work: AddWorkInput }): Promise<{ ok: true; state: 'queued'; workId: string; created: boolean } | { ok: true; state: 'missing' | 'disabled' | 'changed' } | ExtensionStoreFailure>;
   /** registry, 설치 기록과 정지 gate의 이름을 중복 없이 정렬해 읽는다. */
   listExtensionInventory(): Promise<{ ok: true; names: string[] } | ExtensionStoreFailure>;
   getExtensionPublicStatus(name: string): Promise<{ ok: true; status: ExtensionPublicStatus } | ExtensionStoreFailure>;

@@ -34,12 +34,12 @@ SCOPES = ('day', '7d', '30d', 'all')
 
 
 def validate(command, data):
-    if command not in ('daily-values', 'period-summary', 'recent-evaluations') or not isinstance(data, dict): raise ValueError('invalid input')
+    if command not in ('daily-values', 'period-summary', 'recent-evaluations', 'recent-period-evaluations') or not isinstance(data, dict): raise ValueError('invalid input')
     common = {'connection_id', 'timezone'}
-    allowed = common | ({'scope', 'limit'} if command == 'recent-evaluations' else
+    allowed = common | (({'scope', 'limit'} if command == 'recent-evaluations' else {'limit'}) if command in ('recent-evaluations', 'recent-period-evaluations') else
                         {'start_date', 'end_date', 'metric', 'activity_type', 'exercise'} |
                         ({'aggregation'} if command == 'period-summary' else set()))
-    required = common | ({'scope', 'limit'} if command == 'recent-evaluations' else
+    required = common | (({'scope', 'limit'} if command == 'recent-evaluations' else {'limit'}) if command in ('recent-evaluations', 'recent-period-evaluations') else
                          {'start_date', 'end_date', 'metric'} |
                          ({'aggregation'} if command == 'period-summary' else set()))
     if set(data) - allowed or not required <= set(data): raise ValueError('invalid fields')
@@ -47,8 +47,8 @@ def validate(command, data):
     if str(connection) != data['connection_id']: raise ValueError('invalid connection')
     if not isinstance(data['timezone'], str) or not data['timezone']: raise ValueError('invalid timezone')
     ZoneInfo(data['timezone'])
-    if command == 'recent-evaluations':
-        if data['scope'] not in SCOPES or type(data['limit']) is not int or not 1 <= data['limit'] <= 100: raise ValueError('invalid evaluation filter')
+    if command in ('recent-evaluations', 'recent-period-evaluations'):
+        if (command == 'recent-evaluations' and data['scope'] not in SCOPES) or type(data['limit']) is not int or not 1 <= data['limit'] <= 100: raise ValueError('invalid evaluation filter')
     else:
         for key in ('start_date', 'end_date'):
             if not isinstance(data[key], str) or date.fromisoformat(data[key]).isoformat() != data[key]: raise ValueError('invalid date')
@@ -63,6 +63,14 @@ def execute(conn, user, command, data):
     connection = validate(command, data)
     row = conn.execute('select timezone from garmin.account_connections where user_id=%s and connection_id=%s', (user, connection)).fetchone()
     if not row or row[0] != data['timezone']: raise ValueError('account or timezone mismatch')
+    if command == 'recent-period-evaluations':
+        import json
+        rows = conn.execute('''select start_date,end_date,revision,focus,summary,report_md,judgments,evidence,next_checks
+            from garmin.period_evaluations where user_id=%s and connection_id=%s
+            order by created_at desc, start_date desc, end_date desc, revision desc limit %s''',
+            (user, connection, data['limit'])).fetchall()
+        fields = ('start_date','end_date','revision','focus','summary','report_md','judgments','evidence','next_checks')
+        return {'evaluations': [dict(zip(fields, r, strict=True)) for r in rows]}
     if command == 'recent-evaluations':
         rows = conn.execute('''select e.report_date,e.scope,e.summary,
           (select f.file_id from garmin.evaluation_files f where f.user_id=e.user_id and f.connection_id=e.connection_id

@@ -423,6 +423,8 @@ it('migration 대기 중 프로세스 중단 후 같은 owner로 재개하고 �
     await expect.poll(async () => (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'")).length, { timeout: 10000 }).toBe(1);
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(fixture.home, 'extensions/.transition-resumext.json'), 'utf8')).phase; } catch { return ''; } }, { timeout: 10000 }).toBe('prepared');
     const owner = (await fixture.db.rows("select owner from brain.extension_quiesce where name='resumext'"))[0]!.owner;
+    // prepared는 역할 준비 전에도 보인다. 실제 migration 잠금 대기를 확인한 뒤 중단한다.
+    await expect.poll(async()=> (await fixture.db.rows("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%pg_advisory_xact_lock%') as waiting"))[0]?.waiting, {timeout:10000}).toBe(true);
     child.kill('SIGKILL'); await exited; child = undefined; await blocker.query('rollback');
     // This synthetic installer has no spawned writer; its process has exited.
     await rm(join(fixture.home, 'install.lock'), { recursive: true });

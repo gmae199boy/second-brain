@@ -19,7 +19,7 @@ prompt = next((arg for arg in args if arg.startswith('$garmin-')), '')
 lines = prompt.splitlines()
 first = lines[0] if lines else ''
 scopes = {'$garmin-body-intake': 'intake', '$garmin-daily-analysis': 'day',
-          **{'$garmin-period-review ' + scope: scope for scope in ('7d', '30d', 'all')}}
+          **{'$garmin-period-review ' + scope: scope for scope in ('7d', '30d', 'all', 'custom')}}
 if first not in scopes:
     sys.exit(18)
 scope = scopes[first]

@@ -16,7 +16,7 @@ class InvalidReportInput(Exception):
 
 def envelope(env):
     try:
-        account, values = decode_envelope(env, work_kinds=('garmin.report', 'garmin.report_regenerate'),
+        account, values = decode_envelope(env, work_kinds=('garmin.report', 'garmin.report_regenerate', 'garmin.period_analysis'),
                                           reject_duplicate_keys=True)
         # Collect shares settings validation but does not require an analysis model.
         model = values['garmin.analysis_model']

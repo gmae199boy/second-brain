@@ -273,7 +273,7 @@ export interface BrainSchedules {
 }
 export interface BrainExt {
   command(input: { name: string; command: string; input: unknown; signal?: AbortSignal }): Promise<Awaited<ReturnType<typeof executeExtensionCommand>> & { meta?: import('./envelope.js').EnvelopeMeta } | { ok: false; code: string; message: string; meta?: import('./envelope.js').EnvelopeMeta }>;
-  run(input: { name: string; job: string; target?: string; waitMs?: number }): ReturnType<typeof runExtension>;
+  run(input: { name: string; job: string; target?: string; input?: unknown; waitMs?: number }): ReturnType<typeof runExtension>;
   install(input: { name?: string; packagePath?: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   list(): ReturnType<typeof listExtensions>;
