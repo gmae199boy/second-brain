@@ -79,12 +79,12 @@ describe('changed test path rules', () => {
     const expected = [
       'clones, builds, installs, and records the commit the plugin asked for',
       'does nothing at all on a second session with the same ref',
-      'restarts a loaded daemon once after updating the plugin ref and exposes the new build',
+      '갱신 전에 기존 데몬을 멈추고 새 빌드를 노출한다',
       '실제 app 승격 뒤 완료 기록 실패를 같은 대상으로 재시도하며 원래 backup을 보존한다',
       'collects a Stop payload, records its arrival, and ignores a transcript with no conversation',
       '실제 package 설치와 같은 core bootstrap이 겹쳐도 둘 다 성공하고 일관된다',
-      '설치된 확장의 다른 commit 자동 갱신은 offline 확인 없이 거부하고 보존한다',
-      'offline 확인 없는 bootstrap 갱신을 거부하고 Python 확장을 보존한다',
+      '설치된 확장의 다른 commit을 SessionStart가 무질문 갱신하고 기억과 이력을 보존한다',
+      '무인 bootstrap 갱신이 Python 확장 환경과 데이터를 보존한다',
     ];
     expect(names).toHaveLength(expected.length);
     for (const name of expected) expect(names.filter(actual => actual.endsWith(name)), name).toHaveLength(1);

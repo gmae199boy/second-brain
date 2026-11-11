@@ -10,6 +10,7 @@ import { systemLaunchctl, daemonLabel, type Launchctl } from '../daemon/launchd.
 import { acquireOfflineDaemonFence, readDaemonLock, releaseDaemonLock } from '../daemon/lock.js';
 import type { Clock } from 'second_brain';
 const execute = promisify(execFile);
+class ProcessSnapshotChanged extends Error {}
 interface Row { pid: number; parent: number; group: number; command: string }
 /** argv의 줄바꿈을 PID 행으로 오인하지 않도록 숫자 표를 별도로 읽는다. */
 export function parseProcessRows(identities: string, commands: string, home: string): Row[] {
@@ -27,7 +28,7 @@ export function parseProcessRows(identities: string, commands: string, home: str
     if (match && row) {
       if (seen.has(row.pid)) throw new Error('프로세스 인자와 PID 행의 경계가 모호합니다. 다시 갱신하세요');
       seen.add(row.pid);
-      if (row.parent !== Number(match[2]) || row.group !== Number(match[3])) throw new Error('프로세스 신원이 조사 중 바뀌었습니다. 다시 갱신하세요');
+      if (row.parent !== Number(match[2]) || row.group !== Number(match[3])) throw new ProcessSnapshotChanged('프로세스 신원이 조사 중 바뀌었습니다. 다시 갱신하세요');
       current = row; row.command += `\n${match[4] ?? ''}`;
     } else if (match) {
       current = undefined;
@@ -37,13 +38,23 @@ export function parseProcessRows(identities: string, commands: string, home: str
   }
   return [...rows.values()];
 }
+/** 두 ps 사이의 OS 신원 변경만 새 전체 snapshot으로 제한 재시도한다. */
+export async function readStableProcessRows(read: () => Promise<{ identities: string; commands: string }>, home: string): Promise<Row[]> {
+  for (let attempt = 0; ; attempt++) {
+    const snapshot = await read();
+    try { return parseProcessRows(snapshot.identities, snapshot.commands, home); }
+    catch (error) { if (!(error instanceof ProcessSnapshotChanged) || attempt >= 2) throw error; }
+  }
+}
 /** 명령 본문·환경은 기록하지 않고 관련 pid와 자식만 추적한다. */
 export async function homeProcesses(home: string, groups = new Set<number>()): Promise<number[]> {
   const options = { timeout: 5000, maxBuffer: 8 * 1024 * 1024 };
-  const identities = await execute('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], options);
-  const commands = await execute('/bin/ps', ['-ww', '-axo', 'pid=,ppid=,pgid=,command='], options);
-  if (identities.stderr || commands.stderr) throw new Error('프로세스 목록을 확인할 수 없습니다');
-  const rows = parseProcessRows(identities.stdout, commands.stdout, home);
+  const rows = await readStableProcessRows(async () => {
+    const identities = await execute('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], options);
+    const commands = await execute('/bin/ps', ['-ww', '-axo', 'pid=,ppid=,pgid=,command='], options);
+    if (identities.stderr || commands.stderr) throw new Error('프로세스 목록을 확인할 수 없습니다');
+    return { identities: identities.stdout, commands: commands.stdout };
+  }, home);
   // 옛 core의 직접 명령은 영속 그룹 기록이 없으므로 상속 cwd도 조사한다.
   const cwd = await execute('/usr/sbin/lsof', ['-a', '-u', String(process.getuid?.() ?? ''), '-d', 'cwd', '-Fpn'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
   const cwdOwners = new Set<number>(); let cwdPid = 0;

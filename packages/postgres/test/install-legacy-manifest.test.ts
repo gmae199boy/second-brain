@@ -124,7 +124,8 @@ it('resumes with the same owner after a failed progress write', async () => {
 it('resumes after replacement progress was saved before journal removal', async () => {
   const k = await world('oldext');
   await k.db.query(`create function brain.reject_progress() returns trigger language plpgsql as $$ begin raise exception 'injected'; end $$; create trigger reject_progress before insert on brain.extension_install_progress for each row execute function brain.reject_progress()`);
-  expect(await k.install()).toMatchObject({ok:false});
+  const failed = await k.install();
+  expect(failed).toMatchObject({ok:false,code:'DB_UNAVAILABLE'});
   const journal = JSON.parse(await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8'));
   await k.db.query('drop trigger reject_progress on brain.extension_install_progress; drop function brain.reject_progress()');
   const progress = {name:'oldext',packageDigest:'a'.repeat(64),result:null,failedStage:null,lastFailure:null,stages:{},authWorkId:null,scheduleIds:[],replacement:{owner:journal.owner,fromVersion:'1.0.0',at:'2026-10-28T01:02:03.456Z'}};
@@ -588,9 +589,9 @@ it.each(['mixed','two-retired'] as const)('복수 확장 %s에서 두 번째 저
     await k.db.query(`insert into brain.schema_migrations(owner,version,name,checksum,applied_at) values ('${other}',${Number(file.slice(0,4))},'${file}','${hash}',now())`);
   }
   const manifestPath = join(dir,'manifest.json'); const manifest = JSON.parse((await readFile(manifestPath,'utf8')).replaceAll('oldext',other));
-  if (mode === 'mixed') { for (const work of manifest.work) delete work.verification_snapshot; manifest.core_compat={min:'0.0.0',max_exclusive:'999.0.0'}; manifest.files=['manifest.json']; manifest.plugin_version='1.0.0'; }
+  if (mode === 'mixed') { manifest.version='1.2.7'; for (const work of manifest.work) delete work.verification_snapshot; manifest.core_compat={min:'0.0.0',max_exclusive:'999.0.0'}; manifest.files=['manifest.json']; manifest.plugin_version='1.0.0'; }
   await writeFile(manifestPath,JSON.stringify(manifest));
-  await k.db.query(`insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('${other}','1.0.0',now(),false,now()); insert into brain.work_hold_groups values ('extension:${other}',now())`);
+  await k.db.query(`insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('${other}','${manifest.version}',now(),false,now()); insert into brain.work_hold_groups values ('extension:${other}',now())`);
   const history = await k.db.rows("select * from brain.schema_migrations where owner in ('oldext','garmin') order by owner,version");
   if (mode === 'two-retired') {
     await k.db.query(`create function brain.reject_second_progress() returns trigger language plpgsql as $$ begin if new.name='oldext' then raise exception 'injected'; end if; return new; end $$; create trigger reject_second_progress before insert on brain.extension_install_progress for each row execute function brain.reject_second_progress()`);

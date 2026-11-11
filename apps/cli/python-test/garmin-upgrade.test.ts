@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { postgresStore } from 'second_brain/postgres';
 import { randomBytes } from 'node:crypto';
-import { copyFile, mkdtemp, readdir, rm, readFile, realpath } from 'node:fs/promises';
+import { cp, copyFile, mkdtemp, readdir, rm, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os'; import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { extHome } from '../test/ext-fixture.js';
@@ -85,10 +85,27 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   expect(newer(currentManifest.version,'1.2.0')).toBe(true);
   expect(newer(currentManifest.plugin_version,'0.1.2')).toBe(true);
   expect(oldDigest).not.toBe(currentDigest);
-  const first=await fixture.run(['ext','install','--package',old,'--json']);
+  // schema47의 신규 설치는 옛 소비자를 파일·registry 변경 전에 거부한다.
+  const rejected=await fixture.run(['ext','install','--package',old,'--json']);
+  expect(rejected.code,rejected.stdout+rejected.stderr).not.toBe(0);
+  expect(rejected.body.error.code).toBe('EXTENSION_INVALID');
+  expect(await fixture.db.rows("select name from brain.extensions")).toEqual([]);
+  expect(await fixture.db.rows('select * from brain.extension_quiesce')).toEqual([]);
+  expect(await readFile(join(fixture.home,'extensions/garmin/manifest.json')).then(()=>true).catch(()=>false)).toBe(false);
+  // 과거 설치 상태는 제품 설치 gate를 우회하지 않고 합성 fixture로 직접 복원한다.
+  const oldManifest=JSON.parse(await readFile(join(old,'manifest.json'),'utf8'));
+  const oldTarget=join(fixture.home,'extensions/garmin');
+  await cp(old,oldTarget,{recursive:true});
+  const {ensureExtensionPassword}=await import('../src/config/codec.js');
+  await provisionExtension(fixture.db.url,'garmin',await ensureExtensionPassword(fixture.home,'garmin'));
+  expect(await runMigrations({databaseUrl:fixture.db.url,clock:{now:()=>new Date()},owners:[{owner:'garmin',directory:join(old,'migrations')}]})).toMatchObject({ok:true});
+  const {prepareExtensionPython}=await import('../src/runtime/extension-python.js');
+  await prepareExtensionPython(oldTarget,fixture.env);
+  expect(await store.recordExtensionInstall({name:'garmin',version:oldManifest.version,now:new Date(),packageIdentity:{digest:oldDigest,pluginVersion:oldManifest.plugin_version},workKinds:[...oldManifest.work,...(oldManifest.auth ? [oldManifest.auth] : [])].map((w:any)=>w.kind)})).toMatchObject({ok:true});
+  for(const key of ['collect','report']) await fixture.db.query(`insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled,next_run_at,created_at)
+    select gen_random_uuid(),'garmin.${key}','extension:garmin','account','synthetic','cron','0 9 * * *','Asia/Seoul','user','garmin','${key}',id,false,now()+interval '1 day',now() from brain.users where is_self=1`);
   const oldRegistry=await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'");
   expect(oldRegistry).toEqual([{version:'1.2.0',package_digest:oldDigest,plugin_version:'0.1.2'}]);
-  expect(first.code,first.stdout+first.stderr).toBe(0);
   const { extensionDatabaseUrl }=await import('../src/config/codec.js');
   const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), target=join(fixture.home,'extensions/garmin');
   const probe=()=>JSON.parse(execFileSync(join(target,'.venv/bin/python'),['-c',"import json,psycopg,sys;sys.path.insert(0,sys.argv[1]);from role_probe import probe_role; c=psycopg.connect(sys.argv[2]); print(json.dumps(probe_role(c))); c.close()",join(target,'src'),url],{encoding:'utf8',env:{...fixture.env,PYTHONDONTWRITEBYTECODE:'1'}}));
@@ -107,7 +124,7 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   expect({...after,ledger:after.ledger.slice(0,before.ledger.length)}).toEqual(before);
   expect(after.ledger.map(row=>row.version)).toEqual(Array.from({length:18},(_,i)=>i+1));
   expect(await fixture.db.rows("select data_type,is_nullable from information_schema.columns where table_schema='garmin' and table_name='evaluation_revisions' and column_name='message'")).toEqual([{data_type:'jsonb',is_nullable:'YES'}]);
-  expect(probe()).toMatchObject({no_excess_functions:true,send_execute:true});
+  expect(probe()).toMatchObject({no_excess_functions:true,event_emit_execute:true});
   for(const path of ['src/role_probe.py','src/batch_import.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
  } finally {await store.close();await fixture.cleanup();await rm(temp,{recursive:true,force:true});}
 },120000);

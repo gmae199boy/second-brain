@@ -25,6 +25,7 @@ export async function checkInstalledCore(home: string, running: BuildIdentity | 
 
 export async function checkPackageCore(home: string, manifest: ExtensionManifest, running: BuildIdentity | undefined): Promise<void> {
   await checkInstalledCore(home, running);
+  if ((running?.schema_version ?? 0) >= 47 && manifest.name === 'garmin' && compareRelease(manifest.version, '1.2.7') < 0) throw new Error('결과 이벤트를 지원하는 Garmin 1.2.7 이상 패키지가 필요합니다');
   const range = manifest.core_compat;
   if (!range || !running?.version || compareRelease(running.version, range.min) < 0 || compareRelease(running.version, range.max_exclusive) >= 0) throw new Error('core compatibility mismatch');
 }

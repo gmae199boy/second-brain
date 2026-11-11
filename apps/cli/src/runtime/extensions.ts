@@ -66,7 +66,7 @@ export async function packageDigest(folder: string, migrations: string, omitMigr
   await visit(folder, ''); return hash.digest('hex');
 }
 /** 등록된 확장의 manifest만 읽고 런타임을 준비하지 않는다. */
-export async function installedExtensionMigrations(home: string, names: readonly string[], targetVersion?: string, retiredAllowed: ReadonlySet<string> = new Set()): Promise<{ owner: string; directory: string; replacement?: true; version?: string }[]> {
+export async function installedExtensionMigrations(home: string, names: readonly string[], targetVersion?: string, retiredAllowed: ReadonlySet<string> = new Set(), targetSchema?: number): Promise<{ owner: string; directory: string; replacement?: true; version?: string }[]> {
   const folder = join(home, 'extensions');
   const owners: { owner: string; directory: string; replacement?: true; version?: string }[] = [];
   for (const name of [...names].sort()) {
@@ -82,7 +82,11 @@ export async function installedExtensionMigrations(home: string, names: readonly
     const retired = !current.ok && retiredAllowed.has(name) ? decodeRetiredExtensionManifest(text, validateSchema) : null;
     const decoded = current.ok ? current : retired;
     if (!decoded?.ok || decoded.manifest.name !== name) throw new Error(`확장 manifest가 올바르지 않습니다: ${name}`);
-    const replacement = !current.ok || (retiredAllowed.has(name) && !current.manifest.core_compat);
+    // schema47는 옛 Garmin topic 생산자·엄격한 role probe와 호환되지 않는다.
+    // core만 갱신해도 옛 패키지를 재개하지 않고 기존 replacement gate로 넘긴다.
+    const { compareRelease } = await import('./extension-package.js');
+    const eventReplacement = name === 'garmin' && (targetSchema ?? 0) >= 47 && compareRelease(decoded.manifest.version, '1.2.7') < 0;
+    const replacement = eventReplacement || !current.ok || (retiredAllowed.has(name) && !current.manifest.core_compat);
     if (targetVersion && current.ok && !replacement) {
       if (!current.manifest.core_compat) throw new Error(`대상 core 호환 범위가 없습니다: ${name}`);
       const { compareRelease } = await import('./extension-package.js');

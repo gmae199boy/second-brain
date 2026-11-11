@@ -168,7 +168,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
         }
       } catch { return locked('확장 진행 기록 또는 정지 소유권을 확인할 수 없습니다.'); }
       let owners: Awaited<ReturnType<typeof installedExtensionMigrations>>;
-      try { owners = await installedExtensionMigrations(home, existing.names, build?.version, allowed); }
+      try { owners = await installedExtensionMigrations(home, existing.names, build?.version, allowed, build?.schema_version); }
       catch { return locked('확장 manifest 또는 대상 core 호환성을 확인할 수 없습니다.'); }
       if (owners.some(o => o.replacement && records.get(o.owner)?.progress.transition)) return locked('중단된 확장 전환이 있습니다.');
       const validReplacementIdentity = async () => {
@@ -247,7 +247,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           try {
             const currentRecords = await readProgress();
             if (JSON.stringify([...currentRecords]) !== JSON.stringify([...records])) throw new Error('progress changed');
-            owners = await installedExtensionMigrations(home, existing.names, build.version, allowed);
+            owners = await installedExtensionMigrations(home, existing.names, build.version, allowed, build.schema_version);
             if (owners.some(o => o.replacement && currentRecords.get(o.owner)?.progress.transition)) throw new Error('transition');
           }
           catch { return locked('확인 중 확장 패키지 또는 대상 core 호환성이 바뀌었습니다.'); }

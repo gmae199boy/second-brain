@@ -385,7 +385,7 @@ it('L4 비대화 설치 의존성은 legacy offline 확인을 제공하지 않�
   const { systemInstallDeps } = await import('../../../apps/cli/dist/install.js');
   const deps = systemInstallDeps({ runner: k.options.runner, secrets: k.options.secrets, databaseName: k.options.databaseName, allowOfflinePrompt: false });
   expect(await deps.postgres!(k.home, k.options.urlEnv, k.options.env)).toMatchObject({ ok: true });
-  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 46 });
+  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 47 });
 });
 
 it('L5 승격 후 확장 migration 실패는 같은 app과 owner로 새 확인 뒤 재개한다', async () => {

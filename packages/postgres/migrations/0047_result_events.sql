@@ -39,7 +39,8 @@ revoke all on function brain.subscription_zone(uuid) from public;
 grant execute on function brain.subscription_zone(uuid) to brain_app;
 
 -- core 파이프라인. 자동 접수는 기록 당시의 구독·날짜·시각을 고정한다.
-create function brain.dispatch_result_event(p_event uuid,p_now timestamptz,p_force boolean default false)
+create function brain.dispatch_result_event(p_event uuid,p_now timestamptz,p_force boolean default false,
+ p_request_work uuid default null,p_request_attempt uuid default null)
  returns integer language plpgsql set search_path='' as $$
 declare e brain.result_events%rowtype; s brain.channel_subscriptions%rowtype;
  zone text; due timestamptz; dispatch_id uuid;
@@ -61,15 +62,15 @@ begin
  insert into brain.channel_dispatches(id,topic,semantic_key,producer,purpose,revision,body,bundle,direct_conversation_id,
    send_at,created_at,state,source_work_item_id,source_attempt_token,event_id,subscription_id)
  values(gen_random_uuid(),e.event,e.id::text||':'||s.id::text,e.producer,'event',e.revision,e.body,e.bundle,s.conversation_id,
-   due,p_now,'scheduled',case when p_force then null else e.source_work_item_id end,
-   case when p_force then null else e.source_attempt_token end,e.id,s.id)
+   due,p_now,'scheduled',case when p_force then p_request_work else e.source_work_item_id end,
+   case when p_force then p_request_attempt else e.source_attempt_token end,e.id,s.id)
  on conflict do nothing returning id into dispatch_id;
  if dispatch_id is null then return 0; end if;
  perform brain.route_channel_dispatch(dispatch_id,p_now);
  return 1;
 end $$;
-revoke all on function brain.dispatch_result_event(uuid,timestamptz,boolean) from public;
-grant execute on function brain.dispatch_result_event(uuid,timestamptz,boolean) to brain_app;
+revoke all on function brain.dispatch_result_event(uuid,timestamptz,boolean,uuid,uuid) from public;
+grant execute on function brain.dispatch_result_event(uuid,timestamptz,boolean,uuid,uuid) to brain_app;
 
 create function brain.on_result_event() returns trigger language plpgsql set search_path='' as $$
 begin
@@ -99,7 +100,14 @@ begin
  -- A semantic key acknowledges once, regardless of route or schedule changes.
  perform pg_advisory_xact_lock(hashtextextended(jsonb_build_array(p_event,p_key)::text,12));
  select id into result_id from brain.result_events where event=p_event and semantic_key=p_key;
- if found then return result_id; end if;
+ if found then
+   -- 같은 결과의 명시적 수동 요청은 보관 이벤트를 현재 구독에 한 번 접수한다.
+   -- 원본의 종료된 attempt 대신 현재 검증된 수동 요청 출처를 사용한다.
+   if exists(select 1 from brain.work_manual_requests where work_id=p_work) then
+     perform brain.dispatch_result_event(result_id,now(),true,p_work,p_attempt);
+   end if;
+   return result_id;
+ end if;
  if p_document is null then
    if p_albums is not null then raise exception 'invalid bundle'; end if;
    body_bundle := null;

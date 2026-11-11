@@ -1,13 +1,13 @@
 import pg from 'pg';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn, execFileSync } from 'node:child_process';
+import { appendFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createIsolatedTestDatabase, type TestDatabase } from '@second-brain/test-db';
 import { database, clock } from './fixture.js';
-import { runtimeDatabaseFence, runMigrations, postgresStore } from '../src/index.js';
+import { runtimeDatabaseFence, runMigrations, postgresStore, provisionExtension } from '../src/index.js';
 import { withRuntimeFence, runtimeFencePath } from '../../../apps/cli/src/install/runtime-fence.js';
 import { installPostgres } from '../../../apps/cli/dist/install/postgres.js';
 import { writeConfig } from '../../../apps/cli/src/config/codec.js';
@@ -51,6 +51,8 @@ it('비대화 core migration 중 새 hook과 옛 접속 실패 경로는 spool�
   } });
   for (const client of clients) await client.end().catch(() => {});
   expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { method: 'automatic', evidence: { runtime_backends: 0 } } } });
+  expect(await k.db.rows("select has_function_privilege('brain_ext_fixture','brain.extension_event_emit(uuid,uuid,text,text,date,text,text,uuid,jsonb)','EXECUTE') allowed")).toEqual([{ allowed: true }]);
+  expect(await k.db.rows("select count(*)::int n from brain.schema_migrations where owner='core' and version=47")).toEqual([{ n: 1 }]);
   expect(await k.db.rows("select rolcanlogin from pg_roles where rolname='brain_app'")).toEqual([{ rolcanlogin: true }]);
   await expect(readFile(runtimeFencePath(k.home))).rejects.toMatchObject({ code: 'ENOENT' });
   for (const home of [k.home, oldHome]) {
@@ -118,3 +120,48 @@ it('NOLOGIN 중 실제 설치기 SIGKILL 뒤 같은 설치기는 daemon fence와
   await expect(readFile(join(k.home, 'run/daemon.pid'))).rejects.toMatchObject({ code: 'ENOENT' });
   } finally { if (orphanPid) try { process.kill(-orphanPid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } }
 });
+
+it('core47 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하고 새 패키지로만 해제한다', async () => {
+  const k = await world();
+  const archive = join(k.home, 'baseline.tar');
+  execFileSync('git', ['archive', '--output', archive, 'e407369b57841a5d759945a2a70c38480329e3bb', 'plugins/garmin/package']);
+  execFileSync('tar', ['-xf', archive, '-C', k.home]);
+  const old = join(k.home, 'plugins/garmin/package'), target = join(k.home, 'extensions/garmin');
+  await cp(old, target, { recursive: true });
+  const { ensureExtensionPassword } = await import('../../../apps/cli/src/config/codec.js');
+  await provisionExtension(k.db.url, 'garmin', await ensureExtensionPassword(k.home, 'garmin'));
+  await appendFile(join(k.home, '.env'), `BRAIN_POSTGRES_PASSWORD=${decodeURIComponent(new URL(k.db.url).password)}\n`);
+  expect(await runMigrations({ databaseUrl: k.db.url, clock, coreMaxVersion: 46, owners: [{ owner: 'garmin', directory: join(target, 'migrations') }] })).toMatchObject({ ok: true });
+  await k.db.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('garmin','1.2.6',now(),true,now()); insert into brain.extension_work_kinds(extension_name,kind) values ('garmin','garmin.report')");
+  const sourceBefore = await readFile(join(target, 'src/report_channel.py'));
+  const result = await installPostgres(k.options);
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { method: 'automatic' } } });
+  const store = postgresStore({ databaseUrl: k.db.appUrl });
+  try {
+    const gate = await store.readExtensionQuiesce('garmin');
+    expect(gate.ok && gate.owner).toBeTruthy();
+    expect(await store.getExtensionInstallProgress('garmin')).toMatchObject({ journal: { progress: { replacement: { fromVersion: '1.2.6', owner: gate.ok ? gate.owner : null } } } });
+    expect(await readFile(join(target, 'src/report_channel.py'))).toEqual(sourceBefore);
+    const { extensionRuntime } = await import('../../../apps/cli/src/runtime/extensions.js');
+    const { readConfig } = await import('../../../apps/cli/src/config/codec.js');
+    const runtime = extensionRuntime({ home: k.home, env: k.env, config: await readConfig(k.home), clock });
+    const manifest = JSON.parse(await readFile(join(old, 'manifest.json'), 'utf8'));
+    const build = JSON.parse(await readFile(new URL('../../../apps/cli/dist/build.json', import.meta.url), 'utf8'));
+    await writeFile(join(k.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: 47, node: process.execPath, plugin_root: null, installed_at: clock.now().toISOString() }));
+    await expect(runtime.packages.checkCore!(manifest)).rejects.toThrow('1.2.7');
+    // 최신 패키지 전환은 기존 교체 프로토콜을 사용하며 auth/scheduler 단계 전에 gate를 해제한다.
+    let output = '';
+    const exit = await dispatch(commands, ['ext','install','--package',fileURLToPath(new URL('../../../plugins/garmin/package', import.meta.url)),'--json'], { env: k.env, clock, stdout: text => { output += text; }, stderr: () => {} });
+    expect(exit, output).not.toBe(0);
+    expect(['EXTENSION_LOGIN_REQUIRED', 'EXTENSION_SCHEDULER_UNAVAILABLE']).toContain(JSON.parse(output).error.code);
+    expect(await store.getExtension('garmin'), output).toMatchObject({ extension: { version: '1.2.7' } });
+    expect(await store.readExtensionQuiesce('garmin'), output).toMatchObject({ owner: null });
+    expect(await store.getExtensionInstallProgress('garmin')).toMatchObject({ journal: { progress: { name: 'garmin' } } });
+    const progress = await store.getExtensionInstallProgress('garmin');
+    expect(progress.ok && progress.journal?.progress.replacement).toBeUndefined();
+    const { extensionDatabaseUrl } = await import('../../../apps/cli/src/config/codec.js');
+    const url = await extensionDatabaseUrl(k.home, 'garmin', k.db.appUrl);
+    const probe = JSON.parse(execFileSync(join(target, '.venv/bin/python'), ['-c', 'import json,psycopg,sys;sys.path.insert(0,sys.argv[1]);from role_probe import probe_role;c=psycopg.connect(sys.argv[2]);print(json.dumps(probe_role(c)));c.close()', join(target, 'src'), url], { encoding: 'utf8', env: { ...k.env, PYTHONDONTWRITEBYTECODE: '1' } }));
+    expect(probe).toMatchObject({ no_excess_functions: true, event_emit_execute: true });
+  } finally { await store.close(); }
+}, 180_000);

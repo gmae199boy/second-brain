@@ -72,3 +72,21 @@ it('줄바꿈 argv와 빈 command는 별도 PID 표로 연결하고 조사 중 �
   expect(() => parseProcessRows('10 1 10\n', `30 1 30 node ${home}/app/bin.js\n`, home)).toThrow('새 Brain');
   expect(() => parseProcessRows('10 1 10\n20 1 20\n', `10 1 10 node -e\n20 1 20 ${home}/extensions/testext/check.js\n20 1 20 unrelated-command\n`, home)).toThrow('경계가 모호');
 });
+
+it('OS 신원이 바뀐 ps snapshot은 버리고 새 전체 snapshot만 사용한다', async () => {
+  const { readStableProcessRows } = await import('../src/install/offline.js');
+  const home = '/tmp/synthetic-brain'; let reads = 0;
+  const rows = await readStableProcessRows(async () => ++reads === 1
+    ? { identities: '10 1 10\n20 10 10\n', commands: '10 2 10 node\n20 10 10 stale\n' }
+    : { identities: '30 1 30\n', commands: `30 1 30 node ${home}/extensions/testext/check.js\n` }, home);
+  expect(reads).toBe(2); expect(rows.map(row => row.pid)).toEqual([30]);
+  expect(rows[0]?.command).toContain(`${home}/extensions/testext/check.js`);
+});
+it('반복 신원 변경은 세 번 후 거부하고 모호한 PID 경계는 즉시 거부한다', async () => {
+  const { readStableProcessRows } = await import('../src/install/offline.js');
+  let reads = 0;
+  await expect(readStableProcessRows(async () => { reads++; return { identities: '10 1 10\n', commands: '10 2 10 node\n' }; }, '/tmp/synthetic-brain')).rejects.toThrow('신원');
+  expect(reads).toBe(3); reads = 0;
+  await expect(readStableProcessRows(async () => { reads++; return { identities: '10 1 10\n', commands: '10 1 10 node\n10 1 10 another\n' }; }, '/tmp/synthetic-brain')).rejects.toThrow('경계가 모호');
+  expect(reads).toBe(1);
+});

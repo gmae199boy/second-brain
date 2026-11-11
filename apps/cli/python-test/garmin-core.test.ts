@@ -80,7 +80,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       insert into garmin.meta(user_id,connection_id,key,value) values ('${self}','${account}','history_start','${day}'),('${self}','${account}','normalize_version','${normalizeVersion}');
       insert into garmin.day_summary(user_id,connection_id,date,sleep_total_s) values ('${self}','${account}','${prior1}',24000),('${self}','${account}','${prior2}',25000);
       insert into brain.channels values ('${channel}','telegram','synthetic');
-      insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}'); insert into brain.channel_routes(topic,conversation_id) values ('garmin.report','${conversation}')`);
+      insert into brain.channel_conversations(id,channel_id,external_ref,user_id) values ('${conversation}','${channel}','synthetic-chat','${self}'); insert into brain.channel_subscriptions(event,conversation_id) values ('garmin.report.completed','${conversation}')`);
     for (const [key,value] of Object.entries({'garmin.timezone':'Asia/Seoul','garmin.connection_id':account,'garmin.analysis_model':'synthetic'}))
       expect(await store.setSetting({userId:self,key,value,updatedAt:clock.now()})).toMatchObject({ok:true});
     await world.db.query(`update brain.schedules set next_run_at=case schedule_key when 'collect' then '${collectAt.toISOString()}'::timestamptz else '${reportAt.toISOString()}'::timestamptz end where extension='garmin'`);
@@ -148,7 +148,14 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     await expect.poll(async()=> (await world.db.rows(`select count(*)::int n from garmin.evaluation_revisions where connection_id='${account}'`))[0]?.n,{timeout:120000}).toBe(4);
     expect((await calls()).map(c=>c.scope)).toEqual(['day','7d','30d','all']);
     // File handoff and retry are asynchronous; accelerate only this owned test queue.
-    await expect.poll(async()=>{ await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where kind='garmin.report' and completed_at is null and current_attempt_token is null`); if (failDocument) time+=1000; return (await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.n; },{timeout:120000,interval:500}).toBe(1);
+    await expect.poll(async()=>{ await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where kind='garmin.report' and completed_at is null and current_attempt_token is null`); if (failDocument) time+=1000; return (await world.db.rows("select count(*)::int n from brain.result_events where event='garmin.report.completed'"))[0]?.n; },{timeout:120000,interval:500}).toBe(1);
+    const event=(await world.db.rows("select id,requested,subject_date::text,created_at from brain.result_events where event='garmin.report.completed'"))[0]!;
+    expect(event).toMatchObject({requested:false,subject_date:day});
+    // 고정 과거 날짜의 cron 결과는 보관된다. 명시적 core 요청으로 같은 전달·재시도 경로를 검증한다.
+    const localToday=(await world.db.rows("select (now() at time zone 'Asia/Seoul')::date::text as day"))[0]!.day;
+    if(day!==localToday) expect(await world.db.rows("select id from brain.channel_requests where producer='garmin' and purpose='event'")).toEqual([]);
+    expect(await store.channelControl!.sendPending({event:'garmin.report.completed',id:String(event.id),now:clock.now()})).toMatchObject({ok:true});
+    expect((await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='event'"))[0]?.n).toBe(1);
     const revisions=await world.db.rows(`select scope,revision,summary from garmin.evaluation_revisions where connection_id='${account}' order by scope`);
     const links=await world.db.rows(`select ef.kind,ef.file_id,fr.metadata from garmin.evaluation_files ef join brain.file_requests fr on fr.id=ef.request_id where ef.connection_id='${account}'`);
     expect(links.some(link=>link.kind==='report')).toBe(true);
@@ -194,15 +201,15 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     // Wait for the retryable 500 to be recorded and released before moving only this work's clock.
     let channelWork = '', lastDiagnostic = '';
     await expect.poll(async()=> {
-      const snapshot = await world.db.rows(`select r.id request_id,r.status,w.id work_id,w.current_attempt_token,w.completed_at,w.next_attempt_at,w.attempts,a.attempt_token,a.outcome,a.error_code,a.retryable,a.finished_at,wa.outcome work_outcome,wa.finished_at work_finished from brain.channel_requests r left join brain.work_items w on w.id=r.work_item_id left join brain.channel_attempt_results a on a.request_id=r.id left join brain.work_attempts wa on wa.token=a.attempt_token where r.producer='garmin' and r.purpose='report' order by a.sequence`);
+      const snapshot = await world.db.rows(`select r.id request_id,r.status,w.id work_id,w.current_attempt_token,w.completed_at,w.next_attempt_at,w.attempts,a.attempt_token,a.outcome,a.error_code,a.retryable,a.finished_at,wa.outcome work_outcome,wa.finished_at work_finished from brain.channel_requests r left join brain.work_items w on w.id=r.work_item_id left join brain.channel_attempt_results a on a.request_id=r.id left join brain.work_attempts wa on wa.token=a.attempt_token where r.producer='garmin' and r.purpose='event' order by a.sequence`);
       const diagnostic = JSON.stringify({interruption, clock:time, responses, snapshot});
       if (diagnostic !== lastDiagnostic) { process.stdout.write(`CHANNEL_DIAGNOSTIC ${diagnostic}\n`); lastDiagnostic=diagnostic; }
-      const row=(await world.db.rows(`select w.id from brain.channel_requests r join brain.work_items w on w.id=r.work_item_id join brain.channel_attempt_results a on a.request_id=r.id and a.work_item_id=w.id where r.producer='garmin' and r.purpose='report' and a.outcome='definite_failed' and a.error_code='http_5xx' and a.retryable=true and a.finished_at is not null and w.current_attempt_token is null and w.completed_at is null`))[0];
+      const row=(await world.db.rows(`select w.id from brain.channel_requests r join brain.work_items w on w.id=r.work_item_id join brain.channel_attempt_results a on a.request_id=r.id and a.work_item_id=w.id where r.producer='garmin' and r.purpose='event' and a.outcome='definite_failed' and a.error_code='http_5xx' and a.retryable=true and a.finished_at is not null and w.current_attempt_token is null and w.completed_at is null`))[0];
       if (!row) return false; channelWork=String(row.id); return true;
     },{timeout:90000}).toBe(true);
     expect(responses.filter(response=>response.method==='sendDocument').map(response=>response.status)).toEqual([500]);
     await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where id='${channelWork}' and completed_at is null and current_attempt_token is null`); time+=60000;
-    await expect.poll(async()=> (await world.db.rows("select status from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.status,{timeout:90000}).toBe('sent');
+    await expect.poll(async()=> (await world.db.rows("select status from brain.channel_requests where producer='garmin' and purpose='event'"))[0]?.status,{timeout:90000}).toBe('sent');
     expect(responses.filter(response=>response.method==='sendDocument').map(response=>response.status)).toEqual([500,200]);
     expect(await world.db.rows(`select outcome,error_code,retryable from brain.channel_attempt_results where work_item_id='${channelWork}' order by sequence`)).toEqual([
       {outcome:'definite_failed',error_code:'http_5xx',retryable:true}, {outcome:'sent',error_code:null,retryable:null},
@@ -259,7 +266,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       expect(documentParts[0]!.bytes).toEqual(Buffer.from(String(bundle[0]!.content),'hex'));
     }
     expect(await tickSchedules(deps)).toMatchObject({ok:true,enqueued:0});
-    expect((await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report'"))[0]?.n).toBe(1);
+    expect((await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='event'"))[0]?.n).toBe(1);
     expect(messages).toEqual(['sendMessage',photoMethod,'sendDocument','sendDocument']);
 
     await world.db.query(`insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${account}','2026-01-01',10),('${self}','${account}','2026-01-02',null),('${self}','${account}','2026-01-03',30);
@@ -294,13 +301,15 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       expect(JSON.parse(mcpFiltered.result.content[0].text).data.value).toBe(10);
     }
     finally {child.stdin.end();await new Promise(resolve=>child.once('close',resolve));}
-    // A failed regeneration sends REPORT_FAILED but preserves successful rows.
+    // 실패한 재생성은 완료 이벤트·발송을 추가하지 않고 성공한 평가 행을 보존한다.
+    const eventsBeforeFailure=await world.db.rows("select id from brain.result_events order by id");
     await writeFile(join(control,'status-failed-7d'),'yes');
     const failed=await world.run(['ext','run','garmin','report-regenerate','--target',account,'--json']);
     expect(failed.body.ok).toBe(true); const failedWork=String(failed.body.data.work_id);
     await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where id='${failedWork}' and completed_at is null and current_attempt_token is null`);
     await expect.poll(async()=> (await world.db.rows(`select count(*)::int n from brain.work_attempts where work_item_id='${failedWork}' and outcome='failed'`))[0]?.n,{timeout:120000}).toBeGreaterThan(0);
-    await expect.poll(async()=> (await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='report_failed'"))[0]?.n,{timeout:60000}).toBe(1);
+    expect(await world.db.rows("select id from brain.result_events order by id")).toEqual(eventsBeforeFailure);
+    expect(await world.db.rows("select id from brain.channel_requests where producer='garmin' and purpose='report_failed'")).toEqual([]);
     const afterFailure=await world.db.rows(`select scope,revision,summary from garmin.evaluation_revisions where connection_id='${account}' and report_date='${day}' order by scope,revision`);
     for (const row of revisions) expect(afterFailure).toContainEqual(row);
     await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time+86400000).toISOString()}' where id='${failedWork}' and completed_at is null and current_attempt_token is null`);

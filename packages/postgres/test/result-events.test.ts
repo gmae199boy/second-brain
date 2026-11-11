@@ -117,6 +117,29 @@ it('수동 ext run만 core 출처를 고정하며 과거 결과도 요청으로 
   } finally { await f.close(); }
 });
 
+it('보관된 동일 결과를 수동 재요청하면 현재 구독에 한 번 접수하고 원본 attempt를 재사용하지 않는다', async () => {
+  const f = await fixture();
+  try {
+    const unsubscribed = await f.emit('same-unsubscribed');
+    await f.subscribe();
+    const past = await f.emit('same-past', '2000-01-01');
+    await f.store.finishSupervisedWork({ id: f.work, attemptToken: f.attempt, now: clock.now(), outcome: 'succeeded' });
+    for (const [key, id, day] of [['same-unsubscribed', unsubscribed, f.today], ['same-past', past, '2000-01-01']]) {
+      expect(await f.dispatch(id!)).toEqual([]);
+      const work = randomUUID(), attempt = randomUUID();
+      expect(await f.store.enqueueExtensionWork!({ name: f.name, version: '1', work: { id: work, kind: f.kind, targetKind: 'report', targetId: key!, createdAt: clock.now(), nextAttemptAt: clock.now() } })).toMatchObject({ ok: true });
+      await f.store.claimSupervisedWork({ now: clock.now(), kinds: [f.kind], claimedBy: 'manual', attemptToken: attempt });
+      const emit = () => f.client.query('select brain.extension_event_emit($1,$2,$3,$4,$5::date,null,$6,null,null) as id', [work, attempt, f.event, key, day, 'summary']);
+      expect((await emit()).rows[0].id).toBe(id);
+      expect((await emit()).rows[0].id).toBe(id);
+      expect(await f.dispatch(id!)).toMatchObject([{ state: 'queued' }]);
+      expect((await f.admin.query('select source_work_item_id,source_attempt_token from brain.channel_dispatches where event_id=$1', [id])).rows).toEqual([{ source_work_item_id: work, source_attempt_token: attempt }]);
+      await f.store.finishSupervisedWork({ id: work, attemptToken: attempt, now: clock.now(), outcome: 'succeeded' });
+    }
+    expect((await f.admin.query('select count(*)::int n from brain.result_events')).rows).toEqual([{ n: 2 }]);
+  } finally { await f.close(); }
+});
+
 it('확장 이벤트 ABI는 소유 attempt·접두사·파일 권한을 제한하고 직접 표 접근을 거부한다', async () => {
   const f = await fixture();
   try {

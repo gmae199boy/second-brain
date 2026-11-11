@@ -169,7 +169,7 @@ const documentCarry = {"name": "0043_document_carry.sql", "sha256": "c0eb6f1c833
 const driveResume = {"name": "0044_drive_resume.sql", "sha256": "ba31747c34b80f435ed1a3781bb54866200196e0c64f161039e6098f430dae3c"};
 const channelTopics = {"name": "0045_channel_topics.sql", "sha256": "f0dcc6927669dae995beb35fcb5777133e6834f40987e9909f3c89396ad9f2e8"};
 const workInputs = {"name": "0046_extension_work_inputs.sql", "sha256": "dc67f677b7b2f36bb8096376d852c359d7abd54b03cadf2bdd2fc40119acb510"};
-const resultEvents = {"name": "0047_result_events.sql", "sha256": "eeaee52c5809a18099dd7be21517a41410d4f75399376cf04ec46d47acb5b103"};
+const resultEvents = {"name": "0047_result_events.sql", "sha256": "43c3ae2575a039d0f237d2a3a3eb3ff71d2584f3b9ada95300b7f576d6516f17"};
 export function expectedSchema(version) {
  if(version!==39 && version!==40 && version!==41 && version!==42 && version!==43 && version!==44 && version!==45 && version!==46 && version!==47) throw Error('unexpected checkout schema');
  return {version, apiVersion:version, manifest: structuredClone(version===39 ? baseline : version===40 ? [...baseline,drive] : version===41 ? [...baseline,drive,sources] : version===42 ? [...baseline,drive,sources,connection] : version===43 ? [...baseline,drive,sources,connection,documentCarry] : version===44 ? [...baseline,drive,sources,connection,documentCarry,driveResume] : version===45 ? [...baseline,drive,sources,connection,documentCarry,driveResume,channelTopics] : version===46 ? [...baseline,drive,sources,connection,documentCarry,driveResume,channelTopics,workInputs] : [...baseline,drive,sources,connection,documentCarry,driveResume,channelTopics,workInputs,resultEvents])};

@@ -1360,3 +1360,5 @@ brain channels send-pending --event garmin.report.completed --date 2026-11-10
 분석 시각은 `schedules` 예약(예: 08:10), 발송 시각은 core 구독(예: 08:20)으로 분리합니다. `--at` 생략 또는 `immediate`는 즉시이며 HH:MM은 매일 현지 시각입니다. `--tz` 생략은 사용자 timezone(기본 Asia/Seoul)을 따릅니다. 이벤트가 당일 시각 전에 기록되면 그 시각에 예약하고 이후면 즉시 접수하여 분석 지연 때문에 다음 날로 넘기지 않습니다. 자동 발송은 subject_date가 기록 당시 구독 시간대의 오늘인 경우만 합니다. 수동 ext run으로 요청한 재생성·report-send·기간 분석은 날짜와 무관하게 구독 정책을 적용합니다.
 
 구독이 없거나 날짜 필터에서 제외된 이벤트는 오류 없이 보관하며 구독을 추가해도 과거 이벤트를 자동 발신하지 않습니다. `send-pending --event`의 날짜는 대상 날짜, `--id`는 이벤트 ID이고 두 필터는 택일입니다. 현재 구독의 목적지에 즉시 접수하며 같은 이벤트+구독의 기존 요청은 중복 생성하지 않습니다. 구독 시각·목적지 변경은 이후 이벤트부터 적용되고 기존 예약은 그대로입니다. 기존 `garmin.report`·`garmin.period_report` 경로는 migration에서 각각 `.completed`의 immediate 구독으로 이동합니다. 다른 topic 경로와 기존 send/send-pending/retry는 유지합니다. `doctor run`은 구독 수와 보관 이벤트 수도 표시합니다.
+
+core schema 47 갱신 시 결과 이벤트를 지원하지 않는 Garmin(1.2.7 미만)은 교체 대기 상태로 정지합니다. 데이터·예약·설정은 보존되며 Garmin 설치 스킬이 안내하는 검증된 package 경로를 `brain ext install --package <package-path>`에 지정해 새 패키지를 설치하면 기존 전환 절차가 정지를 해제합니다.
