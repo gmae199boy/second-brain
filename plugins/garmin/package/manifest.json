@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -780,5 +780,5 @@
     "min": "0.0.0",
     "max_exclusive": "1.0.0"
   },
-  "plugin_version": "0.1.8"
+  "plugin_version": "0.1.9"
 }

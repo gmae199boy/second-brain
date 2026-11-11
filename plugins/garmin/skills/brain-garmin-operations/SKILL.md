@@ -19,3 +19,9 @@ description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 리포�
 수집·리포트·재생성의 target은 일반 설정 `garmin.connection_id`에서 읽은 정규형 UUID다. `brain guide schema config --json` 지원 확인 후 `brain config get garmin.connection_id --json`과 `brain config get garmin.timezone --json`으로 연결·시간대를 읽는다. 연결 ID가 없거나 UUID 형식이 잘못되었으면 접수하지 말고 설정 필요를 보고한다. 사용자 제공 값도 설정과 대조하고 다르면 확인한다. 이관 3개 manual은 capture manifest를 쓰므로 같은 target 계약을 임의 적용하지 않는다.
 
 수동 작업에 필요한 `--target` 등 옵션은 core ext schema로 확인하고 값의 의미는 해당 manual의 요구에 따른다. schema만으로 일감 이름이나 target 의미를 알 수 있다고 가정하지 않는다. 이름만 보고 기본 계정·기간을 추정하지 않는다. 비밀번호·MFA·토큰을 요청·출력·저장하지 않고 인증 화면을 읽지 않는다. 공개 상태·집계와 종료 코드·오류 코드만 보고하며 건강 원문·개인 경로·비밀은 로그에 복사하지 않는다. 실패하면 중단하고 접수를 완료·검증 통과·발신 성공으로 말하지 않는다. 작업 후 공개 status를 다시 읽고 확인되지 않은 상태는 미확인으로 보고한다.
+
+분석 프로세스는 수집 완료를 기다리지 않고 시작 시점의 저장 자료를 사용한다. 예약 시각은 사용자가 관리하며 설치 기본 시각을 실행 조건으로 강제하지 않는다.
+
+기본 예약의 수집→분석 순서와 같은 날 수집 성공 조건은 core의 after_schedule이 담당한다. 수동 분석 프로세스 자체에는 수집 상태 대기가 없다. 현재 brain schedules CLI에는 after 의존 설정 옵션이 없으므로 지원한다고 안내하지 않는다.
+
+수동 report/report-regenerate/report-send가 진행 중 수집과 겹치면 기존 계정 쓰기 락에 의해 최대 60초 대기하거나 실패할 수 있다. 수집 상태 polling을 없앤 것이며 쓰기 락 구조는 변경하지 않는다. 수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(after_schedule)이 담당하고 report 코드 자체는 수집 상태를 기다리지 않는다.

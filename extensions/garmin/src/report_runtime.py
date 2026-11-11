@@ -30,7 +30,8 @@ def envelope(env, *, sending=False):
         root = home / 'reports' / 'accounts' / str(account.user_id) / str(account.connection_id)
         cfg = config.Config(path=root / 'runtime-config', environment='runtime', tokenstore=root / 'unused-tokenstore',
             data_dir=root / 'data', reports_dir=root / 'reports', inbox_dir=root / 'inbox', timezone=timezone,
-            collect_time=time(11), retry_time=time(11, 15), report_time=time(11, 30), report_wait_minutes=30,
+            # 기존 Config 생성자 호환용 중립값이며 분석 실행·자료 창에는 사용하지 않는다.
+            collect_time=time.min, retry_time=time.min, report_time=time.min, report_wait_minutes=0,
             report_codex_timeout_minutes=int(values.get('garmin.analysis_timeout_minutes', 20)),
             report_model=model, report_reasoning_effort=values.get('garmin.analysis_reasoning_effort', 'high'),
             profile_path=root / 'profile.md', date_pause_seconds=5, call_pause_min_seconds=1,

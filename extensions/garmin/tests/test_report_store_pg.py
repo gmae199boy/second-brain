@@ -87,16 +87,6 @@ class ReportStoreTest(unittest.TestCase):
             report._save_evaluation(cfg, DAY, 'day', result)
         self.assertEqual(conn.depth, 0)
 
-    def test_wait_query_is_account_scoped(self):
-        conn = Conn()
-        with patch.object(store, 'read_connection', return_value=conn), patch.object(store, 'transaction', transaction), \
-             patch.object(report.coverage, 'day_status', return_value=SimpleNamespace(status='success')):
-            self.assertEqual(report._db_state(None, DAY), (False, 'success'))
-        sql, args = conn.calls[0]
-        self.assertIn('garmin.run', sql)
-        self.assertIn('user_id=%s AND connection_id=%s', sql)
-        self.assertEqual(args[:2], (USER, ACCOUNT))
-
     def test_manifest_does_not_expose_standalone_operations(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())
         entries = [manifest['connection_check']['entry'], *(work['entry'] for work in manifest['work'])]

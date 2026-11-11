@@ -69,6 +69,12 @@ class SupervisedReportTest(unittest.TestCase):
         if regenerate: self.work_rows = {}
         return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
 
+    def test_all_scopes_start_without_collect_lock_or_sleep(self):
+        with patch.object(store, 'write_lock_held', side_effect=AssertionError('수집 락 관측 금지')), \
+             patch.object(report.time, 'sleep', side_effect=AssertionError('수집 대기 금지')):
+            self.assertEqual(self.run_report(), {'status': 'success', 'scopes': 4})
+        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+
     def test_order_immediate_append_then_resume_missing_scopes(self):
         self.fail = '30d'
         with self.assertRaises(report.SupervisedReportFailed): self.run_report()

@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",

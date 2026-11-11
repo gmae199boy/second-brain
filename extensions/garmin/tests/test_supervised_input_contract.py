@@ -65,11 +65,11 @@ class SupervisedInputContractTest(unittest.TestCase):
                                                              'BRAIN_WORK_ID', 'BRAIN_ATTEMPT_TOKEN')))
                 self.assertEqual((cfg.environment, cfg.timezone), ('runtime', 'UTC'))
                 self.assertEqual((cfg.collect_time, cfg.retry_time, cfg.report_time),
-                                 (time(11), time(11, 15), time(11, 30)))
+                                 ((time(11), time(11, 15), time(11, 30)) if kind == 'garmin.collect' else (time.min,) * 3))
                 self.assertEqual((cfg.report_wait_minutes, cfg.date_pause_seconds, cfg.call_pause_min_seconds,
                                   cfg.call_pause_max_seconds, cfg.max_dates_per_run, cfg.max_rejected_attempts,
                                   cfg.max_consecutive_403, cfg.lock_wait_seconds, cfg.cffi_api_session),
-                                 (30, 5, 1, 2, 10, 3, 3, 60, False))
+                                 ((30 if kind == 'garmin.collect' else 0), 5, 1, 2, 10, 3, 3, 60, False))
                 home = Path('/synthetic/extension')
                 if kind == 'garmin.collect':
                     self.assertEqual((cfg.path, cfg.tokenstore, cfg.data_dir, cfg.reports_dir, cfg.inbox_dir,

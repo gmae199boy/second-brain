@@ -199,7 +199,16 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
     }
     for (const name of expected) {
       const a=await readFile(join(sqliteFolder,name)),b=await readFile(join(pgFolder,name));
-      if (name.endsWith('.json')) expect(JSON.parse(b.toString('utf8')),name).toEqual(JSON.parse(a.toString('utf8')));
+      if (name.endsWith('.json')) {
+        const actualJson=JSON.parse(b.toString('utf8')),expectedJson=JSON.parse(a.toString('utf8'));
+        if(name==='manifest.json') {
+          // 새 수집 독립 계약은 직전 현지 날짜의 완료 시각 창이다.
+          expect(actualJson.workouts).toEqual(['49']);
+          expect(actualJson.workout_window).toEqual({from:'2026-01-01T00:00:00.000+09:00',to:'2026-01-02T00:00:00.000+09:00',basis:'completed_at'});
+          for(const key of ['workouts','workout_window','notes']) { delete actualJson[key];delete expectedJson[key]; }
+        }
+        expect(actualJson,name).toEqual(expectedJson);
+      }
       else expect(b,name).toEqual(a);
     }
     const counts=await fixture.db.rows(`select (select count(*)::int from garmin.native_import_mapping) mappings,(select count(*)::int from brain.file_requests where source='garmin') requests,(select count(*)::int from garmin.evaluation_revisions) revisions`);

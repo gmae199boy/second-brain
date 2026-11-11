@@ -231,7 +231,15 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             for name, value in actual.items():
                 with self.subTest(path=name):
                     if name.endswith('.json'):
-                        self.assertEqual(json.loads(value),json.loads(expected['files'][name]))
+                        actual_json, expected_json = json.loads(value), json.loads(expected['files'][name])
+                        # 수집 독립 계약의 운동 창과 안내만 새 수락 시험에서 검증한다.
+                        if name == 'manifest.json':
+                            for key in ('workout_window', 'workouts', 'notes'):
+                                actual_json.pop(key, None); expected_json.pop(key, None)
+                        if name == 'digest.json':
+                            for key in ('workouts', 'notes'):
+                                actual_json.pop(key, None); expected_json.pop(key, None)
+                        self.assertEqual(actual_json, expected_json)
                     else:
                         self.assertEqual(value,expected['files'][name])
             schemas = Path(report.__file__).parent / 'schemas'
@@ -245,4 +253,8 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                 self.assertEqual(message['required'], ['headline', 'recommendations', 'trend_line', 'limitations'])
                 contracts['schemas'][name]['required'].remove('message')
             self.assertEqual(contracts,expected['contracts'])
-            self.assertEqual(digest.build(result.manifest,result.days,result.activities,result.labels,result.body),expected['digest'])
+            actual_digest = digest.build(result.manifest,result.days,result.activities,result.labels,result.body)
+            expected_digest = dict(expected['digest'])
+            for key in ('workouts', 'notes'):
+                actual_digest.pop(key, None); expected_digest.pop(key, None)
+            self.assertEqual(actual_digest, expected_digest)
