@@ -60,6 +60,31 @@ class SendAttachmentsTest(unittest.TestCase):
         self.assertEqual({args[5].encode('ascii') for args in server.requests.values()},
                          {publication._hash(data).encode() for data in (DOCUMENT[1], PHOTOS[0][2], PHOTOS[1][2])})
 
+    def test_default_explicit_and_original_publication_share_result_event(self):
+        import report_channel
+        server = FileServer(); self.setup_server(server)
+        original_execute = server.execute
+        events = {}
+        calls = []
+        def execute(sql, args):
+            if 'extension_event_emit' in sql:
+                calls.append(args)
+                return Cursor((events.setdefault((args[2], args[3]), UUID(int=100 + len(events))),))
+            return original_execute(sql, args)
+        server.execute = execute
+        with patch.object(report_channel.report_message, 'load', return_value='[brain-markup-v1]summary'):
+            for target in ('default', DAY.isoformat()):
+                env = dict(ENV, BRAIN_TARGET_ID=target)
+                document, rows, _ = publication.saved_send_attachments(None, DAY, REVISIONS, env)
+                report_channel.success(None, DAY, REVISIONS, document, env, attachment_rows=rows)
+            report_channel.success(None, DAY, REVISIONS, DOCUMENT[0], ENV,
+                                   attachment_rows=[(name, 'graph', request) for name, request, *_ in PHOTOS])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(len({args[7] for args in calls}), 3)
+        self.assertEqual({args[4] for args in calls}, {DAY.isoformat()})
+        self.assertTrue(all(args[6] == '[brain-markup-v1]summary' for args in calls))
+
     def test_unpublished_evaluation_restores_with_existing_renderer_once(self):
         server = FileServer(); server.bundle = None; self.setup_server(server)
         def restore(*args, **kwargs): server.bundle = DOCUMENT

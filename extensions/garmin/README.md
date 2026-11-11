@@ -201,7 +201,7 @@ latest로 정산하며 예약 수집의 부분 수집·차단·인증 실패·�
 예약 실행은 봉투의 단일 회차 날짜를 사용하며 수동 실행은 기존 날짜 규칙을 쓴다.
 시험 코드는 작성했으나 시험 실행은 **21.8로 이관, 미실행**이다.
 
-분석 게시에는 사용자 설정 `garmin.channel_conversation_id`에 자신의 core 채널 대화 UUID가 필요하다. 저장된 평가와 완료된 core 파일로 요약, 두 그래프 묶음과 보고서 문서를 구성한다. 채널 발송·불명 상태·재시도는 core가 관리하며 발송 실패로 평가를 다시 생성하지 않는다. 분석 실패 알림은 같은 날짜와 계정의 `report_failed` 요청으로 중복을 억제한다.
+분석 게시에는 채널·메신저 설정이 필요하지 않다. 저장된 평가와 완료된 core 파일로 요약, 두 그래프 묶음과 보고서 문서를 구성한 뒤 `brain.extension_event_emit`로 결과 이벤트만 기록한다. 발송은 core 구독 설정에 따르며 발송 실패로 평가를 다시 생성하지 않는다. 분석 실패 시 완료 이벤트를 기록하지 않는다.
 
 Marketplace 패키지는 `node tooling/package-garmin/build.mjs`로 제품 소스에서 생성한다. 생성된 `plugins/garmin/package/manifest.json`의 파일 목록과 digest가 core 설치기의 검증 대상이며, 독립 oracle·fixture·출처 이력은 패키지에 넣지 않는다. 제품 변경 후에는 이 명령을 다시 실행해 바이트와 목록을 동기화한다.
 
@@ -299,17 +299,17 @@ fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest�
 
 `brain ext run garmin period-analysis --target <connection-id> --input '{"start_date":"2026-10-01","end_date":"2026-10-31"}' --json`으로 연결 시간대의 현지 날짜를 양끝 포함 분석한다. 선택 초점은 `metric`, `aggregation`, `activity_type`, `exercise`이며 period-summary의 지표·집계 규칙을 사용한다. metric 없이 aggregation은 허용하지 않는다. 상대 날짜는 연결 시간대 DB로 계산한 뒤 절대 날짜로 접수한다.
 
-성공적으로 완료되면 항상 발신하며 `send` 선택 플래그는 없다. 발신 계약은 core `brain.extension_channel_send`, topic `garmin.period_report`이며 메신저·경로는 core가 선택한다. 기간·revision의 의미 키는 재시도에 동일하다. 라우트 미설정은 core의 보류 정책을 따른다.
+성공적으로 완료되면 `garmin.period_report.completed` 이벤트를 기록하며 `send` 선택 플래그는 없다. `subject_date`는 종료일이고 summary와 게시 문서는 기존 렌더링 결과다. 기간·revision·서식·첨부 구성의 의미 키는 재시도에 동일하다. 발송은 core 구독 설정에 따르며 구독·메신저 설정 없이도 분석은 성공한다.
 
-`brain ext garmin recent-period-evaluations --input '{"connection_id":"<connection-id>","timezone":"Asia/Seoul","limit":10}' --json`으로 전체 본문·근거·초점·기간·revision을 조회한다. 별도 요청은 새 revision, 같은 work 재시도는 저장된 revision을 재사용한다. 같은 연결의 열린 일감에 다른 입력을 겹쳐 접수하면 거부한다. 기존 일일 report의 day·7d·30d·all 평가와 발신은 그대로다.
+`brain ext garmin recent-period-evaluations --input '{"connection_id":"<connection-id>","timezone":"Asia/Seoul","limit":10}' --json`으로 전체 본문·근거·초점·기간·revision을 조회한다. 별도 요청은 새 revision, 같은 work 재시도는 저장된 revision을 재사용한다. 같은 연결의 열린 일감에 다른 입력을 겹쳐 접수하면 거부한다. 기존 일일 report의 day·7d·30d·all 평가를 유지한다.
 
 수동 report/report-regenerate/report-send가 진행 중 수집과 겹치면 기존 계정 쓰기 락에 의해 최대 60초 대기하거나 실패할 수 있다. 수집 상태 polling을 없앤 것이며 쓰기 락 구조는 변경하지 않는다. 수집→분석 순서와 같은 날 수집 성공 조건은 core 예약 의존(after_schedule)이 담당하고 report 코드 자체는 수집 상태를 기다리지 않는다.
 
-지난 날짜의 예약 따라잡기는 분석·저장만 하며 자동 발신 접수하지 않는다. 당일 예약·수동 report·재생성·report-send·기간 분석은 완료 후 항상 core에 발신 접수하며, 지난 리포트는 사용자 report-send 요청으로 발신한다.
+일일 report·재생성·report-send는 `garmin.report.completed`, 기간 분석은 `garmin.period_report.completed` 결과 이벤트를 기록한다. 지난 날짜의 예약 따라잡기도 이벤트를 기록하며 당일·과거 판정과 발송은 core 구독 설정이 담당한다. 확장 스크립트는 메신저·채널·발송 시각을 판별하거나 발송을 요청하지 않는다. 구독이 없어도 분석·저장은 성공한다.
 
 
-### 저장 리포트 첨부 재발신
+### 저장 리포트 다시 보내기 요청
 
-`report-send`는 분석기를 실행하지 않고 선택된 날짜·네 범위 revision의 게시 파일을 재사용한다. 요약 → 그래프 앨범(01~49, 50~99 그룹, 각 최대 10장) → 전체 보고서 문서 순서로 접수한다. 미게시 평가라면 기존 결정적 그래프·문서 렌더링으로 게시 후 첨부한다. 결과 JSON의 `attachments`는 `published`(기존 게시), `restored`(복원 게시), `unavailable`(렌더링 불가)이며 마지막 경우 `attachment_reason`과 메시지의 `보고서·그래프 없음` 표시를 제공한다. 파일 게시 대기·실패는 문구 전용 성공으로 처리하지 않고 재시도한다.
+`report-send`는 분석기를 실행하지 않고 선택된 날짜·네 범위 revision의 게시 파일을 재사용한다. 요약, 그래프 앨범(01~49, 50~99 그룹, 각 최대 10장), 전체 보고서 문서를 담아 `garmin.report.completed` 이벤트를 다시 기록한다. `subject_date`는 리포트 날짜다. 결과 JSON은 `status=recorded`와 `event_id`를 반환하며 전달 성공을 뜻하지 않는다. 미게시 평가라면 기존 결정적 그래프·문서 렌더링으로 게시 후 첨부한다. 결과 JSON의 `attachments`는 `published`(기존 게시), `restored`(복원 게시), `unavailable`(렌더링 불가)이며 마지막 경우 `attachment_reason`과 메시지의 `보고서·그래프 없음` 표시를 제공한다. 파일 게시 대기·실패는 문구 전용 성공으로 처리하지 않고 재시도한다.
 
-날짜 target인 재발신은 core의 동일 target 파일 계약을 지키기 위해 기존 바이트를 해당 target의 파일 요청으로 게시한다. 같은 날짜·revision·서식·첨부 구성은 한 번만 접수하며 이전 문구 전용 요청과는 구별된다. 기간 분석은 저장된 전체 기간 평가 문서를 첨부한다. 임의 기간용 그래프 렌더러는 현재 없어 기간 분석 앨범은 생성하지 않는다.
+날짜 target인 재발신은 core의 동일 target 파일 계약을 지키기 위해 기존 바이트를 해당 target의 파일 요청으로 게시한다. 같은 날짜·revision·서식·첨부 구성은 한 번만 기록하며 새 revision·첨부·서식 버전은 새 이벤트다. 이전 문구 전용 이벤트와는 구별된다. 기간 분석은 저장된 전체 기간 평가 문서를 첨부한다. 임의 기간용 그래프 렌더러는 현재 없어 기간 분석 앨범은 생성하지 않는다.

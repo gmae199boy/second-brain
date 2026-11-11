@@ -1,29 +1,34 @@
-"""Hand saved evaluations and completed files to the core channel contract."""
+"""저장된 평가와 게시 파일의 결과 이벤트를 core에 기록한다."""
 import hashlib
 import json
 import os
-from garmin_pipeline import dates, errors, ports, report, report_message, store
+from garmin_pipeline import report_message, store
 
 
 def _key(*parts):
     return 'garmin:' + hashlib.sha256(json.dumps(parts, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
 
 
-def _submit(conn, env, key, purpose, revision, summary, document=None, albums=None):
-    return conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
-        (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.report', key, purpose, revision, summary,
-         document, None if albums is None else json.dumps(albums, separators=(',', ':')), None)).fetchone()[0]
+def _submit(conn, env, event, key, subject_date, revision, summary, document=None, albums=None):
+    return conn.execute('select brain.extension_event_emit(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)',
+        (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], event, key, subject_date, revision, summary,
+         document, None if albums is None else json.dumps(albums, separators=(',', ':')))).fetchone()[0]
 
 
-def _should_send(cfg, day, env, regenerate=False):
-    # 예약 분석의 과거 자료는 보관만 하고, 사람의 재생성 요청은 지정 날짜를 보낸다.
-    return regenerate or env.get('BRAIN_WORK_KIND') == 'garmin.report_regenerate' or day == dates.today(cfg)
+def _attachment_identity(bundle, albums):
+    # 게시 사본의 target·UUID 대신 불변 저장 바이트로 결과 구성을 식별한다.
+    if bundle is None:
+        raise ValueError('missing saved report artifacts')
+    document, rows = bundle
+    graphs = {name: hashlib.sha256(bytes(content)).hexdigest() for name, _, content, _, _ in rows}
+    return [hashlib.sha256(bytes(document[1])).hexdigest(),
+            [[(photo['filename'], graphs[photo['filename']]) for photo in album] for album in albums]]
 
 
-def success(cfg, day, revisions, document, env=None, *, regenerate=False, attachment_rows=None, missing_reason=None):
+def success(cfg, day, revisions, document, env=None, *, attachment_rows=None, missing_reason=None):
+    import report_publish
     env = os.environ if env is None else env
-    if not _should_send(cfg, day, env, regenerate):
-        return
+    bundle = None if document is None else report_publish.saved_bundle(cfg, day, revisions, completed=False)
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             summary = report_message.load(conn, day, revisions)
@@ -43,18 +48,9 @@ def success(cfg, day, revisions, document, env=None, *, regenerate=False, attach
                 groups[index].append({'request_id': str(request), 'filename': name})
             albums = [group[start:start + 10] for group in groups for start in range(0, len(group), 10)]
             version = _key(report_message.FORMAT_VERSION, *[f'{scope}:{revisions[scope]}' for scope in ('day','7d','30d','all')],
-                           'attachments-v1', str(document) if document is not None else None, albums, missing_reason)
-            # 새 revision은 새 발신이고, 같은 revision의 재시도는 같은 요청이다.
+                           'attachments-v2', None if document is None else _attachment_identity(bundle, albums), missing_reason)
+            # 새 결과 구성은 새 이벤트이며, 같은 결과의 재시도는 같은 이벤트다.
             identity = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report', version)
-            return _submit(conn, env, identity, 'report', version, summary, document, None if document is None else albums)
-
-
-def failure(cfg, day, env=None):
-    env = os.environ if env is None else env
-    if not _should_send(cfg, day, env):
-        return
-    with store.write_session(cfg) as conn:
-        with store.transaction(conn):
-            key = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report_failed')
-            text = ports.notice_text(day, errors.NotifyEvent.REPORT_FAILED, 'analysis_failed')
-            return _submit(conn, env, key, 'report_failed', None, text)
+            return _submit(conn, env, 'garmin.report.completed', identity, day.isoformat(),
+                           json.dumps(revisions, sort_keys=True, separators=(',', ':')), summary, document,
+                           None if document is None else albums)

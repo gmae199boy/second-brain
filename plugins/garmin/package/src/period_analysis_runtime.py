@@ -1,4 +1,4 @@
-"""수동 기간 분석: 일감 입력·평가 revision을 고정하고 완료한 평가를 항상 발신 접수한다."""
+"""수동 기간 분석: 일감 입력·평가 revision을 고정하고 완료한 평가의 결과 이벤트를 기록한다."""
 import json
 import os
 import tempfile
@@ -85,7 +85,7 @@ def _analyze(cfg, data, writer):
         return result
 
 
-def _send(cfg, saved, env):
+def _emit(cfg, saved, env):
     import report_channel
     import report_publish
     import time
@@ -117,9 +117,8 @@ def _send(cfg, saved, env):
                 (conn.user_id, conn.connection_id, env['BRAIN_WORK_ID'])).fetchone()
             text = report_message.render_period(start, end, revision,
                 dict(zip(('summary', 'judgments', 'next_checks', 'message'), row)))
-            conn.execute('select brain.extension_channel_send(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)',
-                (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], 'garmin.period_report', key,
-                 'period_report', str(revision), text, document, '[]', None)).fetchone()
+            return report_channel._submit(conn, env, 'garmin.period_report.completed', key,
+                                          end, str(revision), text, document, [])
 
 
 def run(env=None, *, writer=None):
@@ -139,5 +138,5 @@ def run(env=None, *, writer=None):
             report_runtime.install_skills(cfg)
             result = _analyze(cfg, data, report.CodexWriter(executable=report.codex_executable(actual)) if writer is None else writer)
             saved = _save(cfg, data, result, account.work_id)
-        _send(cfg, saved, actual)
-        return json.dumps({'status': 'success', 'revision': saved[2], 'send_requested': True})
+        event = _emit(cfg, saved, actual)
+        return json.dumps({'status': 'success', 'revision': saved[2], 'event_id': str(event)})
