@@ -421,7 +421,7 @@ it('수동 기간 분석은 양끝·초점·본문을 저장 조회하고 완료
   } finally { await t.close(); }
 },180000);
 
-it('저장된 과거 평가를 분석 없이 새 서식으로 발신하고 같은 revision은 한 번만 접수한다', async () => {
+it('저장된 과거 평가를 분석 없이 그래프·문서와 발신하고 같은 revision은 한 번만 접수한다', async () => {
   const t = await setup();
   try {
     await t.store.setSetting({ userId: self, key: 'garmin.connection_id', value: t.account, updatedAt: new Date() });
@@ -429,6 +429,10 @@ it('저장된 과거 평가를 분석 없이 새 서식으로 발신하고 같�
     await t.fixture.db.query(`insert into garmin.day_summary(user_id,connection_id,date,sleep_total_s,sleep_score,hrv_avg,wake_bb) values ('${self}','${t.account}','${day}',19920,45,27,22)`);
     for (const scope of ['day', '7d', '30d', 'all']) await t.fixture.db.query(`insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision)
       values ('${self}','${t.account}','${day}','${scope}','회복이 약하다. 직전 기간 측정값이 부족하다.','[]','[]','["다음 운동 부담을 줄인다"]','합성 평가','fixture',1,1)`);
+    // 이미 고정된 가짜 PNG를 재사용하고 미게시 전체 문서는 저장 평가로 복원한다.
+    await t.fixture.db.query(`insert into garmin.report_publications(user_id,connection_id,report_date,scope,revision) values ('${self}','${t.account}','${day}','day',1)`);
+    await t.fixture.db.query(`insert into garmin.report_publication_items(user_id,connection_id,report_date,scope,revision,name,kind,media_type,content,request_id)
+      values ('${self}','${t.account}','${day}','day',1,'01.png','graph','image/png',decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9WQAAAAASUVORK5CYII=','base64'),gen_random_uuid())`);
     const before = await t.revisions();
     const send = async () => {
       const result = await t.fixture.run(['ext','run','garmin','report-send','--target',day,'--json']);
@@ -440,10 +444,12 @@ it('저장된 과거 평가를 분석 없이 새 서식으로 발신하고 같�
     expect(await t.revisions()).toEqual(before);
     const requests = await t.fixture.db.rows(`select body,revision,bundle from brain.channel_dispatches where topic='garmin.report'`);
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.bundle).toBeNull();
+    expect(requests[0]?.bundle).toMatchObject({
+      document: { filename: 'report.md' }, albums: [{ photos: [{ filename: '01.png' }] }],
+    });
     expect(requests[0]?.body).toContain('[brain-markup-v1]\n# 🩺 Garmin 일일 리포트 · 01/02 (금)');
     expect(requests[0]?.body).toContain('수면 5:32 · 점수 45');
     expect(String(requests[0]?.body).match(/직전 기간 측정값이 부족하다/g)).toHaveLength(1);
-    expect(await t.fixture.db.rows(`select count(*)::int n from brain.file_requests where source='garmin'`)).toEqual([{ n: 0 }]);
+    expect(await t.fixture.db.rows(`select count(*)::int n from brain.file_requests where source='garmin'`)).toEqual([{ n: 2 }]);
   } finally { await t.close(); }
 }, 180000);
