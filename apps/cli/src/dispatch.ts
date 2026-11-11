@@ -294,6 +294,8 @@ export interface CommandSpecBase extends CommandMeta {
    * unset and keeps the envelope it has always had.
    */
   envelope?: false;
+  /** Machine config keys can run without opening PostgreSQL; undefined delegates to DB. */
+  runMachine?: (context: StandaloneCommandContext) => Promise<CommandOutcome<unknown> | undefined>;
   runSettings?: (context: Omit<CommandContext, 'brain'> & { brain: SettingsBrain }) => Promise<CommandOutcome<unknown>>;
 }
 
@@ -614,6 +616,9 @@ async function execute(
 
   const preflight = spec.preflight?.({ clock, options, args, stdin, recordHookArrival });
   if (preflight !== undefined) return failed(rendering, preflight, [], []);
+
+  const machine = await spec.runMachine?.({ env, clock, options, args, stdin, recordHookArrival });
+  if (machine !== undefined) return finish(rendering, machine, [], []);
 
   const home = configHome(env);
   const config = await readConfig(home);

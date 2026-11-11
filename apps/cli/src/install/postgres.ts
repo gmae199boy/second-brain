@@ -1,7 +1,6 @@
+import { trackedExec } from '../runtime/process-registry.js';
 import { cp, lstat, mkdir, writeFile, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { execFile as execFileCallback } from 'node:child_process';
-import { promisify } from 'node:util';
 import { dirname, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { v7 } from 'uuid';
@@ -14,12 +13,13 @@ import { commandEnv, composeArgs, systemCommandRunner, type CommandRunner } from
 import { withInstallerHomeLock } from '../runtime/install-lock.js';
 import { readBuildIdentity, readInstalled } from './installed.js';
 import { systemTimer } from '../runtime/clock.js';
-import { acquireOfflineDaemonFence } from '../daemon/lock.js';
+import { withOfflineRuntime } from './offline.js';
+import { runtimeFencePath, withRuntimeFence } from './runtime-fence.js';
 import { STAGED_PROMOTION_PROTOCOL } from './promotion-protocol.js';
 const runningBuild = readBuildIdentity();
-export interface PostgresInstallReport { project: string; volume: string; port: number; schema_version: number; applied: readonly string[]; owner_created: boolean; owner_name: string; compose_started: boolean; offline_confirmation?: { home: string; previous_commit: string; target_commit: string; method: 'operator' }; legacy_sqlite_path?: string | null; import?: import('second_brain').BrainDrainReport | null }
-export interface OfflineConfirmationRequest { home: string; previousCommit: string; targetCommit: string; challenge: string; legacySchema?: number }
-type InstallOptions = { home: string; urlEnv: string; env: NodeJS.ProcessEnv; clock: Clock; runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string; confirmOffline?: (request: OfflineConfirmationRequest) => Promise<string> };
+export interface PostgresInstallReport { project: string; volume: string; port: number; schema_version: number; applied: readonly string[]; owner_created: boolean; owner_name: string; compose_started: boolean; offline_confirmation?: { home: string; previous_commit: string; target_commit: string; method: 'operator' | 'automatic'; evidence?: { daemon_fenced: boolean; install_locked: boolean; runtime_roles: string[]; runtime_backends: number; previous_processes: number } }; legacy_sqlite_path?: string | null; import?: import('second_brain').BrainDrainReport | null }
+export interface OfflineVerificationRequest { home: string; previousCommit: string; targetCommit: string; verificationId: string; legacySchema?: number }
+type InstallOptions = { home: string; urlEnv: string; env: NodeJS.ProcessEnv; clock: Clock; runner?: CommandRunner; secrets?: { adminUrl: string; appPassword: string }; databaseName?: string; observeOffline?: (request: OfflineVerificationRequest) => Promise<unknown> };
 
 /** Called only after the installer has validated and fenced its transition. */
 async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv, promotionOwner?: string): Promise<void> {
@@ -38,7 +38,7 @@ async function promoteStagedApp(home: string, env: NodeJS.ProcessEnv, promotionO
   const expectedHead = env.SECOND_BRAIN_PREVIOUS_APP_HEAD;
   if (await exists(app)) {
     if (!expectedHead || !/^[0-9a-f]{40}$/.test(expectedHead)) throw new Error('기존 app 신원을 확인할 수 없습니다');
-    const git = promisify(execFileCallback);
+    const git = (command: string, args: string[]) => trackedExec(home, command, args);
     const [head, status] = await Promise.all([git('git',['-C',app,'rev-parse','HEAD']), git('git',['-C',app,'status','--porcelain'])]);
     if (head.stdout.trim() !== expectedHead || status.stdout.trim() !== '') throw new Error('준비 중 기존 app이 바뀌었습니다. 변경을 보존하고 다시 실행하세요');
   } else if (expectedHead) throw new Error('준비 중 기존 app이 사라졌습니다');
@@ -134,7 +134,7 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
       const transitionFiles = await readdir(join(home, 'extensions')).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; });
       if (transitionFiles.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('중단된 확장 전환이 있습니다.');
       const build = await runningBuild;
-      const installed = existing.names.length ? await readInstalled(home) : undefined;
+      const installed = await readInstalled(home);
       const legacy = !!installed && installed.schema_version >= 11 && installed.schema_version < 35 && !!installed.commit && !!build?.commit && installed.commit !== build.commit;
       if (existing.names.length) {
         const disk = await readBuildIdentity();
@@ -186,7 +186,10 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
       if (journal && (!build?.commit || journal.commit !== build.commit || !Array.isArray(journal.names) || JSON.stringify(journal.names) !== JSON.stringify(existing.names) || typeof journal.owner !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(journal.owner))) return locked('core 확장 정지 기록의 신원이 다릅니다.');
       if (!existing.fenceReady && existing.gateNames.length) return locked('정지 표와 migration 기록이 일치하지 않습니다.');
       if (existing.gateNames.some(name => !journal?.names.includes(name) && !records.get(name)?.progress.replacement)) return locked('다른 설치의 확장 정지가 있습니다.');
+      let runtimeRoles: string[] = [];
+      let recheckOffline = async () => {};
       const migrate = async (): Promise<PostgresInstallResult> => {
+        await recheckOffline();
         if (existing.names.length) {
           const disk = await readBuildIdentity();
           if (!disk || disk.commit !== build?.commit || disk.version !== build.version || disk.schema_version !== build.schema_version) return locked('대기 중 대상 core 신원이 바뀌었습니다.');
@@ -237,9 +240,9 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           const daemonOwner = await readFile(join(home, 'run/daemon.pid'), 'utf8');
           const journalBefore = await readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
           const manifests = await Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8')));
-          const challenge = `확인 ${canonicalHome} ${installed.commit} ${build.commit} ${randomUUID()}`;
-          if (!options.confirmOffline || await options.confirmOffline({ home: canonicalHome, previousCommit: installed.commit, targetCommit: build.commit, challenge, ...(legacy ? { legacySchema: installed.schema_version } : {}) }) !== challenge) return locked('서로 다른 core 갱신에는 새 진입을 차단한 상태의 운영자 offline 확인이 필요합니다. 자동 갱신은 이 확인을 대신할 수 없습니다.');
-          const [again, disk, current, homeLock, daemonLock, currentManifests, gateStates, files, journalAfter] = await Promise.all([readInstalled(home), readBuildIdentity(), inspectExtensionFence(targetUrl.toString()), readFile(join(home, 'install.lock/owner'), 'utf8').catch(() => ''), readFile(join(home, 'run/daemon.pid'), 'utf8').catch(() => ''), Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'))), Promise.all((existing.fenceReady ? existing.names : []).map(name => store.readExtensionQuiesce(name))), readdir(join(home, 'extensions')), readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; })]);
+          // 관측 seam은 입력을 승인으로 해석하지 않는다. 운영 경로에는 관측자를 넣지 않는다.
+          await options.observeOffline?.({ home: canonicalHome, previousCommit: installed.commit, targetCommit: build.commit, verificationId: randomUUID(), ...(legacy ? { legacySchema: installed.schema_version } : {}) });
+          const [again, disk, current, homeLock, daemonLock, currentManifests, gateStates, files, journalAfter] = await Promise.all([readInstalled(home), readBuildIdentity(), inspectExtensionFence(targetUrl.toString()), readFile(join(home, 'install.lock/owner'), 'utf8').catch(() => ''), readFile(join(home, 'run/daemon.pid'), 'utf8').catch(() => ''), Promise.all(existing.names.map(name => readFile(join(home, 'extensions', name, 'manifest.json'), 'utf8'))), Promise.all((existing.fenceReady ? existing.names : []).map(name => store.readExtensionQuiesce(name))), readdir(join(home, 'extensions')).catch(error => { if (error.code === 'ENOENT') return []; throw error; }), readFile(journalPath, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; })]);
           if (JSON.stringify(again) !== JSON.stringify(installed) || !disk || disk.commit !== build.commit || disk.version !== build.version || disk.schema_version !== build.schema_version || current.fenceReady !== existing.fenceReady || current.progressReady !== existing.progressReady || JSON.stringify(current.names) !== JSON.stringify(existing.names) || JSON.stringify([...current.gateNames].sort()) !== JSON.stringify([...existing.gateNames].sort()) || homeLock !== homeOwner || daemonLock !== daemonOwner || journalAfter !== journalBefore || JSON.stringify(currentManifests) !== JSON.stringify(manifests) || gateStates.some((state, index) => !state.ok || state.owner !== gateOwners[index]) || files.some(file => /^\.transition-[a-z][a-z0-9_]*\.json$/.test(file))) return locked('확인 중 설치 신원 또는 정지 상태가 바뀌었습니다.');
           try {
             const currentRecords = await readProgress();
@@ -264,13 +267,14 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
               if (!history.ok) return locked('확인 중 확장 migration 이력을 확인할 수 없습니다.');
             }
           }
-          offlineConfirmation = { home: canonicalHome, previous_commit: installed.commit, target_commit: build.commit, method: 'operator' };
+          await recheckOffline();
+          offlineConfirmation = { home: canonicalHome, previous_commit: installed.commit, target_commit: build.commit, method: 'automatic', evidence: { daemon_fenced: true, install_locked: true, runtime_roles: runtimeRoles, runtime_backends: 0, previous_processes: 0 } };
         }
-        if (existing.names.length && !journal) {
+        if ((existing.names.length || offlineConfirmation) && !journal) {
           journal = { commit: build!.commit!, names: existing.names, owner: randomUUID() };
         }
         // This is an audit fact, never a reusable authorization. Every retry
-        // asks again while the entry locks are held.
+        // revalidates while the entry locks are held.
         if (journal && env.SECOND_BRAIN_STAGED_APP) {
           const marker = await readFile(join(home, '.app-promotion.json'), 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
           if (marker === null) { journal.promotionOwner = env.SECOND_BRAIN_INSTALL_LOCK_OWNER; journal.previousHead = env.SECOND_BRAIN_PREVIOUS_APP_HEAD; }
@@ -330,14 +334,20 @@ async function installPostgresLocked(options: InstallOptions): Promise<PostgresI
           if (!released.ok) return released;
           if (!released.released) return locked('확장 정지 소유권이 바뀌었습니다.');
         }
+        if (offlineConfirmation) await writeFile(join(home, 'run/last-core-update.json'), JSON.stringify({ ...offlineConfirmation, at: clock.now().toISOString() }), { mode: 0o600 });
         if (journal && !env.SECOND_BRAIN_STAGED_APP) await rm(journalPath, { force: true });
         return { ok: true, report: { ...resources, schema_version: completed.to, applied, owner_created: owner.created, owner_name: owner.user.name, compose_started: composeStarted, ...(offlineConfirmation ? { offline_confirmation: offlineConfirmation } : {}) } };
       };
       const lockAll = (index: number): Promise<PostgresInstallResult> => index === existing.names.length ? migrate() : withExtensionInstallLock(targetUrl.toString(), existing.names[index]!, () => lockAll(index + 1));
-      if (!existing.names.length) return await lockAll(0);
-      const daemonFence = await acquireOfflineDaemonFence({ home, clock, commit: build?.commit ?? null });
-      if (!daemonFence.ok) return locked(daemonFence.message);
-      try { return await lockAll(0); } finally { await daemonFence.release(); }
+      const interruptedRuntime = await readFile(runtimeFencePath(home)).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
+      const differentCore = !!installed?.commit && installed.commit !== build?.commit;
+      if (!existing.names.length && !differentCore && !interruptedRuntime) return await lockAll(0);
+      try {
+        return await withOfflineRuntime({ home, env, clock, commit: build?.commit ?? null, readGroups: async () => (await import('second_brain/postgres')).runtimeProcessGroups(targetUrl.toString()) }, async recheck => { recheckOffline = recheck; return !differentCore && !interruptedRuntime ? lockAll(0) : withRuntimeFence(home, targetUrl.toString(), async state => {
+          runtimeRoles = state.roles.map(role => role.name);
+          return lockAll(0);
+        }, { targetCommit: build?.commit ?? null, groups: await (await import('second_brain/postgres')).runtimeProcessGroups(targetUrl.toString()) }); });
+      } catch (error) { return locked(error instanceof Error ? error.message : '자동 정지 검증에 실패했습니다.'); }
     } finally { await store.close(); }
   } catch (error) { return { ok: false, code: 'DB_UNAVAILABLE', message: `PostgreSQL 설치에 실패했습니다: ${error instanceof Error ? error.message : String(error)}` }; }
 }

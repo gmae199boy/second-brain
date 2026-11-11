@@ -417,6 +417,7 @@ function harness(options: HarnessOptions = {}): Harness {
     options.recordedExtra !== undefined;
 
   const deps: InstallDeps = {
+    systemTimezone: () => 'Asia/Seoul',
     orbstack: async () => ({ ok: true, detail: '정상입니다' }),
     postgresDoctor: () => store.doctor(HOME, STORE),
     legacyFileExists: path => store.exists(path),
@@ -682,20 +683,20 @@ describe('the installer flow and a configuration it can only half read', () => {
 
 
 describe('the installer flow and the mirror path', () => {
-  it('offers the default and records it when the answer is just Enter', async () => {
+  it('records the default mirror without asking', async () => {
     const kit = harness();
 
     const exit = await install([], kit);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.placeholders[0]).toBe(MIRROR);
+    expect(kit.prompts.placeholders).toEqual([]);
     expect(kit.output()).toContain(`미러는 ${MIRROR}에 둡니다`);
   });
 
-  it('records the absolute path the answer named', async () => {
+  it('records an explicit mirror flag', async () => {
     const kit = harness({ tail: { text: ['/tmp/notes/brain', ''], confirm: [false, true, true] } });
 
-    const exit = await install([], kit);
+    const exit = await install(['--mirror-path', '/tmp/notes/brain'], kit);
 
     expect(exit).toBe(0);
     expect(kit.written).toEqual([fresh(STORE, FILES, '/tmp/notes/brain')]);
@@ -707,12 +708,7 @@ describe('the installer flow and the mirror path', () => {
     const exit = await install(['--mirror-path', '~/notes/brain'], kit);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.asked).toEqual([
-      '임베딩을 켤까요?',
-      '자동 업데이트를 켤까요?',
-      '이대로 진행할까요?',
-      '시간대를 무엇으로 할까요?',
-    ]);
+    expect(kit.prompts.asked).toEqual([]);
     expect(kit.written).toEqual([fresh(STORE, FILES, join(homedir(), 'notes/brain'))]);
   });
 
@@ -722,7 +718,7 @@ describe('the installer flow and the mirror path', () => {
     const exit = await install(['--mirror-path', 'notes/mirror', '--yes'], kit);
 
     expect(exit).toBe(2);
-    expect(kit.output()).toContain('CONFIG_INVALID: --mirror-path notes/mirror');
+    expect(kit.output()).toContain('CONFIG_INVALID: --mirror-path는 절대 경로여야 합니다');
     expect(kit.written).toEqual([]);
     expect(kit.store.prepared).toEqual([]);
   });
@@ -740,14 +736,14 @@ describe('the installer flow and the mirror path', () => {
 
 
 describe('the installer flow and embeddings', () => {
-  it('says they are not supported yet when the answer is yes, and writes nothing about them', async () => {
+  it('reports unsupported embeddings without asking or writing a setting', async () => {
     const kit = harness({ tail: { text: ['', ''], confirm: [true, true, true] } });
 
     const exit = await install([], kit);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.asked).toContain('임베딩을 켤까요?');
-    expect(kit.output()).toContain('아직 지원하지 않으므로');
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.output()).toContain('아직 지원하지 않습니다');
     // The same write as a run that said no: there is no key for this yet.
     expect(kit.written).toEqual([fresh()]);
   });
@@ -796,7 +792,7 @@ describe('the installer flow, the shim and the harnesses', () => {
     expect(kit.prompts.checked).toEqual([]);
   });
 
-  it('offers every detected harness checked, and connects the ones left checked', async () => {
+  it('connects every detected harness without a selection prompt', async () => {
     const demo = memoryConnector({ harness: 'demo', label: 'Demo' });
     const other = memoryConnector({ harness: 'other', label: 'Other' });
     const kit = harness({
@@ -807,10 +803,10 @@ describe('the installer flow, the shim and the harnesses', () => {
     const exit = await install([], kit);
 
     expect(exit).toBe(0);
-    expect(kit.prompts.checked).toEqual([['demo', 'other']]);
+    expect(kit.prompts.checked).toEqual([]);
     expect(demo.marked()).toHaveLength(1);
     expect(demo.entries()[0]).toContain(shimPath(HOME));
-    expect(other.entries()).toEqual([]);
+    expect(other.marked()).toHaveLength(1);
     expect(kit.output()).toContain('Demo를 연결했습니다');
   });
 
@@ -858,15 +854,15 @@ describe('the installer flow, the shim and the harnesses', () => {
     expect(other.entries()).toEqual([]);
   });
 
-  it('writes no harness configuration at all without a terminal and without the flag', async () => {
+  it('connects a detected harness without a terminal or an explicit flag', async () => {
     const demo = memoryConnector({ harness: 'demo' });
     const kit = harness({ isTTY: false, connectors: [demo] });
 
     const exit = await install(['--yes'], kit);
 
     expect(exit).toBe(0);
-    expect(demo.entries()).toEqual([]);
-    expect(kit.output()).toContain('연결한 하네스가 없습니다');
+    expect(demo.marked()).toHaveLength(1);
+    expect(kit.prompts.asked).toEqual([]);
   });
 
   it('takes --connect over the question in a terminal too', async () => {
@@ -1035,7 +1031,7 @@ describe('the installer flow, proving itself and recording it', () => {
 
 
 describe('the installer flow and automatic updating', () => {
-  it('asks, writes the answer, and reports it', async () => {
+  it('applies the default enabled value without a question', async () => {
     // The question after embeddings, answered no: the one new value an install
     // records (AD-19).
     const kit = harness({ tail: { text: ['', ''], confirm: [false, false, true] } });
@@ -1044,10 +1040,10 @@ describe('the installer flow and automatic updating', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(kit.prompts.asked).toContain('자동 업데이트를 켤까요?');
-    expect(kit.written[0]?.updateAuto).toBe(false);
-    expect(result.report.update).toEqual({ auto: false });
-    expect(kit.output()).toContain('자동 업데이트는 꺼져 있습니다');
+    expect(kit.prompts.asked).toEqual([]);
+    expect(kit.written[0]?.updateAuto).toBe(true);
+    expect(result.report.update).toEqual({ auto: true });
+    expect(kit.output()).toContain('자동 업데이트는 켜져 있습니다');
   });
 
   it('offers what the folder already says as the default', async () => {
@@ -1057,7 +1053,8 @@ describe('the installer flow and automatic updating', () => {
 
     // Somebody who turned it off once does not have to turn it off again at
     // every re-run, which is what a default of `true` here would mean.
-    expect(kit.prompts.initial).toContainEqual(['자동 업데이트를 켤까요?', false]);
+    expect(kit.prompts.initial).toEqual([]);
+    expect(kit.written[0]?.updateAuto).toBe(false);
   });
 
   it('keeps the recorded value without asking when there is no terminal', async () => {

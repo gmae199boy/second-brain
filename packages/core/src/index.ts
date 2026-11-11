@@ -304,7 +304,7 @@ export * from './sessions/read.js';
 export { validInstallProgress, installStages } from './extensions/install-progress.js';
 export type { ExtensionInstallProgress, StoredExtensionInstallProgress, InstallStage, InstallStageProgress, InstallResult } from './extensions/install-progress.js';
 
-export { cleanProcessGroup } from './queue/process-cleanup.js';
+export { cleanProcessGroup, inspectGroup, type GroupIdentity } from './queue/process-cleanup.js';
 
 export { extensionPublicProjection } from './extensions/public-projection.js';
 export type * from './ports/import-store.js';

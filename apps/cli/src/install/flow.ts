@@ -1,5 +1,4 @@
 import type { OrbStackResult } from '../runtime/orbstack.js';
-import { homeResources } from '../config/resources.js';
 import type { PostgresInstallResult, PostgresInstallReport } from './postgres.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -17,7 +16,7 @@ import {
 } from 'second_brain';
 import { daemonLiveness } from '../daemon/liveness.js';
 import type { DaemonRestartResult } from '../daemon/control.js';
-import { daemonPlistPath, type DaemonRegistration } from '../daemon/launchd.js';
+import type { DaemonRegistration } from '../daemon/launchd.js';
 import { installedPluginRoot, connectionLines } from '../connectors/plugin.js';
 import { formatCheck } from '../commands/doctor-run.js';
 import {
@@ -33,7 +32,6 @@ import {
 } from '../config/codec.js';
 import { configFilePath, configHome, envFilePath } from '../config/paths.js';
 import type { BuildIdentity, InstalledFacts, InstalledRecord } from './installed.js';
-import { shimPath } from './shim.js';
 
 /**
  * The installer's one flow, as a function of its dependencies. Every question
@@ -41,7 +39,7 @@ import { shimPath } from './shim.js';
  * with no terminal and no filesystem — and so `brain setup run` runs this very
  * flow rather than a second one.
  *
- * The order is AD-19's, whole: the harnesses named, consent, what the folder
+ * The order is: the harnesses named, invocation consent, what the folder
  * already says, OrbStack, mirror path, embeddings, PostgreSQL preparation,
  * timezone, files, configuration, transcript import, shim, harnesses and doctor.
  */
@@ -150,9 +148,8 @@ export interface Choice<T extends string> {
 }
 
 /**
- * The questions, behind an interface, because the flow must be testable without
- * a terminal and because a non-interactive run must not be able to reach them
- * by accident: nothing here is called unless `isTTY` is true.
+ * Retained for callers that inject a terminal adapter. Installation choices now
+ * use recorded values or defaults; the flow never calls these methods.
  */
 export interface InstallPrompts {
   confirm(question: string, initial: boolean): Promise<boolean>;
@@ -237,6 +234,8 @@ export interface InstallDeps {
   config: InstallConfigIo;
   legacyFileExists(path: string): Promise<boolean>;
   orbstack?: (env: NodeJS.ProcessEnv) => Promise<OrbStackResult>;
+  withInstallLock?: <T>(home: string, env: NodeJS.ProcessEnv, run: (env: NodeJS.ProcessEnv) => Promise<T>) => Promise<T>;
+  systemTimezone?: () => string;
   detectCodex?: (home: string, env: NodeJS.ProcessEnv) => Promise<string>;
   postgresDoctor?: (home: string, env: NodeJS.ProcessEnv) => Promise<DoctorReport>;
   importTranscripts?: (home: string, env: NodeJS.ProcessEnv) => Promise<import('second_brain').BrainDrainReport>;
@@ -260,7 +259,7 @@ export interface InstallDeps {
 export interface InstallFlags {
   /** Where the mirror goes. `~` is expanded; a relative path is refused. */
   mirrorPath?: string;
-  /** Harnesses to connect, by name. The only consent there is without a TTY. */
+  /** Explicit harnesses to connect; otherwise a first install uses detection. */
   connect: readonly string[];
   /**
    * The plugin folder this install was started from, absolute. The bootstrap's
@@ -274,9 +273,6 @@ export interface InstallFlags {
   yes: boolean;
   help: boolean;
 }
-
-/** How many times a path that cannot be used is asked for again. */
-const PATH_ATTEMPTS = 3;
 
 /**
  * Run the installer. `argv` is the user's arguments, without the node and
@@ -314,7 +310,19 @@ export async function runInstall(
   env: NodeJS.ProcessEnv,
   deps: InstallDeps,
 ): Promise<InstallResult> {
+  if (deps.withInstallLock) return deps.withInstallLock(configHome(env), env, lockedEnv => runInstallLocked(flags, lockedEnv, deps));
+  return runInstallLocked(flags, env, deps);
+}
+
+async function runInstallLocked(flags: InstallFlags, env: NodeJS.ProcessEnv, deps: InstallDeps): Promise<InstallResult> {
   const home = configHome(env);
+  const previousInstall = await deps.installed.read(home);
+  const priorConfig = previousInstall ? await deps.config.read(home) : undefined;
+  const updating = priorConfig?.ok === true && priorConfig.recorded !== undefined;
+  if (updating) {
+    flags = { ...flags, yes: true };
+    deps.log('기존 설치를 갱신합니다. 저장된 선택을 그대로 사용합니다');
+  }
   const warnings: WarningCode[] = [];
   /** One failure, with whatever warnings had been collected by then. */
   const fail = (failure: Failure): InstallResult => ({ ok: false, failure, warnings });
@@ -361,7 +369,7 @@ export async function runInstall(
   // re-run offers as its defaults, and what it must not overwrite with them. A
   // file that cannot be read at all stops the install here, with nothing
   // written: one typo must not cost the keys nothing asks about (F1).
-  const read = await deps.config.read(home);
+  const read = priorConfig ?? await deps.config.read(home);
   if (!read.ok) return fail({ code: read.code, message: read.message, exit: 2 });
   const recorded = read.recorded;
   const urlEnv = recorded?.storeUrlEnv ?? DEFAULT_STORE_URL_ENV;
@@ -374,36 +382,18 @@ export async function runInstall(
   }
 
   const legacyPath = recorded?.legacySqlitePath ?? defaultStorePath(home);
-  const mirror = await chooseMirrorPath(flags, home, recorded, deps);
+  const mirror = await chooseMirrorPath(flags, home, recorded);
   if (!mirror.ok) return fail(mirror.failure);
   deps.log(`미러는 ${mirror.path}에 둡니다`);
 
-  await askAboutEmbeddings(deps);
+  await reportEmbeddings(deps);
 
-  const updateAuto = await askAboutUpdates(recorded, deps);
+  const updateAuto = await reportUpdates(recorded, deps);
 
   // Nothing asks for the file store's root, so a re-run can only keep what is
   // recorded; a first run takes the default beside the configuration folder
   // (F10).
   const filesPath = recorded?.filesPath ?? defaultFilesPath(home);
-
-  // The last moment at which nothing has been written. Every question has an
-  // answer, so what the install is about to do can be said in full — and a
-  // person who says no here loses nothing, which is the only kind of no worth
-  // offering.
-  const agreed = await askToProceed(
-    { home, filesPath, mirrorPath: mirror.path },
-    env,
-    flags,
-    deps,
-  );
-  if (!agreed) {
-    return fail({
-      code: 'SETUP_CANCELLED',
-      message: '진행하지 않기로 했습니다. 아무것도 쓰지 않았습니다.',
-      exit: 1,
-    });
-  }
 
   if (deps.postgres === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설치 단계가 없습니다', exit: 1 });
   const pg = await deps.postgres(home, urlEnv, env);
@@ -413,22 +403,15 @@ export async function runInstall(
   if (postgres.legacy_sqlite_path !== null) deps.log(`옛 SQLite 파일 ${legacyPath}는 지우지 않았고 더 쓰지 않습니다`);
   const owner = { name: postgres.owner_name, created: postgres.owner_created };
   deps.log(`PostgreSQL ${postgres.project}: 스키마 ${postgres.schema_version}, 적용 ${postgres.applied.length}건`);
-  let timezone = recorded?.timezone ?? TIMEZONE_SETTING.defaultValue;
+  let timezone = recorded?.timezone ?? (deps.systemTimezone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   {
     if (deps.settings === undefined) return fail({ code: 'DB_UNAVAILABLE', message: 'PostgreSQL 설정 단계가 없습니다', exit: 1 });
     const current = await deps.settings.get(home, urlEnv, env);
     if (!current.ok) return fail({ code: current.code, message: current.message });
     const fallback = current.source === 'db' ? current.value : timezone;
-    let selected: string | undefined;
-    for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
-      const typed = deps.isTTY ? (await deps.prompts.text('시간대를 무엇으로 할까요?', fallback)).trim() : '';
-      const checked = TIMEZONE_SETTING.normalize(typed === '' ? fallback : typed);
-      if (checked.ok) { selected = checked.value; break; }
-      deps.log(checked.message);
-      if (!deps.isTTY) break;
-    }
-    if (selected === undefined) return fail({ code: 'CONFIG_INVALID', message: '유효한 IANA 시간대를 선택하지 못했습니다', exit: 2 });
-    timezone = selected;
+    const checked = TIMEZONE_SETTING.normalize(fallback);
+    if (!checked.ok) return fail({ code: 'CONFIG_INVALID', message: checked.message, exit: 2 });
+    timezone = checked.value;
     if (current.source !== 'db' || current.value !== timezone) {
       const written = await deps.settings.set(home, urlEnv, env, timezone);
       if (!written.ok) return fail({ code: written.code, message: written.message });
@@ -477,7 +460,7 @@ export async function runInstall(
   const shim = await deps.shim.write(home);
   deps.log(shim.changed ? `${shim.path}을 썼습니다 (mode 0755)` : `${shim.path}은 이미 최신입니다`);
 
-  const connected = await connectHarnesses(flags, shim.path, deps, home, warnings);
+  const connected = await connectHarnesses(flags, shim.path, deps, home, warnings, !updating);
 
   // Doctor has the last word, and it runs to the end whatever a connector did:
   // its ten lines are what a person reads to find out what is wrong, and
@@ -516,7 +499,7 @@ export async function runInstall(
     });
   }
 
-  const previous = await deps.installed.read(home);
+  const previous = previousInstall;
   const build = await deps.installed.build();
   const registration = await deps.daemon.register(shim.path, env);
   const { message: daemonMessage, ...registered } = registration;
@@ -612,47 +595,6 @@ function givenArgs(flags: InstallFlags): Record<string, unknown> {
   return args;
 }
 
-/** The filesystem locations shown before installation writes. */
-interface Settled {
-  home: string;
-  filesPath: string;
-  mirrorPath: string;
-}
-
-/**
- * Show what the install is about to do, and ask once (AD-19's consent, in the
- * terminal). It is the last step before the first write, so a no costs
- * nothing — which is why the question is worth asking at all.
- *
- * `--yes` skips this one question and nothing else: the path questions are
- * about what to install, and this one is about whether to. Without a terminal
- * there is nothing to show and nobody to answer, and the consent gate above has
- * already turned that into an exit 3.
- */
-async function askToProceed(
-  settled: Settled,
-  env: NodeJS.ProcessEnv,
-  flags: InstallFlags,
-  deps: InstallDeps,
-): Promise<boolean> {
-  if (!deps.isTTY || flags.yes) return true;
-
-  deps.log('이제 이것들을 씁니다.');
-  deps.log(
-    `  설정 파일 ${configFilePath(settled.home)}과 ${envFilePath(settled.home)} (.env는 mode 0600)`,
-  );
-  const resources = homeResources(settled.home);
-  deps.log(`  PostgreSQL compose 파일 ${join(settled.home, 'postgres', 'compose.yaml')}, project ${resources.project}, 볼륨 ${resources.volume}, 포트 ${resources.port}`);
-  deps.log(`  파일 저장소 루트 ${settled.filesPath} (mode 0700)`);
-  deps.log(`  하네스 hook이 부를 shim ${shimPath(settled.home)} (mode 0755)`);
-  deps.log(`  로그인 때 데몬을 띄울 plist ${daemonPlistPath(env)} (mode 0644)`);
-  // The mirror is recorded and not created, so it is not on the list of what
-  // this run writes (epic 4).
-  deps.log(`  미러 경로 ${settled.mirrorPath}는 적어 두기만 하고 폴더는 만들지 않습니다`);
-
-  return deps.prompts.confirm('이대로 진행할까요?', true);
-}
-
 /**
  * Everything the folder decided, which is what the codec has to be handed every
  * time: it renders both files whole, so anything left out is written back as
@@ -686,93 +628,14 @@ async function chooseMirrorPath(
   flags: InstallFlags,
   home: string,
   recorded: RecordedConfig | undefined,
-  deps: InstallDeps,
 ): Promise<ChosenPath> {
-  return choosePath(
-    {
-      flag: flags.mirrorPath,
-      flagName: '--mirror-path',
-      question: '미러를 어디에 둘까요?',
-      fallback: recorded?.mirrorPath ?? defaultMirrorPath(home),
-      what: '미러',
-    },
-    deps,
-  );
+  const path = flags.mirrorPath === undefined ? recorded?.mirrorPath ?? defaultMirrorPath(home) : expandHome(flags.mirrorPath);
+  return isAbsolute(path) ? { ok: true, path } : { ok: false, failure: { code: 'CONFIG_INVALID', message: '--mirror-path는 절대 경로여야 합니다', exit: 2 } };
 }
 
-/** One path question: the flag, or the recorded value, or the default. */
-interface PathQuestion {
-  /** The flag's value, if it was given. Not yet expanded or checked. */
-  flag: string | undefined;
-  /** How the flag is spelled, for the message that refuses it. */
-  flagName: string;
-  question: string;
-  /** What Enter takes: the recorded value, or this install's default. */
-  fallback: string;
-  /** What this path is, for the line that gives up on it. */
-  what: string;
-}
-
-/**
- * Where one of this install's paths goes. Nothing here creates anything: the
- * store and the file store are made further down the flow, and the mirror is
- * epic 4's.
- */
-async function choosePath(question: PathQuestion, deps: InstallDeps): Promise<ChosenPath> {
-  if (question.flag !== undefined) {
-    const given = expandHome(question.flag);
-    if (isAbsolute(given)) return { ok: true, path: given };
-    const refused = `${question.flagName} ${question.flag}는 절대 경로가 아닙니다.`;
-    // A terminal can be asked again; a script cannot, and taking the default
-    // instead would put the path somewhere the flag plainly did not ask for.
-    if (!deps.isTTY) {
-      return { ok: false, failure: { code: 'CONFIG_INVALID', message: refused, exit: 2 } };
-    }
-    // A progress line and not a failure: the question below is about to offer
-    // a way out of it, and a `CODE: …` line for something this run recovers
-    // from is a failure the reader then has to un-read.
-    deps.log(`${refused} 다시 묻습니다.`);
-  } else if (!deps.isTTY) {
-    return { ok: true, path: question.fallback };
-  }
-
-  for (let attempt = 1; attempt <= PATH_ATTEMPTS; attempt += 1) {
-    const typed = (await deps.prompts.text(question.question, question.fallback)).trim();
-    const chosen = typed === '' ? question.fallback : expandHome(typed);
-    if (isAbsolute(chosen)) return { ok: true, path: chosen };
-    deps.log(
-      attempt === PATH_ATTEMPTS
-        ? `${chosen}는 절대 경로가 아닙니다.`
-        : `${chosen}는 절대 경로가 아닙니다. 다시 묻습니다.`,
-    );
-  }
-  return {
-    ok: false,
-    failure: {
-      code: 'CONFIG_INVALID',
-      message: `${String(PATH_ATTEMPTS)}번 물어도 쓸 수 있는 ${question.what} 경로가 없어서 아무것도 쓰지 않았습니다.`,
-      exit: 2,
-    },
-  };
-}
-
-/**
- * The embedding question of AD-19, asked and then answered for the user: epic 6
- * owns embeddings, and until it lands saying yes can only mean "not yet". It
- * writes nothing either way — there is no configuration key to write, and
- * inventing one now would be a key epic 6 has to migrate away from.
- */
-async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
-  if (!deps.isTTY) {
-    deps.log('임베딩은 꺼져 있습니다 (아직 지원하지 않습니다)');
-    return;
-  }
-  const wanted = await deps.prompts.confirm('임베딩을 켤까요?', false);
-  deps.log(
-    wanted
-      ? '임베딩은 아직 지원하지 않으므로 꺼진 채로 둡니다. 아무것도 쓰지 않았습니다.'
-      : '임베딩은 꺼져 있습니다',
-  );
+/** 임베딩 런타임은 미지원이며 설치 선택으로 활성화하지 않는다. */
+async function reportEmbeddings(deps: InstallDeps): Promise<void> {
+  deps.log('임베딩은 꺼져 있습니다 (아직 지원하지 않습니다)');
 }
 
 /**
@@ -787,14 +650,11 @@ async function askAboutEmbeddings(deps: InstallDeps): Promise<void> {
  * the codec's default, which is on: the plugin exists so that a session carries
  * its own update.
  */
-async function askAboutUpdates(
+async function reportUpdates(
   recorded: RecordedConfig | undefined,
   deps: InstallDeps,
 ): Promise<boolean> {
-  const initial = recorded?.updateAuto ?? DEFAULT_UPDATE_AUTO;
-  const auto = deps.isTTY
-    ? await deps.prompts.confirm('자동 업데이트를 켤까요?', initial)
-    : initial;
+  const auto = recorded?.updateAuto ?? DEFAULT_UPDATE_AUTO;
   deps.log(
     auto
       ? '자동 업데이트는 켜져 있습니다. 플러그인이 더 새 앱을 담고 있으면 다음 세션에서 설치합니다'
@@ -811,8 +671,8 @@ interface Connected {
 }
 
 /**
- * Register the shim with the harnesses the user chose. Only `connect` writes a
- * harness's own file (AD-19), so everything here is a question and a log line.
+ * Register explicitly named harnesses, or detected harnesses on first install.
+ * Updates preserve existing connections unless a new connection was requested.
  *
  * A refusal does not stop the others: the harnesses are independent, and a
  * second one left unconnected because the first had a broken settings file
@@ -825,13 +685,14 @@ async function connectHarnesses(
   deps: InstallDeps,
   home: string,
   warnings: WarningCode[],
+  detect: boolean,
 ): Promise<Connected> {
   if (deps.connectors.length === 0) {
     deps.log('아직 연결할 하네스가 없습니다 (epic 2)');
     return { connected: [] };
   }
 
-  const chosen = await chooseHarnesses(flags, deps);
+  const chosen = await chooseHarnesses(flags, deps, detect);
   if (chosen.length === 0) {
     deps.log('연결한 하네스가 없습니다');
     return { connected: [] };
@@ -875,15 +736,10 @@ async function connectHarnesses(
 async function chooseHarnesses(
   flags: InstallFlags,
   deps: InstallDeps,
+  detect: boolean,
 ): Promise<readonly Connector[]> {
-  // Without a terminal the flags are the only consent there is, and a harness
-  // nobody asked about must not have its configuration written (AD-19).
-  if (!deps.isTTY) {
-    return deps.connectors.filter((connector) => flags.connect.includes(connector.harness));
-  }
-
-  const named = deps.connectors.filter((connector) => flags.connect.includes(connector.harness));
-  if (named.length > 0) return named;
+  const named = deps.connectors.filter(connector => flags.connect.includes(connector.harness));
+  if (flags.connect.length > 0 || !detect) return named;
 
   const detected: Connector[] = [];
   for (const connector of deps.connectors) {
@@ -894,14 +750,7 @@ async function chooseHarnesses(
     return [];
   }
 
-  // Everything detected starts out checked: connecting is what the user came
-  // for, and unchecking is the cheaper correction of the two.
-  const answer = await deps.prompts.multiselect(
-    '이 brain을 어떤 하네스에 연결할까요?',
-    detected.map((connector) => ({ value: connector.harness, label: connector.label })),
-    detected.map((connector) => connector.harness),
-  );
-  return detected.filter((connector) => answer.includes(connector.harness));
+  return detected;
 }
 
 /**

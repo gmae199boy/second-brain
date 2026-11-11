@@ -1,3 +1,4 @@
+import { runtimeFencePath, RUNTIME_FENCE_RECOVERY } from '../install/runtime-fence.js';
 import { driveAuth } from '../runtime/drive-oauth.js';
 import { createDriveRuntime } from '../runtime/drive-runtime.js';
 import type { SettingsStore } from 'second_brain';
@@ -137,6 +138,10 @@ export async function runDaemon(options: RunDaemonOptions): Promise<RunDaemonRes
     return { ok: false, code: config.code, message: config.message, exit: 2 };
   }
 
+  if (await access(runtimeFencePath(home)).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) {
+    await daemonLog(home, clock, { rotate: false }).write(RUNTIME_FENCE_RECOVERY);
+    return { ok: false, code: 'DB_LOCKED', message: RUNTIME_FENCE_RECOVERY, exit: 1 };
+  }
   const lock = await acquireDaemonLock({
     commit: (await readBuildIdentity())?.commit ?? null,
     home,

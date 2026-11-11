@@ -35,7 +35,7 @@ async function extensionWorld() {
   expect(migration.ok, JSON.stringify(migration)).toBe(true);
   await writeFile(join(dir, 'migrations/0002_marker.sql'), 'create table testext.marker (value text);\n');
   const options = { home: kit.home, urlEnv: 'BRAIN_DATABASE_URL', env: kit.env, clock, runner: kit.runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) };
-  return { ...kit, db, dir, store, install: (confirmOffline?: (request: import('../../../apps/cli/src/install/postgres.js').OfflineConfirmationRequest) => Promise<string>) => installPostgres({ ...options, ...(confirmOffline ? { confirmOffline } : {}) }) };
+  return { ...kit, db, dir, store, install: (observeOffline?: (request: import('../../../apps/cli/src/install/postgres.js').OfflineVerificationRequest) => Promise<string>) => installPostgres({ ...options, ...(observeOffline ? { observeOffline } : {}) }) };
 }
 
 it('서로 다른 core는 실제 데몬과 명령 진입을 막고 운영자 offline 확인 후 migration한다', async () => {
@@ -52,13 +52,13 @@ it('서로 다른 core는 실제 데몬과 명령 진입을 막고 운영자 off
     const before = await kit.db.rows("select * from brain.extensions where name='testext'");
     const result = await kit.install(async request => {
       expect(request).toMatchObject({ previousCommit: installed.commit, targetCommit: target });
-      expect(request.challenge).toContain(`${kit.home} ${installed.commit} ${target} `);
+      expect(request.verificationId).toMatch(/^[0-9a-f-]{36}$/);
       expect((await acquireDaemonLock({ home: kit.home, clock })).ok).toBe(false);
       expect(await kit.db.rows("select pg_try_advisory_lock(hashtextextended('extension-install:testext',0)) as acquired")).toEqual([{ acquired: false }]);
       expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: null }]);
-      return request.challenge;
+      return request.verificationId;
     });
-    expect(result).toMatchObject({ ok: true, report: { offline_confirmation: { previous_commit: installed.commit, target_commit: target, method: 'operator' } } });
+    expect(result).toMatchObject({ ok: true, report: { offline_confirmation: { previous_commit: installed.commit, target_commit: target, method: 'automatic' } } });
     expect(await kit.db.rows("select version from brain.schema_migrations where owner='testext' order by version")).toEqual([{ version: 1 }, { version: 2 }]);
     expect(await kit.db.rows("select * from brain.extensions where name='testext'")).toEqual(before);
     expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual([]);
@@ -66,20 +66,17 @@ it('서로 다른 core는 실제 데몬과 명령 진입을 막고 운영자 off
   } finally { await kit.store.close(); }
 });
 
-it.each(['missing', 'wrong-target', 'wrong-home', 'old-confirmation', 'changed-identity', 'resumed-entry', 'changed-manifest'] as const)('offline 확인 %s은 변경 전에 거부된다', async mode => {
+it.each(['changed-identity', 'resumed-entry', 'changed-manifest'] as const)('offline 확인 %s은 변경 전에 거부된다', async mode => {
   const kit = await extensionWorld();
   try {
     const path = join(kit.home, 'installed.json'); const installed = JSON.parse(await readFile(path, 'utf8'));
     installed.commit = installed.commit === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40); await writeFile(path, JSON.stringify(installed));
     const before = { ledger: await kit.db.rows("select * from brain.schema_migrations where owner='testext'"), registry: await kit.db.rows("select * from brain.extensions where name='testext'") };
-    const result = await kit.install(mode === 'missing' ? undefined : async request => {
+    const result = await kit.install(async request => {
       if (mode === 'changed-identity') await writeFile(path, JSON.stringify({ ...installed, commit: 'c'.repeat(40) }));
       if (mode === 'changed-manifest') { const manifestPath = join(kit.dir, 'manifest.json'); const manifest = JSON.parse(await readFile(manifestPath, 'utf8')); manifest.core_compat = { min: '1.0.0', max_exclusive: '2.0.0' }; await writeFile(manifestPath, JSON.stringify(manifest)); }
       if (mode === 'resumed-entry') await writeFile(join(kit.home, 'run/daemon.pid'), 'replacement');
-      if (mode === 'wrong-home') return request.challenge.replace(request.home, `${request.home}-other`);
-      if (mode === 'wrong-target') return `확인 ${request.previousCommit} ${'f'.repeat(40)}`;
-      if (mode === 'old-confirmation') return `확인 ${'d'.repeat(40)} ${request.targetCommit}`;
-      return request.challenge;
+      return request.verificationId;
     });
     expect(result).toMatchObject({ ok: false, code: 'DB_LOCKED' });
     expect(await kit.db.rows("select * from brain.schema_migrations where owner='testext'")).toEqual(before.ledger);
@@ -96,13 +93,11 @@ it('실패한 cross-commit migration의 owner는 보존되지만 offline 확인�
     installed.commit = installed.commit === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40); await writeFile(installedPath, JSON.stringify(installed));
     const path = join(kit.dir, 'migrations/0002_marker.sql'); await writeFile(path, 'select missing_column;\n');
     let previousChallenge = '';
-    expect(await kit.install(async request => { previousChallenge = request.challenge; return request.challenge; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
+    expect(await kit.install(async request => { previousChallenge = request.verificationId; return request.verificationId; })).toMatchObject({ ok: false, code: 'MIGRATION_FAILED' });
     const gate = await kit.db.rows('select * from brain.extension_quiesce'); expect(gate).toHaveLength(1);
-    expect(JSON.parse(await readFile(join(kit.home, 'run/bootstrap-extension-migrations.json'), 'utf8')).offlineConfirmation).toMatchObject({ previous_commit: installed.commit, method: 'operator' });
+    expect(JSON.parse(await readFile(join(kit.home, 'run/bootstrap-extension-migrations.json'), 'utf8')).offlineConfirmation).toMatchObject({ previous_commit: installed.commit, method: 'automatic' });
     await writeFile(path, 'create table testext.marker (value text);\n');
-    expect(await kit.install(async () => previousChallenge)).toMatchObject({ ok: false, code: 'DB_LOCKED' });
-    expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual(gate);
-    expect(await kit.install(async request => request.challenge)).toMatchObject({ ok: true });
+    expect(await kit.install(async request => request.verificationId)).toMatchObject({ ok: true });
     expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   } finally { await kit.store.close(); }
 });
@@ -139,7 +134,7 @@ it('installPostgres는 미정산 일감을 거부하고 자기 gate와 공용 �
     const before = { files: await kit.db.rows('select * from brain.files'), channels: await kit.db.rows('select * from brain.channel_conversations'), messages: await kit.db.rows('select * from brain.messages'), holds: await kit.db.rows('select * from brain.work_hold_groups') };
     const installedPath = join(kit.home, 'installed.json'); const installed = JSON.parse(await readFile(installedPath, 'utf8'));
     installed.commit = installed.commit === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40); await writeFile(installedPath, JSON.stringify(installed));
-    const installing = await kit.install(async request => request.challenge);
+    const installing = await kit.install(async request => request.verificationId);
     expect(installing).toMatchObject({ ok: false, code: 'DB_LOCKED', message: expect.stringContaining('미정산') });
     const gate = await kit.db.rows("select owner from brain.extension_quiesce where name='testext'"); expect(gate).toHaveLength(1);
     expect(JSON.parse(await readFile(join(kit.home, 'run/bootstrap-extension-migrations.json'), 'utf8')).owner).toBe(gate[0]!.owner);
@@ -149,7 +144,7 @@ it('installPostgres는 미정산 일감을 거부하고 자기 gate와 공용 �
     const claim = await kit.store.claimSupervisedWork({ now: clock.now(), claimedBy: 'other', kinds: ['testext.job'], attemptToken: randomUUID() });
     expect(claim).toMatchObject({ ok: true, item: null });
     await kit.db.query(`update brain.work_attempts set finished_at=now(),outcome='died' where token='${token}'; update brain.work_items set current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null,completed_at=now(),outcome='failed' where id='${id}'`);
-    expect(await kit.install(async request => request.challenge)).toMatchObject({ ok: true });
+    expect(await kit.install(async request => request.verificationId)).toMatchObject({ ok: true });
     expect(await kit.db.rows("select to_regclass('testext.marker') as marker")).toEqual([{ marker: 'testext.marker' }]);
     expect(await kit.db.rows('select * from brain.extension_quiesce')).toEqual([]);
     expect({ files: await kit.db.rows('select * from brain.files'), channels: await kit.db.rows('select * from brain.channel_conversations'), messages: await kit.db.rows('select * from brain.messages'), holds: await kit.db.rows('select * from brain.work_hold_groups') }).toEqual(before);
@@ -267,7 +262,7 @@ async function world(mode = 'running', withDatabase = true, isolated = false) {
   // Keep installation verification in-process while retaining the actual PG assembly.
   deps.installed.verify = async () => ({ ok: true });
   deps.daemon.register = async () => ({ label: homeResources(home).label, plist_path: null, status: 'unsupported', plist_changed: false });
-  if (db) deps.postgres = () => installPostgres({ home, urlEnv: 'BRAIN_DATABASE_URL', env, clock, runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
+  if (db) deps.postgres = (_home, _urlEnv, installEnv) => installPostgres({ home, urlEnv: 'BRAIN_DATABASE_URL', env: installEnv, clock, runner, secrets: { adminUrl: db.url, appPassword: 'brain-test-app' }, databaseName: new URL(db.url).pathname.slice(1) });
   const execute = async (args: string[], commandRunner = runner) => {
     let stdout = ''; const exit = await dispatch(commands, [...args, '--json'], { clock, env, runner: commandRunner, stdout: (s: string) => { stdout += s; }, stderr: () => {} });
     return { exit, ...JSON.parse(stdout) };
@@ -389,7 +384,7 @@ it.each(['volume', 'port'])('returns exit 2 from installer and CLI for a %s conf
   };
   const lines: string[] = [];
   kit.deps.log = line => lines.push(line);
-  kit.deps.postgres = () => installPostgres({ home: kit.home, env: kit.env, urlEnv: 'BRAIN_DATABASE_URL', clock, runner });
+  kit.deps.postgres = (_home, _urlEnv, installEnv) => installPostgres({ home: kit.home, env: installEnv, urlEnv: 'BRAIN_DATABASE_URL', clock, runner });
   expect(await runInstaller(['--yes'], kit.env, kit.deps)).toBe(2);
   expect(lines.join('\n')).toContain('DB_UNAVAILABLE');
   const expectedDetail = conflict === 'volume' ? 'other-project' : String(homeResources(kit.home).port);

@@ -1029,6 +1029,24 @@ describe('explicit interactive ref upgrade', () => {
     expect(run.file(join(HOME, '.app-promotion.json'))).toBeUndefined();
     expect(run.locked()).toBe(false);
   });
+  it.each(['operator', 'automatic'])('SessionStart는 %s journal을 검증한 뒤 중단 승격을 재개한다', async method => {
+    const files = interruptedFiles(), path = join(HOME, 'run/bootstrap-extension-migrations.json');
+    const journal = JSON.parse(files[path]!); journal.offlineConfirmation.method = method; files[path] = JSON.stringify(journal);
+    const run = harness({ exists: true, files, respond: interruptedResponder });
+    expect(await main(['--ref', REF, '--yes'], ENV, run.deps)).toBe(0);
+    expect(run.requests.some(request => request.command === '/fake/node')).toBe(true);
+  });
+  it.each(['live owner', 'wrong backup', 'dirty backup'])('SessionStart는 %s 중단 승격을 설치기 실행 전에 거부한다', async reason => {
+    const files = interruptedFiles(), before = JSON.stringify(files);
+    const run = harness({ exists: true, files, alive: reason === 'live owner' ? [PID, 777] : [PID], respond: (line, request) => {
+      if (reason === 'wrong backup' && line === `git -C ${join(HOME, '.app-previous')} rev-parse HEAD`) return { stdout: `${REF}\n` };
+      if (reason === 'dirty backup' && line === `git -C ${join(HOME, '.app-previous')} status --porcelain`) return { stdout: ' M changed\n' };
+      return interruptedResponder(line, request);
+    } });
+    expect(await main(['--ref', REF, '--yes'], ENV, run.deps)).toBe(1);
+    expect(run.requests.some(request => request.command === '/fake/node')).toBe(false);
+    expect(JSON.stringify(files)).toBe(before);
+  });
   it.each(['malformed marker', 'malformed journal', 'different owner', 'live owner', 'wrong target', 'wrong home', 'wrong old commit', 'missing journal', 'wrong journal owner', 'dirty previous app', 'wrong previous head', 'wrong active head', 'wrong build', 'next exists'] as const)('refuses interrupted promotion with %s without touching it', async reason => {
     const files = interruptedFiles();
     const marker = join(HOME, '.app-promotion.json'), journal = join(HOME, 'run/bootstrap-extension-migrations.json');

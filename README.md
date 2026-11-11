@@ -44,8 +44,9 @@ node를 직접 찾습니다. shim에 박힌 node → `nvm`의 24.16.0 이상 중
 두 번째 세션부터는 `~/.second_brain/installed.json`의 commit과 플러그인의
 `app-ref`를 비교만 합니다. 같으면 git도 pnpm도 부르지 않고 조용히 끝납니다.
 플러그인이 더 새 commit을 담고 있으면 그것으로 fast-forward하고 설치기를 다시
-돌립니다 — 그것이 업그레이드입니다. 등록 확장의 offline 확인이 필요한 갱신은
-hook이 대신 승인할 수 없으며 아래 대화형 절차로 진행합니다.
+돌립니다 — 그것이 업그레이드입니다. 설치기가 데몬과 이전 실행의 종료를 검증하고
+런타임 DB 접속을 잠시 차단하므로 core migration도 사람의 확인 문구 없이 진행합니다.
+다른 세션의 수집 hook은 spool에 보류되며 갱신 뒤 drain이 이어서 수집합니다.
 
 세션마다 hook은 자기를 부른 플러그인 폴더를 `~/.second_brain/run/plugin.json`에
 적어 둡니다.
@@ -84,30 +85,37 @@ HEAD도 움직이지 않습니다. 실패해도 로그 한 줄로 끝입니다.
 꺼져 있을 때입니다. 비동기 hook의 stdout은 다음 턴에 모델의 맥락으로 가므로, 매
 세션 같은 줄을 넣는 대신 `brain doctor run`의 `plugin` 점검이 말합니다.
 
-### 고정된 플러그인 설치본을 대화형으로 갱신하기
+### 업데이트
 
-등록된 확장이 있는 옛 설치본을 다른 core commit으로 갱신할 때는 운영자의 offline
-확인이 필요합니다. 플러그인의 `SessionStart` hook은 질문할 수 없으므로 이 확인을
-대신하지 않습니다. 다음 절차는 플러그인이 만든 detached app에도 사용할 수 있습니다.
+기존 `config.toml`과 `installed.json`이 있는 홈은 미러·임베딩·자동 업데이트·시간대·하네스
+질문 없이 기존 선택을 재사용합니다. 새 필수 설정은 기본값을 적용하고 출력합니다.
+최초 설치도 질문 없이 기본값을 적용하고 감지된 하네스를 연결합니다. `[update] auto = true`이면 SessionStart가
+core migration과 app 전환까지 자동 수행합니다. 실패해도 세션은 시작되며
+`log/bootstrap.log`와 `brain doctor run`에서 원인을 확인합니다.
+
+자동 정지는 설치 잠금·daemon fence·확장 잠금과 quiesce를 유지하며, 전용 PostgreSQL
+cluster의 `brain_app`과 해당 DB 소유 확장 역할만 잠시 NOLOGIN으로 전환합니다.
+관리자 역할과 다른 DB는 바꾸지 않으며 전용 cluster를 확인할 수 없으면 중단합니다.
+원래 로그인 상태를 `run/core-update.json`에 먼저 기록하고 정상·실패 시 복구합니다.
+직접 확장 명령과 설치기 자식은 `run/process-groups/`에 그룹 신원을 남기며, 부모가
+죽어도 그룹이 남거나 종료 관측이 불명확하면 재시도를 중단합니다. spawn 신원 기록이
+불완전하면 이전 실행과 모든 자식 종료를 확인한 뒤 해당 프로세스 기록만 복구하세요.
+프로세스 crash 뒤 기록이 남으면 daemon 시작과 doctor가 복구 안내를 출력합니다.
+기존 설치기와 자식이 종료된 뒤 같은 설치기를 다시 실행하면 기록을 검증하여 자동
+복구합니다. `install.lock`이 남았다면 소유 프로세스와 모든 자식 종료를 확인한 뒤
+해당 잠금만 복구하세요. `core-update.json`을 직접 삭제하거나 역할을 임의로 바꾸지 마세요.
+검증 실패가 migration 전에 발생하면 이전 app을 유지하고 기존 launchd 데몬을 재개합니다.
+
+특정 릴리스를 직접 선택할 때는 다음 절차를 사용할 수 있습니다.
 
 1. 갱신할 Brain의 설정 폴더와 대상 플러그인 버전을 확인합니다. 사용할 플러그인
    폴더는 **대화형 ref 갱신을 지원하는 새 릴리스**여야 합니다. marketplace 캐시에
    옛 버전이 남으므로 선택한 폴더의 `app-ref`가 원하는 릴리스의 commit인지 확인하세요.
    아래 `<version>`과 marketplace 이름은 실제 선택한 폴더로 바꿉니다. 로컬
    marketplace라면 그 저장소의 `plugin` 폴더를 지정합니다.
-2. 새 Claude Code 세션과 hook, 예약 실행 및 다른 직접 명령의 진입을 차단합니다.
-   설치·확장 명령이 실행 중이면 끝날 때까지 기다립니다. 등록 확장은 비활성화하고
-   관련 예약과 미완료 일감을 보류한 뒤 실행 중인 작업과 자식 프로세스의 종료를
-   확인합니다. `ext disable` 응답만으로 자식 종료가 확정되지는 않습니다. launchd가
-   관리하는 데몬은 아래처럼 멈추고 상태를 확인합니다. 직접 띄운 데몬도 해당
-   터미널에서 멈추고 이전 데몬·명령과 **모든 자식의 공유 상태 쓰기가 끝났는지**
-   직접 재확인하세요. 종료를 확인할 수 없으면 계속하지 마세요.
-
-   ```sh
-   BRAIN_HOME="${SECOND_BRAIN_HOME:-$HOME/.second_brain}"
-   "$BRAIN_HOME/bin/brain" daemon stop
-   "$BRAIN_HOME/bin/brain" daemon status
-   ```
+2. 설치·확장 명령이 실행 중이면 끝날 때까지 기다립니다. 직접 띄운 데몬은 해당
+   터미널에서 멈춥니다. launchd 데몬은 설치기가 정지·복구합니다. 옛 schema의
+   확장은 기존 안내대로 비활성·보류·호환 패키지 복구가 필요할 수 있습니다.
 
 3. 실제 터미널에서 아래 명령을 실행합니다. `PLUGIN_DIR`은 1번에서 확인한 폴더로
    바꾸세요. `app-ref`의 40자리 전체 commit을 대상과 비교한 뒤 같은 폴더의 새
@@ -115,19 +123,16 @@ HEAD도 움직이지 않습니다. 실패해도 로그 한 줄로 끝입니다.
    같은 저장소를 가리켜야 합니다. Node 24.16 이상과 git이 필요합니다.
 
    ```sh
+   BRAIN_HOME="${SECOND_BRAIN_HOME:-$HOME/.second_brain}"
    PLUGIN_DIR="$HOME/.claude/plugins/cache/second-brain/second-brain/<version>"
    cat "$PLUGIN_DIR/app-ref"
    IFS= read -r TARGET_REF < "$PLUGIN_DIR/app-ref"
    node "$PLUGIN_DIR/bootstrap.mjs" --interactive-ref --ref "$TARGET_REF" --yes --plugin-root "$PLUGIN_DIR"
    ```
 
-   설치기가 대상 ref를 별도로 준비하고 빌드한 후 현재 시도의 확인 문구를
-   표시합니다. 2번의 진입 차단과 종료 사실을 다시 직접 확인한 경우에만 화면의
-   `확인 …` 문구 전체를 그대로 입력하세요. 매 시도마다 문구가 다릅니다. `--yes`는
-   이 확인을 대신하지 않으며 비TTY·JSON·잘못된 응답이나 취소는 자동 승인되지
-   않습니다. 설치기는 확인 후에도 정지 상태와 신원을 다시 검사합니다. 갱신이
-   끝날 때까지 다른 쓰기 진입을 차단하고, 설치기가 데몬을 다시 등록하거나 시작할
-   수도 있으므로 끝난 뒤 상태를 확인하세요.
+   설치기가 대상 ref를 별도로 준비하고 빌드한 뒤 정지 상태와 신원을 자동 검증합니다.
+   운영자 확인 문구는 요구하지 않습니다. 종료나 소유권이 불명확하면 명확한 오류로
+   중단하므로 원인을 해결한 뒤 같은 명령을 다시 실행하세요.
 
 4. 성공 후 `"$BRAIN_HOME/bin/brain" ext status garmin` 등으로 교체 대기 상태를
    확인합니다. 옛 manifest의 확장은 현재 형식의 호환 패키지를 명시적으로
@@ -138,12 +143,12 @@ HEAD도 움직이지 않습니다. 실패해도 로그 한 줄로 끝입니다.
 **실패와 재시도.** 출력과 `log/bootstrap.log`의 hook 기록을 확인하고 원인을 해결한
 뒤 같은 플러그인 폴더와 ref로 터미널 명령을 다시 실행하세요. ref가 없거나 이력이
 갈라진 경우, 다른 저장소 또는 변경된 app, 확인되지 않은 정지 상태는 그대로 두고
-거부합니다. 강제로 브랜치를 바꾸거나 변경을 버리지 마세요. 재시도에 필요한 경우
-새 확인 문구가 다시 표시됩니다.
+거부합니다. 강제로 브랜치를 바꾸거나 변경을 버리지 마세요. 재시도에서도 정지 상태를
+자동으로 다시 검증합니다.
 
 승격 직후 중단됐더라도 이전 app과 새 app, 설치 기록, 승격 기록과 확장 전환
 journal의 ref·소유자가 서로 일치하고 이전 owner가 종료된 상태라면 아래 잠금
-복구가 필요한지 확인한 뒤 같은 명령으로 신원을 검증하고 새 확인을 받아 이어갑니다.
+복구가 필요한지 확인한 뒤 같은 명령으로 신원과 정지 상태를 자동 검증하고 이어갑니다.
 승격 기록이 손상됐거나 owner·신원
 연결이 없거나 서로 다르면 자동 복구하지 않습니다. 특히 옛 journal에 owner 연결이
 없으면 해당 기록과 두 app을 보존하고 원인을 조사하세요. `.app-previous`,
@@ -161,8 +166,11 @@ cat "$BRAIN_HOME/install.lock/pid" "$BRAIN_HOME/install.lock/owner"
 rm -r "$BRAIN_HOME/install.lock"
 ```
 
-설치기 강제 종료 뒤 `run/daemon.pid`가 남으면 설치기는 소유 PID가 죽었다는
-사실만으로 그 잠금을 회수하지 않습니다. 새 설치·데몬·확장 명령과 자동 시작을
+설치기 강제 종료 뒤 `run/core-update.json`에 설치기 신원과 프로세스 그룹이 남아 있으면
+재시도에서 소유권과 모든 그룹의 종료를 검증하고 로그인 상태와 데몬 잠금을 자동 복구합니다.
+검증에 실패하면 기록을 보존하고 중단합니다. 다음 수동 절차는 자동 복구 근거가 없는
+옛 기록에만 적용합니다. `run/daemon.pid`의 소유 PID가 죽었다는 사실만으로는
+그 잠금을 회수하지 않습니다. 새 설치·데몬·확장 명령과 자동 시작을
 계속 차단하고, 중단된 시도의 프로세스 기록에서 bootstrap 및 설치기 PID와 그
 프로세스 그룹·모든 자식을 확인하세요. 그 그룹과 자식이 모두 종료되어 공유 상태에
 더 이상 쓰지 않는다는 사실을 확인해야 합니다. `kill -0` 한 번이나 PID 부재만으로
@@ -190,7 +198,7 @@ printf '%s\n' "$FENCE_RECORD"
 test "$(cat "$BRAIN_HOME/run/daemon.pid")" = "$FENCE_RECORD" && rm "$BRAIN_HOME/run/daemon.pid"
 ```
 
-이후 같은 대화형 bootstrap 명령을 다시 실행하고 새 확인 문구에 응답합니다.
+이후 같은 bootstrap 명령을 다시 실행하면 정지 상태를 자동 검증합니다.
 
 ### npx로
 
@@ -217,33 +225,22 @@ pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론�
 | `SECOND_BRAIN_LAUNCH_AGENTS` | `~/Library/LaunchAgents` | 데몬 plist를 쓸 폴더. 시험용 |
 | `SECOND_BRAIN_NODE_DIRS` | `/opt/homebrew/bin:/usr/local/bin` | node를 찾아볼 고정 폴더들. 시험용 |
 
-설치 전에 OrbStack이 실행 중이어야 합니다. 설치기는 홈별 PostgreSQL 컨테이너를
-만들고, 미러 경로와 시간대 등의 설정을 묻습니다.
+설치 전에 OrbStack이 실행 중이어야 합니다. 설치기는 선택 질문 없이 기본값을
+적용하고 결과를 출력합니다. 기존 설정이 있으면 보존합니다.
 
-- **PostgreSQL을 어디에 둘지.** 홈에서 분리된 compose project와 영속 볼륨을 만들고, 접속 URL은 `.env`에 기록합니다. 선택자는 `store.url_env`이며 기본값은 `BRAIN_DATABASE_URL`입니다.
-- **미러 폴더를 어디에 둘지.** 절대 경로면 무엇이든 되고, 기본값은
-  `~/.second_brain/mirror`입니다. 아직 그 폴더를 만드는 것은 없습니다.
+| 항목 | 최초 기본값 | 나중에 변경 |
+| --- | --- | --- |
+| 미러 | `~/.second_brain/mirror` (별도 홈이면 그 홈의 mirror) | `brain config set mirror.path <절대경로>` |
+| 자동 업데이트 | 켜짐 | `brain config set update.auto false` 또는 `true` |
+| 시간대 | 시스템 IANA 시간대 | `brain config set timezone America/New_York` |
+| 임베딩 | 꺼짐 | 런타임 미지원으로 활성화 설정 없음 |
+| 하네스 | 감지된 하네스에 자동 연결 | `brain setup connect <하네스>`로 추가 연결 |
 
-파일 저장소 루트는 묻지 않습니다. 기록된 값이 있으면 그것을, 없으면
-`~/.second_brain/files`를 씁니다.
-
-그다음 임베딩을 켤지 묻는데, 이것은 여전히 "아직 지원하지 않습니다"라서 켠다고
-답해도 그렇게 말하기만 하고 아무것도 쓰지 않습니다.
-
-그다음 자동 업데이트를 켤지 묻습니다. 이것은 실제로 쓰이는 값입니다 —
-`config.toml`의 `[update] auto`이고, 플러그인의 `SessionStart`가 더 새 앱을 설치해도
-되는지를 그 값으로 판단합니다. 기본값은 켜짐이고, 이미 기록된 값이 있으면 그것을
-기본값으로 내놓습니다. 터미널이 없으면 묻지 않고 기록된 값(없으면 켜짐)을 씁니다.
-꺼 두면 플러그인이 더 새 commit을 담고 있어도 아무것도 하지 않고, `brain doctor
-run`이 `UPDATE_AVAILABLE` 경고로 알려 줍니다.
-
-마지막으로, 아직 아무것도 쓰지 않은 자리에서 쓸 것을 다 보여 주고 한 번
-묻습니다. 설정 두 파일, PostgreSQL compose project·볼륨·포트, 파일 저장소 루트,
-shim의 경로입니다. 여기서 아니요라고
-답하면 — 또는 그 앞의 어느 질문에서 Ctrl-C를 누르면 — 한 바이트도 쓰지 않고
-`SETUP_CANCELLED`로 끝납니다. 뒤 질문에서 누른 Ctrl-C는 그 자리에서 멈추므로,
-그때까지 밟은 단계는 그대로 남습니다. `--yes`는 이 질문을 건너뜁니다 — 경로
-질문은 그대로 묻습니다. 하네스를 연결할지는 뒤에서 따로 묻습니다.
+PostgreSQL은 홈별 compose project·영속 볼륨에 두고 URL은 `.env`에 기록합니다.
+파일 저장소는 기존 값이 없으면 `~/.second_brain/files`를 사용합니다. 미러는 경로만
+기록하며 기존 데이터를 옮기지 않습니다. 미러·자동 업데이트·시간대 변경은 brain-config
+스킬로 요청할 수 있습니다. 하네스 연결은 외부 설정을 바꾸므로 brain-setup을 사용하며,
+설치 갱신에서는 기존 연결을 유지하고 새 하네스를 자동으로 추가하지 않습니다.
 
 동의한 다음에는 PostgreSQL role·schema와 마이그레이션을 준비하고, 이 brain의 주인을
 기록하고, 시간대를 DB에 저장합니다. 파일 저장소 루트를 mode 0700으로 만든 뒤
@@ -298,8 +295,9 @@ guide schema --json`을 실제로 실행해서 exit 0과 `ok: true` 엔벨로프
 node apps/cli/dist/install.js --yes
 ```
 
-터미널이 없으면 아무것도 묻지 않으므로 각 경로는 기록된 값(없으면 기본값)을
-지키고, `--connect`가 이름을 대지 않은 하네스는 연결되지 않습니다.
+각 경로는 기록된 값(없으면 기본값)을 지킵니다. 최초 설치에서는 감지된 하네스를
+자동 연결하며, `--connect`를 지정하면 그 하네스만 연결합니다. 갱신에서는 명시적으로
+지정한 연결만 추가합니다.
 
 | 플래그 | 하는 일 |
 | --- | --- |
@@ -381,7 +379,7 @@ hook이 내는 줄입니다. 도구 메모 대상은 셸 `NAME=value` 규칙도 
 그래서 수집 결과의 `inserted`에는 `messages`와 `toolNotes`만 있습니다
 (`redactions` 키는 없습니다 — 수집은 가리기 기록을 남기지 않습니다). 도구 메모
 대상은 파서가 자른 그대로, 첫 줄의 500자까지 저장됩니다. commander가 내는
-도움말과 설치기의 질문 화면은 등록부의 정적 문구와 경로뿐이어서 코덱 밖입니다.
+도움말과 설치기의 결과 화면은 등록부의 정적 문구와 경로뿐이어서 코덱 밖입니다.
 
 그래서 데이터베이스 파일에는 비밀이 원문으로 남습니다. 그 파일을 지키는 것은
 권한 0600과 "동기화 폴더에 두지 않기"입니다. 저장본에서도 지우려면
@@ -1188,7 +1186,7 @@ Docker도 없고 변수도 없으면, 테스트를 하나도 돌리지 않고 �
 설정은 저장소 밖, `~/.second_brain`(또는 `SECOND_BRAIN_HOME`이 가리키는 폴더)에
 있습니다. PostgreSQL 홈의 시간대는 DB 사용자 설정에 저장하며, `brain config get timezone`과
 `brain config set timezone America/New_York`으로 읽고 바꿉니다. `setup run`은 기존
-파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 기본값은 `Asia/Seoul`입니다.
+파일의 시간대를 DB로 옮기고 파일에서는 뺍니다. 최초 설치 기본값은 시스템 IANA 시간대이며 이미 저장된 DB 값은 보존합니다.
 `config.toml`은 `schema_version`,
 PostgreSQL 연결 선택자(`store.url_env`, 기본 `BRAIN_DATABASE_URL`), 파일 저장소 루트(`files.path`), 미러(`mirror.path`) — 을
 담고, 플러그인이 더 새 앱을 스스로 설치해도 되는지(`update.auto`, 기본 참)를

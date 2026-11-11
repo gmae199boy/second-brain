@@ -120,7 +120,7 @@ async function world(name: 'garmin' | 'oldext', schema = 27) {
   const runner = async (request: {args: readonly string[]}) => request.args[0] === 'volume' ? {ok:false as const,stdout:'',stderr:'no such volume',message:'missing'} : {ok:true as const,stdout:'',stderr:''};
   const env: NodeJS.ProcessEnv = {...process.env, SECOND_BRAIN_HOME:home}; delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
   const options = {home,urlEnv:'BRAIN_DATABASE_URL',env,clock,runner,secrets:{adminUrl:db.url,appPassword:'brain-test-app'},databaseName};
-  const install = () => installPostgres({...options,confirmOffline:async r => r.challenge});
+  const install = () => installPostgres({...options,observeOffline:async r => r.verificationId});
   return {home, db, dir, build, installed, install, options};
 }
 
@@ -297,9 +297,9 @@ async function fixture() {
  await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,commit:oldRef}));
  const fixtureAdmin=new URL(k.db.url); fixtureAdmin.pathname='/postgres'; const admin=new pg.Client({connectionString:fixtureAdmin.toString()});
  const dbName=k.options.databaseName; let connected=false, renamed=false; let proxy:ReturnType<typeof createServer> | undefined; const sockets=new Set<Socket>();
- const close=async()=>{if(processGroups.size || ptyGroupReceipts.size) throw Error('시험 프로세스 그룹 종료 전 fixture를 보존합니다'); for(const socket of sockets) socket.destroy(); if(proxy?.listening) await new Promise<void>(resolve=>proxy!.close(()=>resolve())); if(renamed) {await admin.query(`alter database brain rename to "${dbName}"`);renamed=false; const restored=await admin.query('select datname from pg_database where datname = $1',[dbName]);expect(restored.rowCount).toBe(1);} if(connected) {await admin.end();connected=false;} cleanups.delete(close);};
+ const close=async()=>{if(processGroups.size || ptyGroupReceipts.size) throw Error('시험 프로세스 그룹 종료 전 fixture를 보존합니다'); for(const socket of sockets) socket.destroy(); if(proxy?.listening) await new Promise<void>(resolve=>proxy!.close(()=>resolve())); if(renamed) {await admin.query(`comment on role brain_ext_garmin is 'second-brain extension:${dbName}'`); await admin.query(`alter database brain rename to "${dbName}"`);renamed=false; const restored=await admin.query('select datname from pg_database where datname = $1',[dbName]);expect(restored.rowCount).toBe(1);} if(connected) {await admin.end();connected=false;} cleanups.delete(close);};
  cleanups.add(close); try {await admin.connect();connected=true;} catch(error) {await admin.end().catch(()=>{});throw error;}
- await admin.query(`alter database "${dbName}" rename to brain`); renamed=true;
+ await admin.query(`alter database "${dbName}" rename to brain`); renamed=true; await admin.query("comment on role brain_ext_garmin is 'second-brain extension:brain'");
  const liveUrl=new URL(k.db.url); liveUrl.pathname='/brain';
  const liveDb={...k.db, rows:async (sql:string)=>{const c=new pg.Client({connectionString:liveUrl.toString()}); await c.connect(); try{return (await c.query(sql)).rows;}finally{await c.end();}}, query:async(sql:string)=>{const c=new pg.Client({connectionString:liveUrl.toString()}); await c.connect();try{await c.query(sql);}finally{await c.end();}}};
  const live={...k,db:liveDb};
@@ -331,18 +331,6 @@ it('M1–M6: detached 옛 Garmin을 실제 bootstrap과 PTY로 안전하게 갱�
   const oldRecord=await readFile(join(k.home,'installed.json'),'utf8');
   const oldManifest=await readFile(join(k.dir,'manifest.json'));
   const unchanged=async()=>{expect(await preserved(k,'garmin')).toBe(baseline); expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(ledger);expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(oldRecord);expect(git('-C',k.app,'rev-parse','HEAD')).toBe(oldRef);expect(await readFile(join(k.dir,'manifest.json'))).toEqual(oldManifest);};
-  // M2: every rejection reaches the installer, and a timeout can never count as a rejection.
-  for(const mode of ['wrong','eof','cancel']) {
-   const denied=await k.tty(mode); expect(denied.code,denied.output).toBe(1); if(mode!=='cancel') expect(denied.output).toContain('DB_LOCKED');
-   expect(denied.answered,denied.output).toBe(true); await unchanged();
-  }
-  const json=await k.tty('json');expect(json.code,json.output).toBe(2);expect(json.output).toContain('USAGE:');expect(json.output).toContain('--json');expect(json.answered).toBe(false);expect(json.challenge).toBe('');await unchanged();
-  const firstChallenge=await k.tty('wrong');expect(firstChallenge.code,firstChallenge.output).toBe(1);expect(firstChallenge.challenge).not.toBe('');
-  const staleAttempt=await k.tty('stale',targetRef,firstChallenge.challenge);expect(staleAttempt.code,staleAttempt.output).toBe(1);expect(staleAttempt.challenge).not.toBe(firstChallenge.challenge);expect(staleAttempt.output).toContain('DB_LOCKED');await unchanged();
-  try {const changed=await k.tty('mutate');expect(changed.answered,changed.output).toBe(true);expect(changed.code,changed.output).toBe(1);expect(changed.output).toContain('DB_LOCKED');}
-  finally {await writeFile(join(k.dir,'manifest.json'),oldManifest);} await unchanged();
-  const noTty=await k.plain(['--interactive-ref','--ref',targetRef,'--yes']); expect(noTty.signal).toBeNull();expect(noTty.code,noTty.out).toBe(1);expect(noTty.out).toContain('DB_LOCKED');await unchanged();
-  const hook=await k.plain(['--ref',targetRef,'--yes']);expect(hook.signal).toBeNull();expect(hook.code).toBe(1);expect(hook.out.trim().split('\n')).toHaveLength(1);expect(JSON.parse(hook.out).systemMessage).toBeTruthy();expect(await readFile(join(k.home,'log/bootstrap.log'),'utf8')).toContain('DB_LOCKED');await unchanged();
   // M3: a live process owns the daemon fence. The test process is only a synthetic owner.
   const daemon=join(k.home,'run/daemon.pid');await writeFile(daemon,JSON.stringify({pid:process.pid,boot_at:new Date().toISOString(),started_at:new Date().toISOString(),commit:oldRef}));
   const fenced=await k.tty('correct');expect(fenced.code,fenced.output).toBe(1);expect(fenced.output).toContain('DB_LOCKED');expect(fenced.answered).toBe(false);await unchanged();await rm(daemon);
@@ -384,19 +372,9 @@ it('M1–M6: detached 옛 Garmin을 실제 bootstrap과 PTY로 안전하게 갱�
   await writeFile(wrapper,`#!/bin/sh\nif [ "$1" = build ]; then echo synthetic-build-failure >&2; exit 42; fi\nexec '${pnpm}' "$@"\n`);await chmod(wrapper,0o755);
   try {const failedBuild=await k.tty('correct');expect(failedBuild.code,failedBuild.output).toBe(1);expect(failedBuild.output).toContain('synthetic-build-failure');expect(failedBuild.answered).toBe(false);await unchanged();}
   finally {await rm(wrapper);}
-  // M5: terminate at the current challenge, then follow the documented stale lock recovery only after the entire PTY process group exits.
-  const interrupted=await k.tty('interrupt');expect(interrupted.answered,interrupted.output).toBe(true);expect(interrupted.code).not.toBe(0);expect(interrupted.groupGone).toBe(true);await unchanged();
-  expect(interrupted.interruptedOwner).toMatch(new RegExp(`^${interrupted.pid} `));
-  const interruptedFence=JSON.parse(interrupted.interruptedFence!) as {pid:number;boot_at:string;commit:string};
-  expect(interruptedFence.pid).toBeGreaterThan(0);expect(interruptedFence.pid).not.toBe(interrupted.pid);expect(interruptedFence.boot_at).toBe('9999-01-01T00:00:00.000Z');expect(interruptedFence.commit).toBe(targetRef);
-  expect(processGroups.size).toBe(0);expect(ptyGroupReceipts.size).toBe(0);
-  try {process.kill(interruptedFence.pid,0);throw Error('중단된 설치기가 아직 존재합니다');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ESRCH') throw error;}
-  const interruptedFencePath=join(k.home,'run/daemon.pid');expect(await readFile(interruptedFencePath,'utf8')).toBe(interrupted.interruptedFence);await rm(interruptedFencePath);
-  expect(await readFile(join(k.home,'install.lock/owner'),'utf8')).toBe(interrupted.interruptedOwner);
-  await rm(join(k.home,'install.lock'),{recursive:true,force:true});
   // A real progress-write failure leaves a journal and gate owned by the same attempt.
   await k.db.query(`create sequence brain.e2_progress_receipt; create function brain.e2_reject_progress() returns trigger language plpgsql security definer set search_path = pg_catalog, brain as $$ begin perform nextval('brain.e2_progress_receipt'); raise exception 'R2V3_SYNTHETIC_PROGRESS_FAILURE'; end $$; create trigger e2_reject_progress before insert on brain.extension_install_progress for each row execute function brain.e2_reject_progress()`);
-  const failed=await k.tty('correct');expect(failed.answered,failed.output).toBe(true);expect(failed.code,failed.output).toBe(2);expect(failed.output).toContain('DB_UNAVAILABLE: R2V3_SYNTHETIC_PROGRESS_FAILURE');
+  const failed=await k.tty('correct');expect(failed.answered,failed.output).toBe(false);expect(failed.code,failed.output).toBe(2);expect(failed.output).toContain('DB_UNAVAILABLE: R2V3_SYNTHETIC_PROGRESS_FAILURE');
   expect(await k.db.rows('select is_called from brain.e2_progress_receipt')).toEqual([{is_called:true}]);
   const journal=JSON.parse(await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8')) as {owner:string};
   const gateBefore=await k.db.rows("select owner from brain.extension_quiesce where name='garmin'");expect(gateBefore).toEqual([{owner:journal.owner}]);
@@ -405,8 +383,9 @@ it('M1–M6: detached 옛 Garmin을 실제 bootstrap과 PTY로 안전하게 갱�
   const failedMarker=JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8')) as {owner:string;target:string};
   const failedJournal=JSON.parse(await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8')) as {promotionOwner:string};expect(failedMarker.owner).toBe(failedJournal.promotionOwner);expect(failedMarker.target).toBe(targetRef);
   await k.db.query('drop trigger e2_reject_progress on brain.extension_install_progress; drop function brain.e2_reject_progress(); drop sequence brain.e2_progress_receipt');
-  // M1: the current challenge is read from this attempt, never supplied by the caller.
-  const accepted=await k.tty('correct');expect(accepted.answered,accepted.output).toBe(true);expect(accepted.code,accepted.output).toBe(0);
+  // 비대화 SessionStart가 migration·승격·완료 기록까지 진행한다.
+  const accepted=await k.plain(['--ref',targetRef,'--yes','--plugin-root',k.plugin]); expect(accepted.code,accepted.out).toBe(0);
+  expect(await readFile(join(k.home,'run/last-core-update.json'),'utf8')).toContain('"method":"automatic"');
   expect(await preserved(k,'garmin')).toBe(baseline);expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(ledger);
   const coreAfter=await k.db.rows("select version,name,checksum,applied_at from brain.schema_migrations where owner='core' order by version");expect(coreAfter.slice(0,coreBefore.length)).toEqual(coreBefore);expect(coreAfter.length).toBeGreaterThan(coreBefore.length);expect(coreAfter.map(row=>row.version)).toEqual(coreAfter.map((_,i)=>i+1));
   expect(git('-C',k.app,'rev-parse','HEAD')).toBe(targetRef);expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:targetRef,plugin_root:k.plugin});
@@ -431,7 +410,7 @@ it('M5: 승격 직후 중단한 실제 bootstrap을 같은 명령으로 복구�
   const receiptPath=join(k.home,'promotion-kill-receipt.json'), fencePath=join(k.home,'run/daemon.pid');
   await writeFile(injector, `const fs = require('node:fs'); const {syncBuiltinESMExports} = require('node:module'); const path = require('node:path'); const original = fs.promises.rename; fs.promises.rename = async function(from,to) { const result = await original.call(this,from,to); if (path.basename(String(from)) === '.app-next' && path.basename(String(to)) === 'app') { const home=process.env.SECOND_BRAIN_HOME; fs.writeFileSync(${JSON.stringify(receiptPath)},JSON.stringify({pid:process.pid,signal:'SIGKILL',from:String(from),to:String(to),fence:fs.readFileSync(path.join(home,'run/daemon.pid'),'utf8'),marker:fs.readFileSync(path.join(home,'.app-promotion.json'),'utf8'),journal:fs.readFileSync(path.join(home,'run/bootstrap-extension-migrations.json'),'utf8')})); process.kill(process.pid, 'SIGKILL'); } return result; }; syncBuiltinESMExports();\n`);
   k.env.NODE_OPTIONS=`--require=${injector}`;
-  const interrupted=await k.tty('correct'); expect(interrupted.answered,interrupted.output).toBe(true);expect(interrupted.code,interrupted.output).toBe(1);expect(interrupted.groupGone).toBe(true);
+  const interrupted=await k.tty('correct'); expect(interrupted.answered,interrupted.output).toBe(false);expect(interrupted.code,interrupted.output).toBe(1);expect(interrupted.groupGone).toBe(true);
   delete k.env.NODE_OPTIONS;
   const receipt=JSON.parse(await readFile(receiptPath,'utf8')) as {pid:number;signal:string;from:string;to:string;fence:string;marker:string;journal:string};
   const markerText=await readFile(join(k.home,'.app-promotion.json'),'utf8'), journalText=await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8'), fenceText=await readFile(fencePath,'utf8');
@@ -446,15 +425,11 @@ it('M5: 승격 직후 중단한 실제 bootstrap을 같은 명령으로 복구�
   expect(await preserved(k,'garmin')).toBe(before);expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(ledger);
   expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(installedBefore);
   const gateBefore=await k.db.rows("select to_regclass('brain.extension_quiesce')::text as gate");
-  // A dead PID alone is insufficient: the supported retry must preserve the fence.
-  const denied=await k.tty('correct');expect(denied.code,denied.output).toBe(1);expect(denied.output).toContain('DB_LOCKED');expect(denied.answered).toBe(false);expect(await readFile(fencePath,'utf8')).toBe(fenceText);
-  expect(await readFile(join(k.home,'.app-promotion.json'),'utf8')).toBe(markerText);expect(await readFile(join(k.home,'run/bootstrap-extension-migrations.json'),'utf8')).toBe(journalText);
-  expect(await k.db.rows("select to_regclass('brain.extension_quiesce')::text as gate")).toEqual(gateBefore);
-  // This fixture blocks all other entrants and has observed both process groups gone.
-  expect(processGroups.size).toBe(0);expect(ptyGroupReceipts.size).toBe(0);
-  try {process.kill(receipt.pid,0);throw Error('중단된 설치기가 아직 존재합니다');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ESRCH') throw error;}
-  expect(await readFile(fencePath,'utf8')).toBe(receipt.fence);await rm(fencePath);
-  const resumed=await k.tty('correct');expect(resumed.answered,resumed.output).toBe(true);expect(resumed.code,resumed.output).toBe(0);expect(resumed.challenge).not.toBe(interrupted.challenge);
+  // 저장된 installer PID와 자식 그룹을 검증한 같은 설치기는 fence를 자동 복구한다.
+  expect(processGroups.size).toBe(0); expect(ptyGroupReceipts.size).toBe(0);
+  try { process.kill(receipt.pid,0); throw Error('중단된 설치기가 아직 존재합니다'); } catch(error) { if((error as NodeJS.ErrnoException).code!=='ESRCH') throw error; }
+  expect(await readFile(fencePath,'utf8')).toBe(receipt.fence);
+  const resumed=await k.tty('correct');expect(resumed.answered,resumed.output).toBe(false);expect(resumed.code,resumed.output).toBe(0);
   expect(await k.db.rows("select owner from brain.extension_quiesce where name='garmin'")).toEqual([{owner:journal.owner}]);
   expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8')).commit).toBe(targetRef);
   expect(await preserved(k,'garmin')).toBe(before);expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(ledger);
@@ -474,7 +449,7 @@ it('M5: PG 완료 후 설치 기록 전 중단은 새 확인과 같은 gate owne
   const receipt=join(k.home,'installed-rename-receipt.json');
   await writeFile(injector,`const fs=require('node:fs'),path=require('node:path'),{syncBuiltinESMExports}=require('node:module');const original=fs.promises.rename;fs.promises.rename=async function(from,to){if(path.basename(String(to))==='installed.json'){fs.writeFileSync(${JSON.stringify(receipt)},JSON.stringify({from:String(from),to:String(to),pid:process.pid,signal:'SIGKILL'}));process.kill(process.pid,'SIGKILL')}return original.call(this,from,to)};syncBuiltinESMExports();\n`);
   k.env.NODE_OPTIONS=`--require=${injector}`;const stopped=await k.tty('correct');delete k.env.NODE_OPTIONS;
-  expect(stopped.code,stopped.output).toBe(1);expect(stopped.answered).toBe(true);expect(stopped.groupGone).toBe(true);
+  expect(stopped.code,stopped.output).toBe(1);expect(stopped.answered).toBe(false);expect(stopped.groupGone).toBe(true);
   const killed=JSON.parse(await readFile(receipt,'utf8')) as {from:string;to:string;pid:number;signal:string};expect(killed.to).toBe(join(k.home,'installed.json'));expect(dirname(killed.from)).toBe(k.home);expect(killed.pid).toBeGreaterThan(0);expect(killed.pid).not.toBe(stopped.pid);expect(killed.signal).toBe('SIGKILL');
   expect(await readFile(join(k.home,'installed.json'),'utf8')).toBe(oldRecord);
   const marker=JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8')) as {owner:string;previousHead:string};
@@ -484,7 +459,7 @@ it('M5: PG 완료 후 설치 기록 전 중단은 새 확인과 같은 gate owne
   expect(await k.db.rows("select owner from brain.extension_quiesce where name='garmin'")).toEqual([{owner:journal.owner}]);
   const core=await k.db.rows("select version,name,checksum,applied_at from brain.schema_migrations where owner='core' order by version");expect(core.slice(0,beforeCore.length)).toEqual(beforeCore);expect(core.length).toBeGreaterThan(beforeCore.length);
   expect(await preserved(k,'garmin')).toBe(before);expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(beforeExt);
-  const resumed=await k.tty('correct');expect(resumed.code,resumed.output).toBe(0);expect(resumed.answered).toBe(true);expect(resumed.challenge).not.toBe(stopped.challenge);
+  const resumed=await k.tty('correct');expect(resumed.code,resumed.output).toBe(0);expect(resumed.answered).toBe(false);
   expect(await k.db.rows("select owner from brain.extension_quiesce where name='garmin'")).toEqual([{owner:journal.owner}]);
   expect(await preserved(k,'garmin')).toBe(before);expect(await k.db.rows("select * from brain.schema_migrations where owner='garmin' order by version")).toEqual(beforeExt);
   expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:targetRef,plugin_root:k.plugin});
@@ -498,7 +473,7 @@ it('M5: 완료 기록 뒤 cleanup 중단은 변경된 backup을 보존하고 복
   const injector=join(k.home,'stop-before-cleanup.cjs');
   await writeFile(injector,`const fs=require('node:fs'),path=require('node:path');const original=fs.rmSync;fs.rmSync=function(target,...args){if(String(target).includes(path.sep+'.app-previous'+path.sep)) process.kill(process.pid,'SIGKILL');return original.call(this,target,...args)};\n`);
   k.env.NODE_OPTIONS=`--require=${injector}`;const stopped=await k.tty('correct');delete k.env.NODE_OPTIONS;
-  expect(stopped.code,stopped.output).not.toBe(0);expect(stopped.answered).toBe(true);expect(stopped.groupGone).toBe(true);
+  expect(stopped.code,stopped.output).not.toBe(0);expect(stopped.answered).toBe(false);expect(stopped.groupGone).toBe(true);
   expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:targetRef,plugin_root:k.plugin});
   expect(git('-C',backup,'rev-parse','HEAD')).toBe(oldRef);expect(await preserved(k,'garmin')).toBe(before);
   // The group termination is observed before applying the documented stale-lock recovery.
@@ -520,7 +495,7 @@ it.each(['README.md', '.git/config'])('M5: 부분 삭제된 %s backup은 새 변
   const receipt=join(k.home,'partial-cleanup-receipt.json');
   await writeFile(injector,`const fs=require('node:fs'),path=require('node:path');const original=fs.rmSync;fs.rmSync=function(target,...args){if(String(target).includes(path.sep+'.app-previous'+path.sep)){const removed=path.join(${JSON.stringify(backup)},${JSON.stringify(missing)});original.call(this,removed,{force:true});fs.writeFileSync(${JSON.stringify(receipt)},JSON.stringify({target:String(target),removed,pid:process.pid,signal:'SIGKILL'}));process.kill(process.pid,'SIGKILL')}return original.call(this,target,...args)};\n`);
   k.env.NODE_OPTIONS=`--require=${injector}`;const stopped=await k.tty('correct');delete k.env.NODE_OPTIONS;
-  expect(stopped.code,stopped.output).toBe(-9);expect(stopped.answered).toBe(true);expect(stopped.groupGone).toBe(true);
+  expect(stopped.code,stopped.output).toBe(-9);expect(stopped.answered).toBe(false);expect(stopped.groupGone).toBe(true);
   const killed=JSON.parse(await readFile(receipt,'utf8')) as {target:string;removed:string;pid:number;signal:string};expect(killed.target.startsWith(`${backup}/`)).toBe(true);expect(killed.removed).toBe(join(backup,missing));expect(killed.pid).toBe(stopped.pid);expect(killed.signal).toBe('SIGKILL');
   expect(JSON.parse(await readFile(join(k.home,'.app-promotion.json'),'utf8'))).toMatchObject({cleanup:true});
   await expect(lstat(join(backup,missing))).rejects.toMatchObject({code:'ENOENT'});

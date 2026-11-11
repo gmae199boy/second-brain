@@ -72,7 +72,7 @@ async function world(name: 'garmin' | 'oldext', schema = 27) {
   const runner = async (request: {args: readonly string[]}) => request.args[0] === 'volume' ? {ok:false as const,stdout:'',stderr:'no such volume',message:'missing'} : {ok:true as const,stdout:'',stderr:''};
   const env: NodeJS.ProcessEnv = {...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME:home}; delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER;
   const options = {home,urlEnv:'BRAIN_DATABASE_URL',env,clock,runner,secrets:{adminUrl:db.url,appPassword:'brain-test-app'},databaseName};
-  const install = () => installPostgres({...options,confirmOffline:async r => r.challenge});
+  const install = () => installPostgres({...options,observeOffline:async r => r.verificationId});
   return {home, db, dir, build, installed, install, options};
 }
 
@@ -104,7 +104,7 @@ it.each(['invalid-progress','transition','checksum','unknown'] as const)('legacy
   if (mode === 'checksum') await writeFile(join(k.dir,'migrations/0001_tracer.sql'),'altered');
   if (mode === 'unknown') { const file = join(k.dir,'manifest.json'); const manifest = JSON.parse(await readFile(file,'utf8')); manifest.unknown = true; await writeFile(file,JSON.stringify(manifest)); }
   let called = false;
-  const result = await installPostgres({...k.options,confirmOffline:async r => {called = true; return r.challenge;}});
+  const result = await installPostgres({...k.options,observeOffline:async r => {called = true; return r.verificationId;}});
   expect(result).toMatchObject({ok:false,code:'DB_LOCKED'}); expect(called).toBe(false);
   await expect(readFile(join(k.home,'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({code:'ENOENT'});
 });
@@ -285,6 +285,7 @@ async function setupViaCli(k: Awaited<ReturnType<typeof world>>) {
   const password = decodeURIComponent(adminUrl.password);
   if (decodeURIComponent(adminUrl.username) !== 'postgres' || !password) throw Error('전용 서버 관리자 계정이 필요합니다');
   const admin = new pg.Client({connectionString:adminUrl.toString()}); await admin.connect();
+  const role = k.dir.endsWith('/garmin') ? 'brain_ext_garmin' : 'brain_ext_oldext';
   const dbName = k.options.databaseName; let renamed = false;
   const sockets = new Set<import('node:net').Socket>();
   const proxy = createServer(incoming => {
@@ -297,7 +298,7 @@ async function setupViaCli(k: Awaited<ReturnType<typeof world>>) {
   try {
     await admin.query("select pg_advisory_lock(hashtextextended('second-brain:legacy-pty-brain-database',0))");
     if ((await admin.query("select 1 from pg_database where datname='brain'")).rowCount) throw Error('기존 brain DB를 보존합니다');
-    await admin.query(`alter database "${dbName}" rename to brain`); renamed=true;
+    await admin.query(`alter database "${dbName}" rename to brain`); renamed=true; await admin.query(`comment on role "${role}" is 'second-brain extension:brain'`);
     await new Promise<void>((resolve,reject)=>{proxy.once('error',reject);proxy.listen(homeResources(k.home).port,'127.0.0.1',()=>resolve());});
     const bin=join(k.home,'fake-bin'); await mkdir(bin);
     await writeFile(join(bin,'orb'),'#!/bin/sh\necho Running\n');
@@ -375,15 +376,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     };
     const packageFiles = async () => Promise.all(['manifest.json',...(await readdir(join(k.dir,'migrations'))).sort().map(file=>`migrations/${file}`)].map(async file => [file,createHash('sha256').update(await readFile(join(k.dir,file))).digest('hex')]));
     const before = {files:await packageFiles(),installed:await readFile(join(k.home,'installed.json'),'utf8'), ledger:await rows('select * from brain.schema_migrations order by owner,version'), gate:(await rows("select to_regclass('brain.extension_quiesce') as name"))[0]?.name, progress:await rows('select * from brain.extension_install_progress'), manifest:await readFile(join(k.dir,'manifest.json'),'utf8')};
-    for (const mode of ['wrong','eof','json'] as const) {
-      const denied = await ttyRun(mode);
-      expect(denied.code,denied.output).toBe(1); expect(denied.output).toContain('DB_LOCKED');
-      expect(denied.answered,denied.output).toBe(mode !== 'json');
-      if (mode === 'json') expect(denied.output).not.toContain('기계 확인:');
-      else expect(denied.output).toContain('기계 확인:');
-      expect({files:await packageFiles(),installed:await readFile(join(k.home,'installed.json'),'utf8'), ledger:await rows('select * from brain.schema_migrations order by owner,version'), gate:(await rows("select to_regclass('brain.extension_quiesce') as name"))[0]?.name, progress:await rows('select * from brain.extension_install_progress'), manifest:await readFile(join(k.dir,'manifest.json'),'utf8')}).toEqual(before);
-    }
-    const first = await ttyRun(); expect(first.answered,first.output).toBe(true); expect(first.code,first.output).toBe(0);
+    const first = await ttyRun(); expect(first.answered,first.output).toBe(false); expect(first.code,first.output).toBe(0);
     const again = await ttyRun(); expect(again.code,again.output).toBe(0);
     expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:46});
   } finally {
@@ -391,7 +384,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     const killTimer = setTimeout(()=>{for(const child of localChildren)if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},2000);
     try {await Promise.all(localChildren.map(child=>children.get(child)));} finally {clearTimeout(killTimer);}
     for (const socket of sockets) socket.destroy(); if (proxy.listening) await new Promise<void>(resolve=>proxy.close(()=>resolve()));
-    try {if(renamed)await admin.query(`alter database brain rename to "${dbName}"`);} finally {await admin.end();}
+    try {if(renamed){await admin.query(`comment on role "${role}" is 'second-brain extension:${dbName}'`);await admin.query(`alter database brain rename to "${dbName}"`);}} finally {await admin.end();}
   }
 }
 
@@ -507,7 +500,7 @@ it('은퇴 키가 없어도 호환 범위가 없는 옛 manifest는 허용된 le
 
 it('옛 manifest와 registry의 버전이 다르면 확인 전 거부한다', async () => {
   const k = await world('oldext'); await k.db.query("update brain.extensions set version='1.0.1' where name='oldext'"); let called = false;
-  expect(await installPostgres({...k.options,confirmOffline:async r=>{called=true;return r.challenge;}})).toMatchObject({ok:false,code:'DB_LOCKED'});
+  expect(await installPostgres({...k.options,observeOffline:async r=>{called=true;return r.verificationId;}})).toMatchObject({ok:false,code:'DB_LOCKED'});
   expect(called).toBe(false); await expect(readFile(join(k.home,'run/bootstrap-extension-migrations.json'))).rejects.toMatchObject({code:'ENOENT'});
 });
 
@@ -516,10 +509,10 @@ it.each(['registry','checksum'] as const)('교체 대기 cross-commit 확인 중
   await writeFile(join(k.home,'installed.json'),JSON.stringify({...k.installed,schema_version:CORE_SCHEMA_VERSION}));
   const gate = await k.db.rows('select * from brain.extension_quiesce'), progress = await k.db.rows('select * from brain.extension_install_progress');
   const ledger = await k.db.rows('select * from brain.schema_migrations order by owner,version');
-  const outcome = await installPostgres({...k.options,confirmOffline:async r=>{
+  const outcome = await installPostgres({...k.options,observeOffline:async r=>{
     if (change === 'registry') await k.db.query("update brain.extensions set version='1.0.1' where name='oldext'");
     else await writeFile(join(k.dir,'migrations/0001_tracer.sql'),'changed');
-    return r.challenge;
+    return r.verificationId;
   }});
   expect(outcome).toMatchObject({ok:false,code:'DB_LOCKED'});
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual(gate);
@@ -557,9 +550,9 @@ it('offline 확인 중 삽입된 유효 진행 기록을 보존하고 설치를 
   const ledger = await k.db.rows('select * from brain.schema_migrations order by owner,version');
   const gate = await k.db.rows("select to_regclass('brain.extension_quiesce') as name");
   const progress = {name:'oldext',packageDigest:'a'.repeat(64),result:null,failedStage:null,lastFailure:null,stages:{},authWorkId:null,scheduleIds:[]};
-  const result = await installPostgres({...k.options,confirmOffline:async r => {
+  const result = await installPostgres({...k.options,observeOffline:async r => {
     await k.db.query(`insert into brain.extension_install_progress values ('oldext',1,'${JSON.stringify(progress)}'::jsonb)`);
-    return r.challenge;
+    return r.verificationId;
   }});
   expect(result).toMatchObject({ok:false,code:'DB_LOCKED'});
   expect(await k.db.rows('select * from brain.schema_migrations order by owner,version')).toEqual(ledger);

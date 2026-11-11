@@ -1,3 +1,5 @@
+import { access } from 'node:fs/promises';
+import { runtimeFencePath, RUNTIME_FENCE_RECOVERY } from '../install/runtime-fence.js';
 import type { BusyTimeoutPath, SchemaVersions, Store, SchemaStore, SettingsStore } from 'second_brain';
 import { resolveStoreUrl, type ReadConfigResult } from '../config/codec.js';
 import { failedConfigStore } from '../doctor/store.js';
@@ -16,6 +18,7 @@ export type BrainStore = { store: Store & SchemaStore & SettingsStore; expected:
 export async function openBrainStore(options: OpenBrainStoreOptions): Promise<BrainStore> {
   const { home, env, config, path, lockTimeoutMs } = options;
   if (!config.ok) return { expected: { core: 2 }, adapterProbeIds: [], store: failedConfigStore('설정을 읽을 수 없어서 데이터베이스 위치를 알 수 없습니다') };
+  if (path === 'turn' && await access(runtimeFencePath(home)).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) return { expected: { core: 2 }, adapterProbeIds: [], store: failedConfigStore(RUNTIME_FENCE_RECOVERY) };
   const pg = await import('second_brain/postgres');
   const url = await resolveStoreUrl(home, config.config.storeUrlEnv, env).catch(() => undefined);
   return { expected: pg.EXPECTED_SCHEMA_VERSIONS, adapterProbeIds: pg.POSTGRES_DOCTOR_PROBE_IDS,
