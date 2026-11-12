@@ -135,7 +135,7 @@ it.each([11,27,34])('L1 schema%i를 전환하고 기억·사용자 보류·예�
   const k = await legacyWorld(schema);
   const before = await normalized(k.db, schema);
   const result = await k.install(async r => { expect(r.legacySchema).toBe(schema); return r.verificationId; });
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { previous_commit: k.installed.commit, target_commit: k.build.commit, method: 'automatic' } } });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 48, offline_confirmation: { previous_commit: k.installed.commit, target_commit: k.build.commit, method: 'automatic' } } });
   expect(await k.db.rows("select version from brain.schema_migrations where owner='testext' order by version")).toEqual([{ version: 1 }, { version: 2 }]);
   expect(result.ok && result.report.applied.filter(name => name === '0002_marker.sql')).toEqual(['0002_marker.sql']);
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
@@ -385,7 +385,7 @@ it('L4 비대화 설치 의존성은 legacy offline 확인을 제공하지 않�
   const { systemInstallDeps } = await import('../../../apps/cli/dist/install.js');
   const deps = systemInstallDeps({ runner: k.options.runner, secrets: k.options.secrets, databaseName: k.options.databaseName, allowOfflinePrompt: false });
   expect(await deps.postgres!(k.home, k.options.urlEnv, k.options.env)).toMatchObject({ ok: true });
-  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 47 });
+  expect((await k.db.rows("select max(version)::int as version from brain.schema_migrations where owner='core'"))[0]).toEqual({ version: 48 });
 });
 
 it('L5 승격 후 확장 migration 실패는 같은 app과 owner로 새 확인 뒤 재개한다', async () => {
@@ -731,7 +731,7 @@ os.close(master); print(json.dumps({'code':p.returncode,'answered':answered,'out
     expect(tty.output).not.toContain('기계 확인:');
     expect(tty.output).not.toContain('시간대를 무엇으로 할까요?');
     expect(tty.code,tty.output).toBe(0);
-    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:47});
+    expect(JSON.parse(await readFile(join(k.home,'installed.json'),'utf8'))).toMatchObject({commit:k.build.commit,schema_version:48});
     const after=await readState(); expect(after.holds).toEqual(before.holds); expect(after.registry.map(r=>({name:r.name,enabled:r.enabled}))).toEqual([{name:'testext',enabled:false}]);
   } finally {
     for (const child of children.keys()) if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');

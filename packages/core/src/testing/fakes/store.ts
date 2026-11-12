@@ -1,3 +1,4 @@
+import { channelBundleItems } from '../../channels/store.js';
 import { driveSourceUrl } from '../../recall/documents.js';
 import { isExternalLocator } from '../../domain/file.js';
 import { extensionPublicProjection } from '../../extensions/public-projection.js';
@@ -595,7 +596,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async recordChannelItemResult(input) {
       const request = channelRequests.get(input.requestId);
       const attempt = channelAttempts.get(input.attemptToken);
-      if (!request?.bundle || input.index < 0 || input.index >= request.bundle.albums.length + 2 || request.workItemId !== input.workItemId || attempt?.requestId !== input.requestId || attempt.result !== null || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
+      if (!request?.bundle || input.index < 0 || input.index >= channelBundleItems(request.bundle).length || request.workItemId !== input.workItemId || attempt?.requestId !== input.requestId || attempt.result !== null || !currentChannelAttempt(input.workItemId, input.attemptToken)) return { ok: true, outcome: 'lost' };
       const items = channelItems.get(input.requestId) ?? new Map();
       if (items.get(input.index)?.outcome === 'sent') return { ok: true, outcome: 'lost' };
       items.set(input.index, structuredClone(input.result)); channelItems.set(input.requestId, items);
@@ -644,7 +645,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const request = channelRequests.get(input.requestId);
       const items = channelItems.get(input.requestId);
       if (request?.bundle && request.workItemId === input.workItemId && request.status === 'pending' && attempt?.requestId === input.requestId && attempt.result === null && items) {
-        const total = request.bundle.albums.length + 2;
+        const total = channelBundleItems(request.bundle).length;
         const complete = Array.from({ length: total }, (_, index) => items.get(index));
         const last = complete.at(-1);
         if (complete.every(result => result?.outcome === 'sent') && last?.outcome === 'sent') {

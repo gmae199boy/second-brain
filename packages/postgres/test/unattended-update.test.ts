@@ -50,9 +50,9 @@ it('비대화 core migration 중 새 hook과 옛 접속 실패 경로는 spool�
     expect(await k.db.rows("select count(*)::int as count from pg_stat_activity where datname=current_database() and usename='brain_app'")).toEqual([{ count: 0 }]);
   } });
   for (const client of clients) await client.end().catch(() => {});
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { method: 'automatic', evidence: { runtime_backends: 0 } } } });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 48, offline_confirmation: { method: 'automatic', evidence: { runtime_backends: 0 } } } });
   expect(await k.db.rows("select has_function_privilege('brain_ext_fixture','brain.extension_event_emit(uuid,uuid,text,text,date,text,text,uuid,jsonb)','EXECUTE') allowed")).toEqual([{ allowed: true }]);
-  expect(await k.db.rows("select count(*)::int n from brain.schema_migrations where owner='core' and version=47")).toEqual([{ n: 1 }]);
+  expect(await k.db.rows("select count(*)::int n from brain.schema_migrations where owner='core' and version=48")).toEqual([{ n: 1 }]);
   expect(await k.db.rows("select rolcanlogin from pg_roles where rolname='brain_app'")).toEqual([{ rolcanlogin: true }]);
   await expect(readFile(runtimeFencePath(k.home))).rejects.toMatchObject({ code: 'ENOENT' });
   for (const home of [k.home, oldHome]) {
@@ -121,7 +121,7 @@ it('NOLOGIN 중 실제 설치기 SIGKILL 뒤 같은 설치기는 daemon fence와
   } finally { if (orphanPid) try { process.kill(-orphanPid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; } }
 });
 
-it('core47 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하고 새 패키지로만 해제한다', async () => {
+it('core48 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하고 새 패키지로만 해제한다', async () => {
   const k = await world();
   const archive = join(k.home, 'baseline.tar');
   execFileSync('git', ['archive', '--output', archive, 'e407369b57841a5d759945a2a70c38480329e3bb', 'plugins/garmin/package']);
@@ -135,7 +135,7 @@ it('core47 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하�
   await k.db.query("insert into brain.extensions(name,version,installed_at,enabled,enabled_changed_at) values ('garmin','1.2.6',now(),true,now()); insert into brain.extension_work_kinds(extension_name,kind) values ('garmin','garmin.report')");
   const sourceBefore = await readFile(join(target, 'src/report_channel.py'));
   const result = await installPostgres(k.options);
-  expect(result).toMatchObject({ ok: true, report: { schema_version: 47, offline_confirmation: { method: 'automatic' } } });
+  expect(result).toMatchObject({ ok: true, report: { schema_version: 48, offline_confirmation: { method: 'automatic' } } });
   const store = postgresStore({ databaseUrl: k.db.appUrl });
   try {
     const gate = await store.readExtensionQuiesce('garmin');
@@ -147,7 +147,7 @@ it('core47 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하�
     const runtime = extensionRuntime({ home: k.home, env: k.env, config: await readConfig(k.home), clock });
     const manifest = JSON.parse(await readFile(join(old, 'manifest.json'), 'utf8'));
     const build = JSON.parse(await readFile(new URL('../../../apps/cli/dist/build.json', import.meta.url), 'utf8'));
-    await writeFile(join(k.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: 47, node: process.execPath, plugin_root: null, installed_at: clock.now().toISOString() }));
+    await writeFile(join(k.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: 48, node: process.execPath, plugin_root: null, installed_at: clock.now().toISOString() }));
     await expect(runtime.packages.checkCore!(manifest)).rejects.toThrow('1.2.7');
     // 최신 패키지 전환은 기존 교체 프로토콜을 사용하며 auth/scheduler 단계 전에 gate를 해제한다.
     let output = '';

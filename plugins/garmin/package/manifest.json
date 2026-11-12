@@ -364,6 +364,32 @@
         "garmin.timezone",
         "garmin.connection_id"
       ]
+    },
+    {
+      "kind": "garmin.report_resend",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report-resend",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.connection_id"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "send_intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": ".*\\S.*"
+          }
+        },
+        "required": [
+          "send_intent"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
   "settings": [
@@ -1165,6 +1191,7 @@
     "migrations/0016_report_publication.sql",
     "migrations/0017_period_analysis.sql",
     "migrations/0018_report_message.sql",
+    "migrations/0019_report_message_manifest.sql",
     "migrations/0019_scope_snapshot.sql",
     "pyproject.toml",
     "skills/garmin-body-intake/SKILL.md",

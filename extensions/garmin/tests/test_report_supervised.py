@@ -53,6 +53,13 @@ class SupervisedReportTest(unittest.TestCase):
         self.stack.enter_context(patch('report_publish.publish_and_wait'))
         self.event = self.stack.enter_context(patch('report_channel.success'))
         self.stack.enter_context(patch('garmin_pipeline.training_measurements.resolve_snapshot_root'))
+        self.failure_event = self.stack.enter_context(patch('report_channel.failure'))
+        self.attempts = {}
+        def reserve(cfg, day, scope):
+            count = self.attempts.get(scope, 0)
+            self.attempts[scope] = min(count + 1, 6)
+            return count < 6
+        self.stack.enter_context(patch.object(report, '_reserve_scope_attempt', side_effect=reserve))
         self.stack.enter_context(patch.object(report.body, 'pending', side_effect=lambda cfg: list(self.pending)))
         self.stack.enter_context(patch.object(report.report_input, 'prepare_snapshot', return_value=self.exported))
         self.stack.enter_context(patch.object(report.report_input, 'build_period', side_effect=lambda cfg, folder, day, scope: folder / scope))
@@ -67,7 +74,7 @@ class SupervisedReportTest(unittest.TestCase):
         self.stack.enter_context(patch.object(report, '_assert_attempt_current', side_effect=lambda cfg: None))
 
     def run_report(self, regenerate=False):
-        if regenerate: self.work_rows = {}
+        if regenerate: self.work_rows = {}; self.attempts = {}
         with patch.dict('os.environ', {'BRAIN_WORK_ID':'synthetic-work'}):
             return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
 
@@ -91,16 +98,18 @@ class SupervisedReportTest(unittest.TestCase):
                 publish.assert_called_once()
                 self.event.assert_called_once()
         self.event.reset_mock(); self.fail = 'day'
-        with self.assertRaises(report.SupervisedReportFailed): self.run_report(True)
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report(True)
         self.event.assert_not_called()
 
-    def test_order_immediate_append_then_resume_missing_scopes(self):
+    def test_order_immediate_append_and_failed_scope_budget_survives_resume(self):
         self.fail = '30d'
-        with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'all', 'saved:all'])
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d'] + ['30d'] * 6 + ['all', 'saved:all'])
+        self.failure_event.assert_called_once_with(self.cfg, DAY, ['30d'])
         self.fail = None; self.calls.clear()
-        self.assertEqual(self.run_report(), {'status': 'success', 'scopes': 1})
-        self.assertEqual(self.calls, ['30d', 'saved:30d'])
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(set(self.rows), {'day', '7d', 'all'})
 
     def test_complete_skip_and_explicit_regenerate_append(self):
         self.run_report(); first = {k: list(v) for k, v in self.rows.items()}; self.calls.clear()
@@ -114,7 +123,7 @@ class SupervisedReportTest(unittest.TestCase):
     def test_failed_regenerate_preserves_previous_revisions(self):
         self.run_report(); before = {k: list(v) for k, v in self.rows.items()}
         self.fail = 'day'
-        with self.assertRaises(report.SupervisedReportFailed): self.run_report(regenerate=True)
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report(regenerate=True)
         self.assertEqual(self.rows['day'], before['day'])
         for scope in ('7d', '30d', 'all'):
             self.assertEqual(self.rows[scope][:1], before[scope])
@@ -313,11 +322,13 @@ class RuntimeBindingTest(unittest.TestCase):
         import report as entry
         for error, code in [(report_runtime.InvalidReportInput('private'), 'REPORT_INVALID'),
                             (store.StaleAttempt('private'), 'REPORT_STALE'),
-                            (report.SupervisedReportFailed('private'), 'REPORT_FAILED')]:
+                            (report.SupervisedReportFailed('private'), 'REPORT_FAILED'),
+                            (report.ScopeAnalysisExhausted('private'), 'REPORT_ANALYSIS_EXHAUSTED')]:
             out = io.StringIO()
             with patch.object(report_runtime, 'run', side_effect=error), contextlib.redirect_stdout(out):
                 self.assertEqual(entry.main(), 1)
             self.assertEqual(json.loads(out.getvalue())['code'], code)
+            if isinstance(error, report.ScopeAnalysisExhausted): self.assertFalse(json.loads(out.getvalue())['retryable'])
             self.assertNotIn('private', out.getvalue())
 
     def test_report_lock_serializes_same_account_not_different_accounts(self):

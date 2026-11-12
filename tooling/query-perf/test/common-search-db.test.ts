@@ -45,8 +45,8 @@ it('small isolated runner checks six oracle results, three samples and owned dat
   for(const stat of [r.statistics,r.diagnostic.cost.statisticsBefore,r.diagnostic.cost.statisticsAfter]) expect(stat).toMatchObject({stage:'complete',definitions:[],distributions:[]});
   expect(r.diagnostic.resources).toHaveLength(1); expect(r.diagnostic.resources.every((x:{created:boolean;deleted:boolean})=>x.created && x.deleted)).toBe(true);
   expect(r.diagnostic.cost.write.samplesMs).toHaveLength(3); expect(r.diagnostic.cost.analyze.samplesMs).toHaveLength(3);
-  expect(r.migration.value.to).toBe(47); expect(r.diagnostic.cost.setup.migration.to).toBe(47);
-  expect(r.migration.schema).toEqual(r.diagnostic.cost.setup.schema); expect(r.migration.schema).toMatchObject({version:47,apiVersion:47}); expect(r.diagnostic.upgrade).toBeUndefined();
+  expect(r.migration.value.to).toBe(48); expect(r.diagnostic.cost.setup.migration.to).toBe(48);
+  expect(r.migration.schema).toEqual(r.diagnostic.cost.setup.schema); expect(r.migration.schema).toMatchObject({version:48,apiVersion:48}); expect(r.diagnostic.upgrade).toBeUndefined();
   expect(r.auxiliary).toHaveLength(2);
   for(const a of r.auxiliary) expect(a).toMatchObject({truncated:true,masked:true,hasMore:true,omitted:4,nextVerified:true,metadataVerified:true});
   expect(r.environment.locale).toMatchObject({provider:expect.stringMatching(/^[cib]$/),collate:expect.stringMatching(/^.+$/),ctype:expect.stringMatching(/^.+$/)});

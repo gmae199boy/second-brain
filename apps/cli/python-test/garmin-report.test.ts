@@ -178,8 +178,11 @@ it('failed regeneration appends successful scopes only and latest selects each m
     const first=await t.enqueue(); await t.outcome(first,'succeeded');
     const before=await t.revisions(); expect(before).toHaveLength(4);
     await writeFile(join(t.control,'status-failed-7d'),'yes');
-    const regen=await t.enqueue(t.account,true); const regenAttempt=await t.failedAttempt(regen);
-    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===regenAttempt).map(row=>row.scope)).toEqual(['day','7d','30d','all']);
+    const regen=await t.enqueue(t.account,true); await t.outcome(regen,'failed');
+    const terminal=(await t.fixture.db.rows(`select token,error_code,error_retryable from brain.work_attempts where work_item_id='${regen}' order by started_at desc limit 1`))[0]!;
+    const regenAttempt=String(terminal.token);
+    expect(terminal).toMatchObject({error_code:'EXTENSION_WORKER_ERROR',error_retryable:false});
+    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===regenAttempt).map(row=>row.scope)).toEqual(['day',...Array(6).fill('7d'),'30d','all']);
     const after=await t.revisions(); expect(after).toHaveLength(7);
     for(const row of before) expect(after).toContainEqual(row);
     for(const scope of ['day','7d','30d','all']) {
@@ -201,12 +204,12 @@ it('failed regeneration appends successful scopes only and latest selects each m
     const originalLinks=await links(); expect(originalLinks.length).toBeGreaterThanOrEqual(4);
     expect(originalLinks.every(row=>row.file_id)).toBe(true);
     await unlink(join(t.control,'status-failed-7d')); await t.retryNow(regen);
-    const retry=await t.waitCall(regen,'7d',{except:regenAttempt}); await t.outcome(regen,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['7d']);
-    const recovered=await t.revisions(); expect(recovered).toHaveLength(8);
-    for(const row of after) expect(recovered).toContainEqual(row);
-    const recoveredLinks=await links(); for(const row of originalLinks) expect(recoveredLinks).toContainEqual(row);
-    for(const row of recovered.filter(r=>String(r.report_md).includes(regen))) expect(recoveredLinks.some(link=>link.scope===row.scope && String(link.revision)===String(row.revision) && link.file_id)).toBe(true);
+    expect((await t.fixture.db.rows(`select outcome from brain.work_items where id='${regen}'`))[0]?.outcome).toBe('failed');
+    expect(await t.revisions()).toEqual(after);
+    const notice=await t.fixture.db.rows(`select bundle from brain.result_events where source_work_item_id='${regen}'`);
+    expect(notice).toHaveLength(1);
+    expect(notice[0]?.bundle).toMatchObject({version:2,items:[{itemId:'failure',type:'text'}]});
+    expect((notice[0]?.bundle as {items:unknown[]}).items).toHaveLength(1);
   } finally {await t.close();}
 },240000);
 
@@ -284,21 +287,22 @@ it('revoked attempt cannot append or invoke subsequent scopes after the held mod
   } finally {await t.close();}
 },180000);
 
-it('model timeout produces a failed attempt and cleans its group descendants',async()=>{
+it('model timeout cleans descendants and retries the failed scope within the same attempt',async()=>{
   const t=await setup(); let childPid=0;
   try {
     await t.store.setSetting({userId:self,key:'garmin.analysis_timeout_minutes',value:'1',updatedAt:new Date()});
-    await writeFile(join(t.control,'hold-day'),'hold'); await writeFile(join(t.control,'grandchild-day'),'yes'); await writeFile(join(t.control,'hold-7d'),'hold');
+    await writeFile(join(t.control,'hold-day'),'hold'); await writeFile(join(t.control,'grandchild-day'),'yes');
     const work=await t.enqueue(); const day=await t.waitCall(work,'day');
     await expect.poll(()=>readFile(join(t.control,`child-${t.account}-day`),'utf8').then(Number).catch(()=>0),{timeout:15000}).toBeGreaterThan(0);
     childPid=Number(await readFile(join(t.control,`child-${t.account}-day`),'utf8'));
-    await t.waitCall(work,'7d',{attempt:day.attempt,timeout:100000});
+    await expect.poll(async()=> (await t.calls()).filter(c=>c.work===work && c.scope==='day').length,{timeout:100000}).toBe(2);
     expect(pidAlive(childPid)).toBe(false);
-    await unlink(join(t.control,'hold-7d')); await t.failedAttempt(work,day.attempt);
-    expect((await t.revisions()).some(row=>row.scope==='day')).toBe(false);
-    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'grandchild-day')); await t.retryNow(work);
-    const retry=await t.waitCall(work,'day',{except:day.attempt}); await t.outcome(work,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===work && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['day']);
+    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'grandchild-day'));
+    await t.outcome(work,'succeeded');
+    const calls=(await t.calls()).filter(c=>c.work===work);
+    expect(calls.map(c=>c.scope)).toEqual(['day','day','7d','30d','all']);
+    expect(new Set(calls.map(c=>c.attempt))).toEqual(new Set([day.attempt]));
+    expect(await t.revisions()).toHaveLength(4);
   } finally {if(childPid && pidAlive(childPid)) process.kill(childPid,'SIGKILL'); await t.close();}
 },240000);
 
@@ -352,17 +356,20 @@ it('same account regenerate reports lock busy while another account proceeds',as
   } finally {await t.close();}
 },180000);
 
-it.each(['fail','invalid','status-failed'])('model %s on 7d keeps later successes and retries only missing scope',async(mode)=>{
+it.each(['fail','invalid','status-failed'])('model %s exhausts five retries only for 7d and preserves later successes',async(mode)=>{
   const t=await setup();
   try {
     await writeFile(join(t.control,`${mode}-7d`),'yes');
-    const first=await t.enqueue(); const attempt=await t.failedAttempt(first);
+    const first=await t.enqueue(); await t.outcome(first,'failed');
     expect((await t.revisions()).map(row=>row.scope).sort()).toEqual(['30d','all','day']);
-    expect((await t.calls()).filter(row=>row.work===first && row.attempt===attempt).map(row=>row.scope)).toEqual(['day','7d','30d','all']);
+    expect((await t.calls()).filter(row=>row.work===first).map(row=>row.scope)).toEqual(['day',...Array(6).fill('7d'),'30d','all']);
+    const attempts=await t.fixture.db.rows(`select error_code,error_retryable from brain.work_attempts where work_item_id='${first}'`);
+    expect(attempts).toMatchObject([{error_code:'EXTENSION_WORKER_ERROR',error_retryable:false}]);
+    const notice=await t.fixture.db.rows(`select bundle from brain.result_events where source_work_item_id='${first}'`);
+    expect(notice).toMatchObject([{bundle:{version:2,items:[{itemId:'failure'}]}}]);
     await unlink(join(t.control,`${mode}-7d`)); await t.retryNow(first);
-    const retry=await t.waitCall(first,'7d',{except:attempt}); await t.outcome(first,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===first && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['7d']);
-    expect(await t.revisions()).toHaveLength(4);
+    expect((await t.fixture.db.rows(`select completed_at from brain.work_items where id='${first}'`))[0]?.completed_at).toBeTruthy();
+    expect(await t.revisions()).toHaveLength(3);
   } finally {await t.close();}
 },180000);
 

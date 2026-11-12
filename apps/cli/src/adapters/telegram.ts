@@ -61,7 +61,7 @@ export function telegramSender(token: string, options: { fetch?: typeof fetch; e
     async sendMessage(input) {
       const markup = telegramMarkup(input.text);
       const text = markup?.html ?? markup?.plain ?? input.text;
-      if (text.length > 4096) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
+      if ((markup?.plain ?? text).length > 4096) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
       const payload = (value: string, html: boolean) => JSON.stringify({ chat_id: input.chatId, text: value,
         ...(html ? { parse_mode: 'HTML' } : {}), ...(input.threadId === null ? {} : { message_thread_id: input.threadId }) });
       const html = markup?.html !== undefined;
@@ -72,10 +72,12 @@ export function telegramSender(token: string, options: { fetch?: typeof fetch; e
       return result;
     },
     async sendPhoto(input) {
+      if ((input.caption?.length ?? 0) > 1024) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
       const data = form(input); attach(data, 'photo', input.photo); if (input.caption !== undefined) data.set('caption', input.caption);
       return request('sendPhoto', data);
     },
     async sendMediaGroup(input) {
+      if (input.photos.length < 2 || input.photos.length > 10 || (input.caption?.length ?? 0) > 1024) return { ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false };
       const data = form(input);
       const media = input.photos.map((photo, index) => { const name = `photo${index}`; attach(data, name, photo); return { type: 'photo', media: `attach://${name}`, ...(index === 0 && input.caption !== undefined ? { caption: input.caption } : {}) }; });
       data.set('media', JSON.stringify(media)); return request('sendMediaGroup', data);

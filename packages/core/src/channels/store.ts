@@ -3,7 +3,17 @@ import type { FileLocation } from '../domain/file.js';
 export interface Channel { id: string; kind: string; botRef: string }
 export interface ChannelConversation { id: string; userId: string; channelId: string; externalRef: string; threadRef: string | null }
 export interface ChannelFile { location: FileLocation; filename: string }
-export interface ChannelBundle { summary: string; albums: { photos: ChannelFile[]; caption?: string }[]; document: ChannelFile }
+export type ChannelBundleItem = { itemId: string } & (
+  { type: 'text'; text: string } | { type: 'album'; photos: ChannelFile[]; caption?: string } | { type: 'document'; document: ChannelFile });
+export type ChannelBundle = { summary: string; albums: { photos: ChannelFile[]; caption?: string }[]; document: ChannelFile; version?: 1 }
+  | { version: 2; items: ChannelBundleItem[] };
+/** v1의 예약 순번을 그대로 보존한다. */
+export function channelBundleItems(bundle: ChannelBundle): ChannelBundleItem[] {
+  if (bundle.version === 2) return bundle.items;
+  return [{ itemId: 'summary', type: 'text', text: bundle.summary },
+    ...bundle.albums.map((album, index) => ({ itemId: `album:${index}`, type: 'album' as const, ...album })),
+    { itemId: 'document', type: 'document', document: bundle.document }];
+}
 export interface ChannelItemResult { index: number; result: ChannelAttemptResult }
 export interface ChannelRequest { id: string; conversationId: string; producer: string; producerResultId: string; purpose: string; revision: string | null; text: string; bundle?: ChannelBundle; createdAt: Date; workItemId: string | null; status: 'pending' | 'sent'; externalMessageId: string | null }
 export type ChannelFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
