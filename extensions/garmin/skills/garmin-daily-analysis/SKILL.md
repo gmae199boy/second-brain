@@ -73,3 +73,7 @@ aerobic_findings.activity_refs는 current.sessions의 실제 session_id이며 �
 ## 프로필 적용
 
 - `profile.json`과 `profile.md`를 먼저 읽는다. DB 설정의 작업별 사본이며 `profile_status`·`missing_fields`·`source`를 코드가 판정한다. `absent`는 구조화 프로필 없음, `partial`은 일부 미설정이다. 명시한 목표까지 미상이라고 쓰지 않고 실제 누락 항목만 한계로 표시한다. 누락된 목표·목표 체중·기구·선호·식사·음주 단위는 추정하지 않는다. `legacy_file`은 기존 계정 파일의 읽기 전용 자료이며 구조화 필드는 여전히 미설정이다.
+
+## 검증 가능한 한계 참조
+
+`limitations.scope`는 종목 이름이 아니라 최상위 `scope`와 같은 day/7d/30d/all이다. 모든 한계 행에서 그대로 복사한다. `affected_judgment`는 training_summary/progression/message 또는 실제 존재하는 단일 행(예: aerobic_findings[0], strength_findings[0])만 허용한다. aerobic_findings처럼 배열 전체를 가리키지 않는다. 여러 행에 걸친 한계는 행마다 분리한다. evidence의 source_ref는 원본 파일에 적힌 raw source_ref를 복사하지 않고 training_measurements.json#/로 시작하는 해당 측정 JSON의 Pointer를 사용한다.

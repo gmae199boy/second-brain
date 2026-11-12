@@ -449,6 +449,13 @@ class AnalysisWriter:
                 )
             )
             with importlib.resources.as_file(resource) as schema_path:
+                if measurements is not None:
+                    # Scope-specific generation constraints mirror the reference validator.
+                    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                    schema['properties']['scope']['const'] = measurements['scope']
+                    schema['properties']['limitations']['items']['properties']['scope']['const'] = measurements['scope']
+                    schema_path = workdir / analysis_output.SCHEMA
+                    schema_path.write_text(json.dumps(schema), encoding="utf-8")
                 output = workdir / CODEX_OUTPUT_FILENAME
                 output.touch(mode=0o600)
                 request = AnalysisRequest(cfg, inputs, scope, schema_path, output, workdir, executable)
