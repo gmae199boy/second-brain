@@ -103,6 +103,7 @@ def _iso(value, timezone):
 
 def _sessions(engine):
     from datetime import datetime, timedelta
+    from garmin_pipeline.training_display import display_name
     cutoff = datetime.fromisoformat(engine.manifest['data_cutoff'])
     result = []
     for activity_id, endpoints in engine.activities.items():
@@ -128,7 +129,7 @@ def _sessions(engine):
             kind, load = _load(raw)
             following = raw_sets['exerciseSets'][index + 1] if index + 1 < len(raw_sets['exerciseSets']) else {}
             rest = _number(following.get('duration')) if following.get('setType') == 'REST' else None
-            sets.append({'exercise_key':key,'display_name':engine.label(category, name),
+            sets.append({'exercise_key':key,'display_name':display_name(key),
                 'equipment':exercise.get('equipment') if isinstance(exercise.get('equipment'), str) else None,
                 'variant':name,'order':index+1,'set_no':counts[key],'set_type':raw['setType'],
                 'start_at':_iso(start,engine.timezone),'end_at':_iso(end,engine.timezone),
@@ -255,6 +256,8 @@ def build_training_measurements(manifest: dict, days: dict, activities: dict, la
     if scope!='all':
         length=30 if scope=='day' else (end-start).days+1
         comparison=window(start-timedelta(days=length),start-timedelta(days=1))
+    from garmin_pipeline.training_display import performance_lines
+    full_lines = performance_lines({'scope': scope, 'current': current, 'comparison': comparison})
     if scope=='all':
         # 전체 세트는 입력에 펼치지 않는다. 월 요약과 종목별 초기/최근/최고 기록의 대표 세션을 쓴다.
         representatives=set()
@@ -267,13 +270,17 @@ def build_training_measurements(manifest: dict, days: dict, activities: dict, la
             representatives.update(typed[:1]+typed[-2:])
         current['sessions']=[{**s,'heart_rate':[]} for s in current['sessions'] if s['session_id'] in representatives]
     recovery=_recovery_context(engine,start,end,scope)
-    return engine.tidy({'schema_version':SCHEMA_VERSION,'scope':scope,'report_date':manifest['report_date'],
+    result = engine.tidy({'schema_version':SCHEMA_VERSION,'scope':scope,'report_date':manifest['report_date'],
         'timezone':manifest['timezone'],'snapshot_id':manifest['snapshot_id'],'as_of':manifest['data_cutoff'],
         'data_cutoff':manifest['data_cutoff'],'partial_date':manifest['report_date'],'attribution':'completed_at',
         'current':current,'comparison':comparison,'recovery_context':recovery,
         'profile':{'status':'configured' if profile and (profile.get('profile_status') in ('partial', 'complete') or profile.get('status') == 'configured') else 'unset','snapshot_id':manifest.get('profile_snapshot_id'),
                    'source_ref':'profile.json' if profile else None},
         'limitations':['equipment_or_load_convention_unverified','missing_sets_do_not_imply_no_training']})
+    from garmin_pipeline.training_display import localized_measurements
+    result = localized_measurements(result)
+    result['display']['performance_lines'] = full_lines
+    return result
 
 
 def resolve_snapshot_root(cfg, snapshot_id: str) -> Path:

@@ -94,16 +94,16 @@ def _yesterday(figure, chart_data):
     return True
 
 
-def _session(figure, item, number):
+def _session(figure, item, number, *, ax=None):
     if not item.get("hr"):
         return False
     origin, unit = item["start_ms"], 60_000
-    ax = figure.subplots()
+    ax = figure.subplots() if ax is None else ax
     title = f"운동 세션 {number}"
     if item.get("start_local"):
         title += f" · {item['start_local']}"
     ax.set(title=title, xlabel="시간 (분)", ylabel="심박 (bpm)")
-    _line(ax, item["hr"], origin, unit, color="tab:red", label="심박")
+    _line(ax, item["hr"], origin, unit, color="tab:red", label="심박", marker="o" if len(item["hr"]) == 1 else None)
     # Fix limits before shading so bands cannot change the data scale.
     bottom, top = ax.get_ylim()
     ax.set_ylim(bottom, top)
@@ -136,7 +136,7 @@ def _session(figure, item, number):
                     alpha=0.12,
                     label=f"존 {i + 1}",
                 )
-    right = _battery(ax, item["body_battery"], origin, unit)
+    right = _battery(ax, item["body_battery"], origin, unit) if item["body_battery"] else None
     _legend(ax, right)
     return True
 

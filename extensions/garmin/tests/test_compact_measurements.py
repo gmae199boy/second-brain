@@ -18,12 +18,14 @@ class CompactMeasurementsTest(unittest.TestCase):
         self.assertEqual(view['recovery_context'], original['recovery_context'])
         self.assertEqual(view['limitations'], original['limitations'])
         for window in ('current','comparison'):
-            self.assertEqual(view[window]['strength'], original[window]['strength'])
+            self.assertEqual([r['exercise_key'] for r in view[window]['strength']], [r['exercise_key'] for r in original[window]['strength']])
             self.assertEqual(view[window]['coverage'], original[window]['coverage'])
             self.assertEqual(len(view[window]['sessions']), len(original[window]['sessions']))
             for compact, raw in zip(view[window]['sessions'], original[window]['sessions']):
                 for key in raw:
-                    if key != 'heart_rate': self.assertEqual(compact[key], raw[key])
+                    if key not in ('heart_rate', 'sets'): self.assertEqual(compact[key], raw[key])
+                for new, old in zip(compact['sets'], raw['sets']):
+                    self.assertEqual({k:v for k,v in new.items() if k != 'display_name'}, {k:v for k,v in old.items() if k != 'display_name'})
                 summary = compact['heart_rate_summary']
                 self.assertEqual(summary['sample_count'], len(raw['heart_rate']))
                 self.assertEqual(analysis_output._pointer(original, summary['source_ref']), raw['heart_rate'])

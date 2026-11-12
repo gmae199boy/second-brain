@@ -10,7 +10,8 @@ from pathlib import Path
 
 
 def build(measurements):
-    result = copy.deepcopy(measurements)
+    from garmin_pipeline.training_display import localized_measurements
+    result = localized_measurements(measurements)
     index = []
     for window in ('current', 'comparison'):
         if result.get(window) is None:

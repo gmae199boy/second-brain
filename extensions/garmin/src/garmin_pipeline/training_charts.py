@@ -14,7 +14,7 @@ from pathlib import Path
 
 SCOPES = ('day', '7d', '30d', 'all')
 LABELS = dict(zip(SCOPES, ('1일', '7일', '30일', '전체')))
-RENDERER_VERSION = 'training-charts-v1'
+RENDERER_VERSION = 'training-charts-v2'
 MAX_EXERCISES = 8
 
 
@@ -71,6 +71,8 @@ def adapt_measurements(measurements):
     scope = measurements['scope']
     if scope not in SCOPES:
         raise ValueError('invalid training scope')
+    from garmin_pipeline.training_display import localized_measurements
+    measurements = localized_measurements(measurements)
     current = measurements['current']
     window = {'start': current['from'], 'end': current['to'], 'timezone': measurements['timezone']}
     if window['start'] > window['end']:
@@ -89,7 +91,9 @@ def adapt_measurements(measurements):
         zones = {int(zone['zone']): zone['seconds'] for zone in session['zones']
                  if _number(zone['zone']) and zone['zone'] in range(1, 6)}
         sessions.append({'session_id': session['session_id'], 'date': session['completed_date'],
-                         'start_ms': _epoch(session['start_at']), 'sets': rows, 'hr_samples': samples,
+                         'start_ms': _epoch(session['start_at']), 'end_ms': _epoch(session['end_at']),
+                         'label': session['display_name'], 'zone_lows': [next((z['low_bpm'] for z in session['zones'] if z['zone'] == i), None) for i in range(1, 6)],
+                         'sets': rows, 'hr_samples': samples,
                          'zone_seconds': [zones.get(index) for index in range(1, 6)] if zones else []})
     return {'scope': scope, 'range': window, 'snapshot_id': measurements['snapshot_id'],
             'data_cutoff': measurements['data_cutoff'], 'sessions': sessions,
@@ -110,9 +114,9 @@ def _group_sets(sessions):
             group = groups.setdefault(key, {'key': row['exercise_key'], 'label': row['label'],
                                             'sets': [], 'sessions': set()})
             group['sessions'].add(session['session_id'])
-            group['sets'].append(dict(row, session_id=session['session_id'], date=session['date']))
+            group['sets'].append(dict(row, session_id=session['session_id'], date=session['date'], session_start_ms=session['start_ms']))
     for group in groups.values():
-        group['sets'].sort(key=lambda row: (row['date'], str(row['session_id']), row['order']))
+        group['sets'].sort(key=lambda row: (row['date'], row['session_start_ms'] if row['session_start_ms'] is not None else float('inf'), str(row['session_id']), row['order']))
     return groups
 
 
@@ -131,16 +135,16 @@ def _frequency(group):
 
 
 def _pages(model):
+    if model['scope'] != '30d':
+        return [], 0
     groups = _groups(model)
-    ordered = sorted(groups, key=lambda key: (-_frequency(groups[key]), key))
-    omitted = 0
-    if model['scope'] != 'day':
-        omitted = max(0, len(ordered) - MAX_EXERCISES)
-        ordered = ordered[:MAX_EXERCISES]
-    # [ASSUMPTION] 1일 모든 종목을 세 장 안에 균등 배치한다.
-    page_size = max(4, math.ceil(len(ordered) / (3 if model['scope'] == 'day' else 2)))
-    return [[groups[key] for key in ordered[start:start + page_size]]
-            for start in range(0, len(ordered), page_size)], omitted
+    # summary의 대표/누적 횟수가 아니라 실제 30일 세션 두 건 이상만 그린다.
+    eligible = [key for key in groups if len(groups[key]['sessions']) >= 2]
+    ordered = sorted(eligible, key=lambda key: (-len(groups[key]['sessions']), key))
+    omitted = max(0, len(ordered) - MAX_EXERCISES)
+    ordered = ordered[:MAX_EXERCISES]
+    size = max(1, math.ceil(len(ordered) / 3))
+    return [[groups[key] for key in ordered[i:i + size]] for i in range(0, len(ordered), size)], omitted
 
 
 def _heading(model):
@@ -148,167 +152,62 @@ def _heading(model):
     return f"{LABELS[model['scope']]} · {window['start']} ~ {window['end']} · {window['timezone']}"
 
 
-def _set_panel(ax, group):
-    rows = group['sets']
-    if not rows:
-        ax.set(title=group['label'], ylabel='reps')
-        ax.text(.5, .5, '세트 상세 미기록', transform=ax.transAxes, ha='center')
-        return
-    valid = [(index, row) for index, row in enumerate(rows) if _number(row.get('reps'))]
-    for index, row in valid:
-        reps = row['reps']
-        ax.bar(index, reps, color='tab:blue', alpha=.6)
-        ax.annotate(f"{reps:g}회 × {_load_label(row)}", (index, reps),
-                    xytext=(0, 4), textcoords='offset points', ha='center', fontsize=8,
-                    rotation=25 if len(rows) > 8 else 0)
-    for index, row in enumerate(rows):
-        if not _number(row.get('reps')):
-            ax.annotate('reps 미기록', (index, 0), rotation=30, fontsize=8)
-    ax.set_xticks(range(len(rows)), [f"S{row['set_no']}" for row in rows], fontsize=8)
-    for index in range(1, len(rows)):
-        if rows[index]['session_id'] != rows[index - 1]['session_id']:
-            ax.axvline(index - .5, color='grey', linestyle=':', alpha=.6)
-    ax.set(title=f"{group['label']} · {len(rows)}세트", ylabel='reps', xlabel='세션 순서 / 종목 내 세트 번호')
-    ax.set_ylim(bottom=0, top=max([row['reps'] for _, row in valid] or [1]) * 1.45)
-
-
-def _trend_panel(ax, group, scope):
-    # 같은 load_kind·같은 외부 부하만 한 계열로 묶는다. 결측·불명은 연결하지 않는다.
-    series = defaultdict(lambda: defaultdict(list))
-    rows = list(group['sets'])
-    summary = group.get('summary', {})
-    ordinal = False
-    if scope == 'all' and summary.get('same_load_reps'):
-        # C1 장기 입력은 대표 비교 관측만 제공할 수 있다. 날짜가 없으면 순서로 명시한다.
-        observations = summary['same_load_reps']
-        ids = list(dict.fromkeys([item['session_id'] for series in observations for item in series['observations']]))
-        rows = [dict(item, load_kind=series['load_kind'], load_kg=series['load_kg'],
-                     date=f"관측 {ids.index(item['session_id']) + 1:03d}")
-                for series in observations for item in series['observations']]
-        ordinal = True
-    for row in rows:
-        if not _number(row.get('reps')):
-            continue
-        kind = row['load_kind']
-        load = row.get('load_kg')
-        comparable = kind == 'bodyweight' or (kind in ('weighted', 'assisted') and _number(load))
-        identity = (kind, load if kind != 'bodyweight' else None, row.get('equipment'), row.get('variant'))
-        if not comparable:
-            identity += (str(row['session_id']),)
-        bucket = row['date'][:7] if scope == 'all' and not ordinal else row['date']
-        series[identity][(bucket, str(row['session_id']))].append(row['reps'])
-    buckets = sorted({bucket for observations in series.values() for bucket, _ in observations})
-    positions = {bucket: int(bucket.split()[-1]) if ordinal else
-                 datetime.strptime(bucket, '%Y-%m' if scope == 'all' else '%Y-%m-%d').date().toordinal()
-                 for bucket in buckets}
-    for identity, observations in sorted(series.items(), key=lambda item: str(item[0])):
-        sample = {'load_kind': identity[0], 'load_kg': identity[1]}
-        label = _load_label(sample)
-        if identity[2] or identity[3]:
-            label += ' · ' + '/'.join(str(value) for value in identity[2:4] if value)
-        points = defaultdict(list)
-        for (bucket, _), reps in observations.items():
-            points[bucket].extend(reps)
-        x = sorted(points)
-        means = [sum(points[day]) / len(points[day]) for day in x]
-        # 전체 범위는 월 평균·범위를 사용하여 원본 점 무제한 증가를 막는다.
-        line, = ax.plot([positions[day] for day in x], means, marker='o', linestyle='-' if len(identity) == 4 and group.get('summary', {}).get('comparability', {}).get('status') == 'comparable' else 'None', label=label)
-        if scope == 'all':
-            ax.vlines([positions[day] for day in x], [min(points[day]) for day in x], [max(points[day]) for day in x], color=line.get_color(), alpha=.3)
-        else:
-            for day in x:
-                ax.scatter([positions[day]] * len(points[day]), points[day], color=line.get_color(), alpha=.3, s=12)
-    ax.set(title=f"{group['label']} · {_frequency(group)}회 · {summary.get('sets', len(group['sets']))}세트",
-           ylabel='세트당 reps', xlabel=('대표 관측 순서 · 날짜 미기록' if ordinal else '월별 평균·범위') if scope == 'all' else '수행일 · 같은 부하·비교 조건 확인 시만 연결')
-    ax.set_ylim(bottom=0)
-    if series:
-        ax.legend(fontsize=7)
-    else:
-        ax.text(.5, .5, 'reps 미기록', transform=ax.transAxes, ha='center')
-    ticks = buckets[::max(1, math.ceil(len(buckets) / 8))]
-    ax.set_xticks([positions[day] for day in ticks], ticks)
-    ax.tick_params(axis='x', labelrotation=30, labelsize=8)
-
-
-def _monthly_panel(ax, group):
-    monthly = sorted(group.get('summary', {}).get('monthly', []), key=lambda row: row['month'])
-    if not monthly:
-        ax.set(title='월 집계 미기록')
-        return
-    positions = [datetime.strptime(row['month'], '%Y-%m').date().toordinal() for row in monthly]
-    ax.plot(positions, [row['reps'] if _number(row['reps']) else None for row in monthly], marker='o', label='총 reps')
-    right = ax.twinx()
-    right.plot(positions, [row['sets'] for row in monthly], color='grey', linestyle=':', label='세트 수')
-    right.set_ylabel('기록 세트 수')
-    ax.set(title=f"{group['label']} · 월 총 reps / 세트 수", ylabel='총 reps', xlabel='월 · 부하·세트 수 혼합, 같은 부하 비교 아님')
-    ax.set_ylim(bottom=0)
-    stride = max(1, math.ceil(len(monthly) / 8))
-    ax.set_xticks(positions[::stride], [row['month'] for row in monthly[::stride]])
-    ax.tick_params(axis='x', labelrotation=30, labelsize=8)
+def _session_trend(axes, group):
+    sessions = {}
+    for row in group['sets']:
+        sessions.setdefault((row['date'], row.get('session_start_ms') if row.get('session_start_ms') is not None else float('inf'), str(row['session_id'])), []).append(row)
+    observations = sorted(sessions.items())
+    ticks = [f"{key[0][5:]} / {i}" for i, (key, _) in enumerate(observations, 1)]
+    positions = list(range(len(observations)))
+    weight, reps, sets = axes
+    for kind, label, color in (('weighted', '외부 무게', 'tab:blue'), ('assisted', '보조 무게', 'tab:orange')):
+        maxima, minima = [], []
+        for _, rows in observations:
+            loads = [r['load_kg'] for r in rows if r['load_kind'] == kind and _number(r.get('load_kg'))]
+            maxima.append(max(loads) if loads else None); minima.append(min(loads) if loads else None)
+        if any(x is not None for x in maxima):
+            weight.plot(positions, maxima, marker='o', label=label)
+            for index, (low, high) in enumerate(zip(minima, maxima)):
+                if low is not None:
+                    weight.vlines(index, low, high, color=color, alpha=.5)
+    for index, (_, rows) in enumerate(observations):
+        notes = list(dict.fromkeys(_load_label(r) for r in rows if r['load_kind'] not in ('weighted', 'assisted')))
+        if notes:
+            weight.text(index, .03, ' / '.join(notes), transform=weight.get_xaxis_transform(), ha='center', fontsize=7)
+    rep_values = [sum(r['reps'] for r in rows) if all(_number(r.get('reps')) for r in rows) else None for _, rows in observations]
+    reps.plot(positions, rep_values, marker='o', color='tab:green')
+    sets.plot(positions, [len(rows) for _, rows in observations], marker='o', color='grey')
+    for index, value in enumerate(rep_values):
+        if value is None:
+            reps.text(index, .03, '반복 미기록', transform=reps.get_xaxis_transform(), fontsize=7)
+    for ax, metric in zip(axes, ('무게 kg · 세션 내 최저~최고', '총 반복 횟수', '기록 세트 수')):
+        ax.set(title=group['label'] + ' · ' + metric, xlabel='수행일 / 세션 순서', ylabel=metric)
+        stride = max(1, math.ceil(len(positions) / 8))
+        ax.set_xticks(positions[::stride], ticks[::stride], rotation=30, fontsize=8)
+        ax.set_ylim(bottom=0)
+        ax.grid(alpha=.15)
+    if weight.get_legend_handles_labels()[0]:
+        weight.legend(fontsize=7)
 
 
 def _strength(figure, model, groups):
-    if model['scope'] == 'all':
-        axes = figure.subplots(len(groups), 2, squeeze=False)
-        for (left, right), group in zip(axes, groups):
-            _trend_panel(left, group, 'all')
-            _monthly_panel(right, group)
-        return
-    axes = list(figure.subplots(math.ceil(len(groups) / 2), 2, squeeze=False).flat)
-    for ax, group in zip(axes, groups):
-        if model['scope'] == 'day':
-            _set_panel(ax, group)
-        else:
-            _trend_panel(ax, group, model['scope'])
-    for ax in axes[len(groups):]:
-        ax.set_visible(False)
-
-
-def _overview(figure, model):
-    groups = _groups(model)
-    axes = figure.subplots(1, 2)
-    names = sorted(groups, key=lambda key: (-_frequency(groups[key]), key))[:MAX_EXERCISES]
-    if names:
-        keys = list(reversed(names))
-        labels = [groups[key]['label'] for key in keys]
-        axes[0].barh(range(len(keys)), [groups[key].get('summary', {}).get('sets', len(groups[key]['sets'])) for key in keys])
-        axes[0].set_yticks(range(len(keys)), [f"{label} [{groups[key]['key']}]" if labels.count(label) > 1 else label
-                                             for key, label in zip(keys, labels)])
-    axes[0].set(title='기록된 ACTIVE 세트 수', xlabel='세트')
-    aerobic = [session for session in model['sessions'] if session.get('zone_seconds')]
-    for session_index, session in enumerate(aerobic, 1):
-        left = 0
-        for index, value in enumerate(session['zone_seconds']):
-            if _number(value) and value >= 0:
-                axes[1].barh(f"{session['date']} / {session_index}", value / 60, left=left,
-                             color=f'C{index}', label=f'Z{index + 1}')
-                left += value / 60
-    axes[1].set(title='심박존 체류 · 미기록은 0으로 보충하지 않음', xlabel='분')
-    if not aerobic:
-        axes[1].text(.5, .5, '심박존 기록 없음', transform=axes[1].transAxes, ha='center')
-    else:
-        handles, labels = axes[1].get_legend_handles_labels()
-        unique = dict(zip(labels, handles))
-        axes[1].legend(unique.values(), unique.keys(), fontsize=8)
+    axes = figure.subplots(len(groups), 3, squeeze=False)
+    for row, group in zip(axes, groups):
+        _session_trend(row, group)
 
 
 def _heart(figure, model):
-    sessions = [session for session in model['sessions'] if session['hr_samples']]
+    # 재설계 전 charts._session의 존 배경·활동 경계·심박선·범례를 그대로 재사용한다.
+    # 세트 수직 음영은 존 배경과 겹치므로 제외한다. C1에 없는 BB는 채우지 않는다.
+    from garmin_pipeline.charts import _session
+    sessions = [s for s in model['sessions'] if s['hr_samples']]
     axes = figure.subplots(len(sessions), 1, squeeze=False).flat
-    for session_index, (ax, session) in enumerate(zip(axes, sessions), 1):
+    for index, (ax, session) in enumerate(zip(axes, sessions), 1):
         origin = session['start_ms'] if session['start_ms'] is not None else session['hr_samples'][0][0]
-        samples = session['hr_samples']
-        ax.plot([(sample[0] - origin) / 60000 for sample in samples], [sample[1] for sample in samples], color='tab:red', marker='o' if len(samples) == 1 else None)
-        missing = 0
-        for row in session['sets']:
-            if row['is_rest']:
-                continue
-            start, end = row.get('start_ms'), row.get('end_ms')
-            if _number(start) and _number(end) and end > start:
-                ax.axvspan((start - origin) / 60000, (end - origin) / 60000, alpha=.15, color='tab:blue')
-            else:
-                missing += 1
-        ax.set(title=f"세션 {session_index} · 세트 구간 미기록 {missing}개", xlabel='시작 후 분', ylabel='심박 bpm')
+        item = {'hr': session['hr_samples'], 'start_ms': origin, 'body_battery': [],
+                'activities': [{'start_ms': origin, 'end_ms': session['end_ms'],
+                                'label': session['label'], 'zone_low_bpm': session['zone_lows']}]}
+        _session(figure, item, index, ax=ax)
 
 
 def render_model(model, out_dir, *, cache_dir=None):
@@ -324,20 +223,17 @@ def render_model(model, out_dir, *, cache_dir=None):
     matplotlib.use('Agg')
     pages, omitted = _pages(model)
     prefix = f"{SCOPES.index(model['scope']) + 1:02d}-{model['scope']}"
-    jobs = [(f'{prefix}-strength-{index}.png', 'set_reps_load' if model['scope'] == 'day' else ('reps_by_load_and_monthly_reps_sets' if model['scope'] == 'all' and any(g.get('summary', {}).get('monthly') for g in groups) else 'reps_by_load'),
-             groups, lambda fig, groups=groups: _strength(fig, model, groups))
-            for index, groups in enumerate(pages, 1)]
-    if model['scope'] != 'day' and (model['sessions'] or model['strength']):
-        jobs.append((f'{prefix}-overview.png', 'active_sets_hr_zones', [], lambda fig: _overview(fig, model)))
+    jobs = [(f'{prefix}-strength-{index}.png', 'session_load_reps_sets', groups,
+             lambda fig, groups=groups: _strength(fig, model, groups)) for index, groups in enumerate(pages, 1)]
     if model['scope'] == 'day' and any(session['hr_samples'] for session in model['sessions']):
-        jobs.append((f'{prefix}-heart.png', 'heart_rate_set_intervals', [], lambda fig: _heart(fig, model)))
+        jobs.append((f'{prefix}-heart.png', 'heart_rate_zones_legacy', [], lambda fig: _heart(fig, model)))
     graphs = []
     for name, metric, groups, draw in jobs:
         path, figure = out_dir / name, None
         try:
-            rows = (len(groups) if model['scope'] == 'all' else math.ceil(len(groups) / 2)) if groups else (sum(bool(s['hr_samples']) for s in model['sessions']) if metric == 'heart_rate_set_intervals' else 1)
+            rows = len(groups) if groups else sum(bool(s['hr_samples']) for s in model['sessions'])
             with matplotlib.rc_context({'font.family': FONT_FAMILY, 'axes.unicode_minus': False}):
-                figure = Figure(figsize=(12, min(24, max(5, rows * 3.5))), dpi=150)
+                figure = Figure(figsize=(14 if groups else 12, min(24, max(5, rows * 3.5))), dpi=150)
                 draw(figure)
                 title = _heading(model)
                 figure.suptitle(title, fontsize=12)

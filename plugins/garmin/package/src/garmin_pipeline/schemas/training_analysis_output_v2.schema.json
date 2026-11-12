@@ -96,10 +96,12 @@
       "type": "object",
       "properties": {
         "headline": {
-          "type": "string"
+          "type": "string",
+          "description": "한글 한 문장, 약 120자 이내. 과거 날짜별 기록 나열은 report_md에만 둔다."
         },
         "assessment": {
-          "type": "string"
+          "type": "string",
+          "description": "한글 한 문장, 약 120자 이내. 과거 날짜별 기록 나열은 report_md에만 둔다."
         },
         "state": {
           "type": "string",
@@ -496,6 +498,20 @@
         "string",
         "null"
       ]
+    },
+    "performance_lines": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "호스트 전용: 검증 뒤 C1에서 계산한 종목별 한 줄. 모델은 생략한다."
+    },
+    "missing_labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "호스트 전용: 한글 라벨 미등록 canonical 키 목록."
     }
   },
   "required": [

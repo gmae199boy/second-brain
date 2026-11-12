@@ -29,7 +29,8 @@ class AnalysisOutputV2Test(unittest.TestCase):
                 data = fixture(scope); measurements = fixture('c1-mixed-day')
                 measurements['scope'] = scope
                 result = self.read(data, measurements)
-                self.assertEqual(result.structured, data)
+                from garmin_pipeline.training_display import enrich_analysis
+                self.assertEqual(result.structured, enrich_analysis(data, measurements))
                 self.assertEqual(result.message, data['message'])
                 self.assertEqual(result.structured['measurements_version'], 'training_measurements_v1')
 

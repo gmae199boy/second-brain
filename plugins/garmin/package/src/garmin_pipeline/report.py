@@ -423,6 +423,9 @@ def _read_output(output: Path, schema_path: Path, *, measurements=None) -> Daily
         analysis_output.validate(data, measurements)
     except ValueError as error:
         raise WriterFailed(invalid, str(error)) from None
+    if measurements is not None and data.get("schema_version") == analysis_output.VERSION:
+        from garmin_pipeline.training_display import enrich_analysis
+        data = enrich_analysis(data, measurements)
     return DailyAnalysis(
         data["status"],
         data["report_md"],
@@ -534,6 +537,9 @@ class AnalysisWriter:
                 if measurements is not None:
                     # Scope-specific generation constraints mirror the reference validator.
                     schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                    # 호스트 표시 필드는 모델 strict schema에 노출하지 않는다.
+                    for field in ('performance_lines', 'missing_labels'):
+                        schema['properties'].pop(field, None)
                     schema['properties']['scope']['const'] = measurements['scope']
                     schema['properties']['limitations']['items']['properties']['scope']['const'] = measurements['scope']
                     schema_path = workdir / analysis_output.SCHEMA

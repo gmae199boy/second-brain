@@ -382,6 +382,9 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "display_name": {
+                "type": "string"
               }
             },
             "required": [
@@ -965,6 +968,9 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "display_name": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -1265,6 +1271,28 @@
       "items": {
         "type": "string"
       }
+    },
+    "display": {
+      "type": "object",
+      "properties": {
+        "performance_lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "performance_lines",
+        "missing_labels"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

@@ -40,7 +40,7 @@ class MessageV2Test(unittest.TestCase):
     def test_unknown_activity_type_is_preserved_without_guessing(self):
         value = fixture()
         value['aerobic_findings'][0]['activity_type'] = None
-        self.assertIn('유형 미상:', messages.render_scope(value))
+        self.assertIn('유형 미상', messages.render_scope(value))
 
     def test_budget_drops_whole_sentences_and_keeps_actions_and_limitations(self):
         value = fixture()
@@ -50,8 +50,8 @@ class MessageV2Test(unittest.TestCase):
         text = messages.render_scope(value)
         self.assertLessEqual(messages.utf16_length(text), 4000)
         self.assertNotIn('😀', text)
-        self.assertIn('합성운동: 짧은 해석 문장.', text)
-        self.assertIn('일부 내용', text)
+        self.assertIn('합성운동 (상세 기록은 통합 문서 참고)', text)
+        self.assertNotIn('과거', text.split('운동 수행')[-1])
         self.assertIn(value['next_workout_actions'][0]['action'], text)
         self.assertIn(value['limitations'][0]['detail'], text)
         self.assertNotIn('…', text)
@@ -123,3 +123,38 @@ class MessageV2Test(unittest.TestCase):
         self.assertEqual(evaluate.call_count, 2)
         self.assertTrue(all(call.args[2] == ['fixed-snapshot'] for call in evaluate.call_args_list))
         self.assertEqual(record.call_args.args[4].code, 'SUCCESS')
+
+    def test_target_budget_never_drops_rows_that_fit_hard_limit(self):
+        value = fixture()
+        value['training_summary'].update(headline='판정' * 80 + '.', assessment='해석' * 80 + '.')
+        value['next_workout_actions'] = [dict(value['next_workout_actions'][0], action=f'제안{i}' + '행동' * 80, reason='이유' * 50, condition='조건' * 50) for i in range(2)]
+        value['performance_lines'] = [f'합성종목{i} 10kg × 10·10·10 (직전 대비 반복 =)' for i in range(12)]
+        text = messages.render_scope(value)
+        self.assertLessEqual(messages.utf16_length(text), 4000)
+        for line in value['performance_lines']:
+            self.assertIn(line, text)
+        self.assertIn('제안0', text); self.assertIn('제안1', text)
+        self.assertIn('한계', text)
+        self.assertIn('판정' * 80, text)
+
+    def test_one_overlong_action_has_explicit_placeholder_and_keeps_other_action(self):
+        value = fixture()
+        value['next_workout_actions'] = [dict(value['next_workout_actions'][0], condition='조건' * 1000),
+                                        dict(value['next_workout_actions'][0], action='두번째 짧은 행동', condition='짧은 조건')]
+        text = messages.render_scope(value)
+        self.assertIn('조건을 포함한 다음 운동 제안은 통합 문서', text)
+        self.assertIn('두번째 짧은 행동', text)
+        self.assertIn('일부 내용', text)
+
+    def test_recovery_keeps_context_effect_and_uncertainty_together(self):
+        value = fixture()
+        value['recovery_context'] = [{'context': '합성 회복 관측이다.', 'effect_on_training': '다음 수행은 유지한다.',
+                                      'uncertainty': '원인으로 단정할 수 없다.'}]
+        text = messages.render_scope(value)
+        for part in value['recovery_context'][0].values():
+            self.assertIn(part, text)
+
+    def test_oversized_header_is_rejected_instead_of_exceeding_hard_limit(self):
+        value = fixture(); value['range']['timezone'] = '합성' * 3000
+        with self.assertRaisesRegex(ValueError, 'header exceeds'):
+            messages.render_scope(value)

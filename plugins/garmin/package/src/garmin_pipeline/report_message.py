@@ -148,60 +148,80 @@ def _plain(value):
 
 
 def render_scope(structure):
-    """C3 구조체 하나만 읽는다. 초과 내용은 완전한 문장 단위로 생략한다."""
+    """C1 수행 줄과 짧은 평가만 표시한다. 목표 1500, 최대 4000 UTF-16이다."""
+    from garmin_pipeline.training_display import display_name, localize_text
     if structure.get('schema_version') != 'garmin.scope_analysis.v2' or structure.get('scope') not in SCOPES:
         raise ValueError('invalid scope message structure')
-    scope = structure['scope']
-    window = structure['range']
-    title = f'{SCOPES.index(scope) + 1}/4 · ' + {'day': '1일', '7d': '7일', '30d': '30일', 'all': '전체'}[scope]
-    header = [f'Garmin 운동 리포트 · {title}',
-              f'{window["start"]} ~ {window["end"]} (양끝 포함, {window["timezone"]})',
-              f'자료 기준: {structure["data_cutoff"]}']
+    scope, window = structure['scope'], structure['range']
+    title = f'{SCOPES.index(scope) + 1}/4 · ' + dict(zip(SCOPES, ('1일', '7일', '30일', '전체')))[scope]
+    lines = [f'Garmin 운동 리포트 · {title}', f'{window["start"]} ~ {window["end"]} ({window["timezone"]})',
+             f'자료 기준: {structure["data_cutoff"]}']
     summary = structure['training_summary']
     message = structure.get('message') or {}
-    # 우선순위: 핵심 판정, 다음 행동, 중요한 한계, 운동 관측/해석, 회복·추세.
-    sections = []
-    sections.append(('판정', [_plain(summary.get('headline')), _plain(summary.get('assessment'))]))
+    keys = [x.get('exercise_key') or x.get('activity_type') for x in structure.get('strength_findings', []) + structure.get('aerobic_findings', [])]
+    def plain(value):
+        return localize_text(_plain(value), keys)
+    omitted = False
+    def short(value, limit=800, *, whole=False):
+        nonlocal omitted
+        sentences = _sentences(plain(value))
+        if not sentences:
+            return ''
+        # 첫 핵심 문장을 유지한다. 비정상적으로 긴 문장만 표시 가능한 안내로 바꾼다.
+        content = plain(value) if whole else sentences[0]
+        if utf16_length(content) > limit:
+            omitted = True
+            return '긴 상세 설명은 통합 문서에서 확인하세요.'
+        return content
     actions = []
     for action in structure.get('next_workout_actions', [])[:2]:
-        actions.append(' '.join(filter(None, (_plain(action.get('action')), _plain(action.get('reason')),
-                                              _plain(action.get('condition'))))))
-    sections.append(('다음 운동', actions or [_plain(x) for x in message.get('recommendations', [])[:2]]))
-    limits = [_plain(x.get('detail') or x.get('affected_judgment')) for x in structure.get('limitations', [])
-              if x.get('scope') == scope][:2]
-    sections.append(('이 기간의 한계', limits))
-    findings = []
-    for finding in structure.get('strength_findings', []) + structure.get('aerobic_findings', []):
-        label = _plain(finding.get('exercise_key') or finding.get('activity_type') or '유형 미상')
-        for sentence in _sentences(' '.join(filter(None, (_plain(finding.get('observed_change')), _plain(finding.get('interpretation')))))):
-            findings.append(label + ': ' + sentence)
-    sections.append(('운동 수행', findings))
-    progression = structure.get('progression') or {}
-    sections.append(('진행·회복', [_plain(progression.get('observation_reason')), _plain(progression.get('decision_reason'))]
-                     + [' '.join(filter(None, (_plain(x.get('context')), _plain(x.get('effect_on_training')), _plain(x.get('uncertainty'))))) for x in structure.get('recovery_context', [])]
-                     + [_plain(message.get('trend_line'))]))
+        action_line = ' '.join(filter(None, (plain(action.get('action')), plain(action.get('reason')), plain(action.get('condition')))))
+        # 조건을 자르지 않는다. 초과하면 명시적인 안내로 대체해 무조건적 증량을 만들지 않는다.
+        if utf16_length(action_line) > 800:
+            actions.append('조건을 포함한 다음 운동 제안은 통합 문서에서 확인하세요.')
+            omitted = True
+        else:
+            actions.append(action_line)
+    if not structure.get('next_workout_actions'):
+        actions = [short(x) for x in message.get('recommendations', [])[:2]]
+    findings = structure.get('performance_lines')
+    if findings is None:
+        # 구 저장 v2에는 C1 수행 줄이 없다. 모델의 과거 날짜 나열을 메시지에 다시 싣지 않는다.
+        findings = list(dict.fromkeys(display_name(key) + ' (상세 기록은 통합 문서 참고)' for key in keys))
+    recovery = [short(' '.join(filter(None, (x.get('context'), x.get('effect_on_training'), x.get('uncertainty')))), whole=True)
+                for x in structure.get('recovery_context', [])][:3]
+    limits = [short(x.get('detail') or x.get('affected_judgment')) for x in structure.get('limitations', []) if x.get('scope') == scope][:2]
+    sections = [('판정', [short(summary.get('headline')), short(summary.get('assessment'))]),
+                ('다음 운동', actions), ('운동 수행', findings), ('회복', recovery), ('한계', limits)]
     note = '\n\n일부 내용은 길이 제한으로 생략했습니다. 통합 문서에서 전체 평가를 확인하세요.'
-    lines = header[:]
-    omitted = False
-    seen = set()
-    # 생략 안내를 위한 공간을 미리 남겨 어느 경우에도 4000 UTF-16 예산을 넘기지 않는다.
-    budget = 4000 - utf16_length(note)
-    if utf16_length('\n'.join(lines)) > budget:
+    if utf16_length('\n'.join(lines)) > 4000 - utf16_length(note):
         raise ValueError('scope header exceeds message budget')
+    # 목표 길이 때문에 유효한 수행/행동/한계를 버리지 않는다. 모두 들어가면 그대로 보낸다.
+    complete = lines[:]
+    seen = set()
     for label, values in sections:
-        added_heading = False
+        unique = [plain(value) for value in values if plain(value)]
+        unique = list(dict.fromkeys(unique))
+        if unique:
+            complete.extend(['', label] + ['• ' + value for value in unique])
+    if utf16_length('\n'.join(complete) + (note if omitted else '')) <= 4000:
+        return '\n'.join(complete) + (note if omitted else '')
+    # 하드 상한 초과 때만 생략한다. 먼저 수행과 다른 필수 구획에 쓸 공간을 예약한다.
+    budget = 4000 - utf16_length(note)
+    reserved = utf16_length('\n'.join(['', '운동 수행'] + ['• ' + plain(value) for value in findings]))
+    for label, values in sections:
+        heading = False
         for value in values:
-            # 단일 긴 문장도 문자 중간에서 자르지 않는다.
-            for sentence in ([value] if label == '다음 운동' else _sentences(value)):
-                if not sentence or sentence in seen:
-                    continue
-                seen.add(sentence)
-                candidate = ([] if added_heading else ['', label]) + ['• ' + sentence]
-                if utf16_length('\n'.join(lines + candidate)) <= budget:
-                    lines.extend(candidate)
-                    added_heading = True
-                else:
-                    omitted = True
+            value = plain(value)
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            candidate = ([] if heading else ['', label]) + ['• ' + value]
+            allowance = budget - reserved if label in ('판정', '다음 운동') else budget
+            if utf16_length('\n'.join(lines + candidate)) <= allowance:
+                lines.extend(candidate); heading = True
+            else:
+                omitted = True
     return '\n'.join(lines) + (note if omitted else '')
 
 

@@ -70,125 +70,51 @@ class TrainingChartsTest(unittest.TestCase):
         self.assertEqual(charts._load_label(rows[2]), '무게 미기록')
         self.assertIsNone(value['current']['sessions'][0]['sets'][1]['load_kg'])
 
-    def test_bodyweight_uses_reps_and_rest_or_missing_is_not_zero(self):
-        value = fixture()
-        rows = value['current']['sessions'][0]['sets']
-        rows[0]['set_type'] = 'REST'
-        rows[2]['reps'] = None
-        rows[3]['reps'] = 0
+    def test_only_month_repeated_exercises_have_graph_pages(self):
+        value = fixture('30d')
+        template = value['current']['sessions'][0]
+        template['sets'] = [dict(template['sets'][0], exercise_key=f'key-{i:02}', order=i) for i in range(17)]
+        duplicate = copy.deepcopy(template); duplicate['session_id'] = 'second'; duplicate['completed_date'] = '2026-01-01'
+        value['current']['sessions'] = [duplicate, template]; value['current']['strength'] = []
         model = charts.adapt_measurements(value)
-        group = next(iter(charts._groups(model).values()))
-        fig = figure(); self.addCleanup(fig.clear)
-        ax = fig.subplots(); charts._set_panel(ax, group)
-        self.assertEqual([bar.get_height() for bar in ax.patches], [10, 0, 10])
-        self.assertEqual(len(group['sets']), 4)
-        self.assertTrue(any('10회 × 맨몸' in text.get_text() for text in ax.texts))
-        self.assertTrue(any('reps 미기록' in text.get_text() for text in ax.texts))
-        self.assertFalse(any('0 kg' in text.get_text() for text in ax.texts))
-
-    def test_all_day_exercises_with_same_label_keep_stable_keys_and_three_pages(self):
-        value = fixture()
-        rows = value['current']['sessions'][0]['sets']
-        template = rows[1]
-        value['current']['sessions'][0]['sets'] = [dict(template, exercise_key=f'key-{i:02}', order=i, set_no=1) for i in range(17)]
-        pages, omitted = charts._pages(charts.adapt_measurements(value))
+        pages, omitted = charts._pages(model)
         self.assertEqual(len(pages), 3)
-        self.assertEqual(omitted, 0)
-        self.assertEqual(len({group['key'] for page in pages for group in page}), 17)
-        value['scope'] = '30d'
-        pages, omitted = charts._pages(charts.adapt_measurements(value))
-        self.assertEqual(len(pages), 2)
         self.assertEqual(omitted, 9)
-        self.assertEqual([group['key'] for page in pages for group in page], [f'key-{i:02}' for i in range(8)])
+        self.assertEqual(len([g for page in pages for g in page]), 8)
+        for scope in ('day', '7d', 'all'):
+            model['scope'] = scope
+            self.assertEqual(charts._pages(model), ([], 0))
+        value['current']['sessions'] = [template]
+        self.assertEqual(charts._pages(charts.adapt_measurements(value)), ([], 0))
 
-    def test_frequency_precedes_canonical_key(self):
-        value = fixture('7d')
+    def test_session_trend_keeps_same_day_sessions_and_three_metrics(self):
+        value = fixture('30d')
         first = value['current']['sessions'][0]
-        first['sets'] = [dict(first['sets'][1], exercise_key=key, order=i) for i, key in enumerate(['a', 'z'])]
-        second = copy.deepcopy(first); second['session_id'] = 'synthetic-second'; second['sets'] = [second['sets'][1]]
-        value['current']['sessions'].append(second)
-        pages, _ = charts._pages(charts.adapt_measurements(value))
-        self.assertEqual([group['key'] for page in pages for group in page], ['z', 'a'])
-
-    def test_reps_series_does_not_connect_missing_load_or_different_equipment(self):
-        value = fixture('7d')
-        first = value['current']['sessions'][0]
-        second = copy.deepcopy(first); second['session_id'] = 'synthetic-second'; second['completed_date'] = '2026-01-01'
-        second['sets'][0]['load_kg'] = 7
-        second['sets'][1]['equipment'] = 'other'
-        value['current']['sessions'].append(second)
-        model = charts.adapt_measurements(value)
-        group = next(iter(charts._groups(model).values()))
+        first['sets'] = [dict(first['sets'][0], load_kg=12, reps=10), dict(first['sets'][0], load_kg=14, reps=8)]
+        second = copy.deepcopy(first); second['session_id'] = 'aaa-second'
+        second['start_at'] = '2026-01-02T23:00:00+09:00'
+        second['sets'] = [dict(first['sets'][0], load_kg=None, load_kind='missing', reps=None)]
+        value['current']['sessions'] = [first, second]; value['current']['strength'] = []
+        group = next(iter(charts._groups(charts.adapt_measurements(value)).values()))
         fig = figure(); self.addCleanup(fig.clear)
-        ax = fig.subplots(); charts._trend_panel(ax, group, '7d')
-        self.assertIn('5 kg', ax.get_legend_handles_labels()[1])
-        self.assertIn('7 kg', ax.get_legend_handles_labels()[1])
-        self.assertTrue(all(line.get_linestyle() == 'None' for line in ax.lines))
-        self.assertCountEqual([line.get_label() for line in ax.lines if line.get_label().startswith('맨몸')], ['맨몸', '맨몸 · other'])
+        axes = fig.subplots(1, 3)
+        charts._session_trend(axes, group)
+        self.assertEqual(list(axes[0].lines[0].get_ydata()), [14, None])
+        self.assertEqual(list(axes[1].lines[0].get_ydata()), [18, None])
+        self.assertEqual(list(axes[2].lines[0].get_ydata()), [2, 1])
+        self.assertEqual(len(axes[0].get_xticklabels()), 2)
+        self.assertTrue(any('무게 미기록' in text.get_text() for text in axes[0].texts))
 
-    def test_heart_spans_only_explicit_active_times(self):
+    def test_heart_reuses_legacy_zone_background_without_set_shading(self):
         value = fixture()
-        value['current']['sessions'] = value['current']['sessions'][:1]
-        rows = value['current']['sessions'][0]['sets']
-        rows[0]['set_type'] = 'REST'
-        rows[2]['start_at'] = rows[2]['end_at'] = None
         model = charts.adapt_measurements(value)
         fig = figure(); self.addCleanup(fig.clear)
         charts._heart(fig, model)
-        self.assertEqual(len(fig.axes), 1)
-        self.assertEqual(len(fig.axes[0].patches), 3)
-        self.assertIn('세트 구간 미기록 1개', fig.axes[0].get_title())
-
-    def test_monthly_summary_does_not_need_all_raw_sets(self):
-        value = fixture('all')
-        value['current']['sessions'] = []
-        value['current']['strength'] = [{'exercise_key': 'PUSH_UP', 'display_name': '푸시업', 'exposures': 12, 'sets': 24,
-            'reps': 240, 'volume_kg': None, 'volume_partial': True, 'volume_sets': 0, 'missing_load_sets': 0,
-            'bodyweight_sets': 24, 'max_kg': None, 'max_kg_reps': [], 'session_ids': [],
-            'same_load_reps': [{'load_kind': 'bodyweight', 'load_kg': None,
-                                'observations': [{'session_id': 's1', 'reps': 10}, {'session_id': 's2', 'reps': 14}]},
-                               {'load_kind': 'weighted', 'load_kg': 5,
-                                'observations': [{'session_id': 's2', 'reps': 7}]}],
-            'comparability': {'status': 'limited', 'limitations': []},
-            'monthly': [dict(month=month, reps=reps, sets=sets, exposures=6, volume_kg=None,
-                             volume_sets=0, missing_load_sets=0, bodyweight_sets=sets)
-                        for month, reps, sets in [('2025-12', 100, 10), ('2026-01', 140, 14)]]}]
-        model = charts.adapt_measurements(value)
-        pages, _ = charts._pages(model)
-        self.assertEqual(pages[0][0]['key'], 'PUSH_UP')
-        fig = figure(); self.addCleanup(fig.clear)
-        charts._strength(fig, model, pages[0])
-        self.assertEqual(list(fig.axes[1].lines[0].get_ydata()), [100, 140])
-        self.assertEqual(fig.axes[0].get_legend_handles_labels()[1], ['맨몸', '5 kg'])
-        self.assertEqual(list(fig.axes[0].lines[0].get_ydata()), [10, 14])
-        self.assertTrue(fig.axes[-1].get_visible())  # twinx 세트 수 축도 보여야 한다.
-        self.assertIn('같은 부하 비교 아님', fig.axes[1].get_xlabel())
-
-    def test_monthly_missing_reps_keeps_chronological_axis_and_gap(self):
-        group = {'label': '합성 운동', 'summary': {'monthly': [
-            {'month': '2026-01', 'reps': 10, 'sets': 1},
-            {'month': '2026-02', 'reps': None, 'sets': 2},
-            {'month': '2026-03', 'reps': 30, 'sets': 3}]}}
-        fig = figure(); self.addCleanup(fig.clear)
-        ax = fig.subplots(); charts._monthly_panel(ax, group)
-        primary, secondary = fig.axes
-        x = list(primary.lines[0].get_xdata())
-        self.assertEqual(x, sorted(x))
-        self.assertEqual(x, list(secondary.lines[0].get_xdata()))
-        self.assertIsNone(primary.lines[0].get_ydata()[1])
-        self.assertEqual([tick.get_text() for tick in primary.get_xticklabels()], ['2026-01', '2026-02', '2026-03'])
-
-    def test_overview_distinguishes_identical_labels(self):
-        value = fixture('7d')
-        rows = value['current']['sessions'][0]['sets']
-        rows[1]['exercise_key'] = 'PUSH_UP_OTHER'
-        model = charts.adapt_measurements(value)
-        fig = figure(); self.addCleanup(fig.clear)
-        charts._overview(fig, model)
-        bars = fig.axes[0].patches
-        self.assertEqual(len(bars), 2)
-        self.assertNotEqual(bars[0].get_y(), bars[1].get_y())
-        self.assertEqual(len(set(text.get_text() for text in fig.axes[0].get_yticklabels())), 2)
+        primary = fig.axes[0]
+        self.assertTrue(primary.lines)
+        self.assertEqual(primary.lines[0].get_marker(), 'o')
+        self.assertEqual(len(primary.patches), 0)
+        self.assertTrue(any('심박' in line.get_label() for line in primary.lines))
 
     def test_render_all_scopes_metadata_limits_and_private_files(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -196,10 +122,19 @@ class TrainingChartsTest(unittest.TestCase):
             for scope in charts.SCOPES:
                 with self.subTest(scope=scope):
                     value = fixture(scope)
+                    if scope == '30d':
+                        second = copy.deepcopy(value['current']['sessions'][0])
+                        second['session_id'] = 'second'; second['completed_date'] = '2026-01-01'
+                        value['current']['sessions'].append(second)
                     out = root / scope
                     graphs = charts.render(value, out, cache_dir=root / 'cache')
-                    self.assertLessEqual(sum(graph.metric != 'heart_rate_set_intervals' for graph in graphs), 3)
-                    self.assertEqual(sum(graph.metric == 'heart_rate_set_intervals' for graph in graphs), int(scope == 'day'))
+                    self.assertLessEqual(sum(graph.metric != 'heart_rate_zones_legacy' for graph in graphs), 3)
+                    self.assertEqual(sum(graph.metric == 'heart_rate_zones_legacy' for graph in graphs), int(scope == 'day'))
+                    if scope == '30d':
+                        self.assertTrue(graphs)
+                        self.assertTrue(all(g.metric == 'session_load_reps_sets' for g in graphs))
+                    if scope in ('7d', 'all'):
+                        self.assertEqual(graphs, [])
                     for graph in graphs:
                         path = out / graph.name
                         meta = description(path)
