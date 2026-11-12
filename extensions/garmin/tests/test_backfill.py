@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import psycopg
 import backfill_runtime
-from garmin_pipeline import backfill, backlog, collect, coverage, dates, errors, garmin, store
+from garmin_pipeline import backfill, backlog, collect, coverage, dates, errors, fetch_diagnostics, garmin, store
 from collect_oracle_support import cfg, fixture, NOW
 
 DAY = date(2026, 10, 15)
@@ -43,8 +43,72 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(split[days[1]]['extra'], {'preserved':True})
         self.assertEqual(split[days[1]]['dateWeightList'], [weight])
         self.assertIsNone(split[days[0]])
-        with self.assertRaises(errors.Transient): garmin.split_range('body_battery', [{'date':'2020-01-01'}], days, 'UTC')
-        with self.assertRaises(errors.Transient): garmin.split_range('daily_weigh_ins', {'dateWeightList':[{}]}, days, 'UTC')
+        with self.assertRaises(errors.InvalidResponse): garmin.split_range('body_battery', [{'date':'2020-01-01'}], days, 'UTC')
+        with self.assertRaises(errors.InvalidResponse): garmin.split_range('daily_weigh_ins', {'dateWeightList':[{}]}, days, 'UTC')
+
+    def test_weight_range_summaries_use_only_requested_daily_measurements(self):
+        days = [DAY.isoformat(), (DAY + timedelta(days=1)).isoformat(), (DAY + timedelta(days=2)).isoformat()]
+        metric = {'calendarDate': days[1], 'timestampGMT': NOW, 'weight': 60000, 'unknown': True}
+        payload = {'dailyWeightSummaries': [
+            {'summaryDate': days[1], 'numOfWeightEntries': 1, 'allWeightMetrics': [metric], 'latestWeight': metric},
+            {'summaryDate': days[2], 'allWeightMetrics': []}],
+            'previousDateWeight': {'calendarDate': '2000-01-01', 'weight': 90000},
+            'nextDateWeight': {'calendarDate': '2099-01-01', 'weight': 90000},
+            'totalAverage': {'weight': 90000}}
+        self.assertEqual(garmin.split_range('daily_weigh_ins', payload, days, 'UTC'),
+                         {days[0]: None, days[1]: {'dateWeightList': [metric]}, days[2]: None})
+        self.assertEqual(garmin.split_range('daily_weigh_ins', {'dailyWeightSummaries': []}, days, 'UTC'), dict.fromkeys(days))
+
+    def test_weight_shape_errors_are_rejected_without_echoing_input(self):
+        for payload in ([], {}, {'dailyWeightSummaries': None}, {'dailyWeightSummaries': [None]},
+                        {'dailyWeightSummaries': [{'summaryDate': DAY.isoformat(), 'allWeightMetrics': None}]},
+                        {'dailyWeightSummaries': [{'summaryDate': 'SYNTHETIC_SECRET', 'allWeightMetrics': []}]},
+                        {'dateWeightList': [{}]}, {'dateWeightList': [{'calendarDate': 12345}]},
+                        {'dateWeightList': [{'calendarDate': '2000-01-01'}]},
+                        {'dateWeightList': [{'timestampGMT': float('inf')}]},
+                        {'dailyWeightSummaries': [{'summaryDate': DAY.isoformat(), 'allWeightMetrics': [
+                            {'calendarDate': (DAY + timedelta(days=1)).isoformat()}]}]}):
+            with self.subTest(payload=payload), self.assertRaises(errors.InvalidResponse) as caught:
+                garmin.split_range('daily_weigh_ins', payload, [DAY.isoformat()], 'UTC')
+            self.assertIsInstance(caught.exception, errors.Rejected)
+            self.assertNotIsInstance(caught.exception, errors.Transient)
+            self.assertNotIn('SYNTHETIC_SECRET', str(caught.exception))
+
+    def test_timestamp_fallback_uses_configured_zone(self):
+        stamp = '2026-10-14T16:00:00Z'
+        metric = {'timestampGMT': stamp, 'weight': 60000}
+        split = garmin.split_range('daily_weigh_ins', {'dailyWeightSummaries': [
+            {'summaryDate': DAY.isoformat(), 'allWeightMetrics': [metric]}]}, [DAY.isoformat()], 'Asia/Seoul')
+        self.assertEqual(split[DAY.isoformat()]['dateWeightList'], [metric])
+
+    def test_diagnostics_project_only_fixed_causes_and_bound_messages(self):
+        for error, expected in ((errors.Transient('token=SECRET weight=60000 ' * 100), ('transient', 'network_or_service_failure')),
+                                (errors.Rejected('private health=60000'), ('rejected', 'request_failed')),
+                                (errors.InvalidResponse('SECRET'), ('invalid_response', 'invalid_response')),
+                                (errors.Transient('daily_weigh_ins: HTTP 503'), ('transient', 'http_503'))):
+            code, reason = fetch_diagnostics.diagnostic(error, 'daily_weigh_ins')
+            self.assertEqual((code, reason), expected)
+            self.assertLessEqual(len('daily_weigh_ins: ' + reason), 240)
+            events = []
+            with fetch_diagnostics.progress_events(events.append):
+                fetch_diagnostics.emit('daily_weigh_ins', code, reason)
+            self.assertEqual(json.loads(events[0])['message'], f'garmin.fetch_error:daily_weigh_ins:{code}:{reason}')
+            self.assertNotIn('SECRET', events[0])
+            self.assertNotIn('60000', events[0])
+
+    def test_abi_entry_emits_safe_fetch_progress_before_result(self):
+        import backfill as entry
+        import io
+        from contextlib import redirect_stdout
+        def run():
+            fetch_diagnostics.emit('daily_weigh_ins', 'invalid_response', 'expected_daily_weight_summaries_list')
+            return '{"status":"partial"}'
+        output = io.StringIO()
+        with patch.object(backfill_runtime, 'run', side_effect=run), redirect_stdout(output):
+            self.assertEqual(entry.main(), 0)
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([e['type'] for e in events], ['progress', 'result'])
+        self.assertEqual(events[0]['message'], 'garmin.fetch_error:daily_weigh_ins:invalid_response:expected_daily_weight_summaries_list')
 
     def test_oldest_slot_and_pending_counts(self):
         items = [item(DAY + timedelta(days=n)) for n in range(15)]
@@ -190,6 +254,64 @@ class BackfillPGTest(unittest.TestCase):
             resumed = Network()
             self.run_backfill(conn, resumed, end, endpoints=['daily_weigh_ins','body_battery'])
             self.assertEqual(resumed.requests, [])
+
+    def test_failed_weight_ranges_remain_pending_then_resume_and_normalize(self):
+        with self.database() as conn:
+            end = DAY + timedelta(days=25)
+            self.seed(conn, 'day', (DAY - timedelta(days=1)).isoformat(), 'daily_weigh_ins', {'dateWeightList': []})
+            # 예전 버전과 같은 transient 26건을 만든 뒤 공식 run 경로로 재개한다.
+            class TransientNetwork(Network):
+                def fetch_range(self, endpoint, start, end):
+                    raise errors.Transient('synthetic secret health=60000')
+            failed = self.run_backfill(conn, TransientNetwork(), end, endpoints=['daily_weigh_ins'])
+            self.assertEqual(failed['errors'], 26)
+            self.assertEqual(failed['remaining_endpoints'], 26)
+            with store.transaction(conn):
+                pending = coverage.items(conn, cfg(), DAY, end)
+                self.assertTrue(all(i.plannable for i in pending if i.endpoint == 'daily_weigh_ins'))
+            # 매 기간마다 합성 측정을 첫날 하나 반환한다.
+            class SummaryNetwork(Network):
+                def fetch_range(self, endpoint, start, end):
+                    self._record(('range', endpoint, start.isoformat(), end.isoformat()))
+                    return garmin.RawResponse(endpoint, {'dailyWeightSummaries': [
+                        {'summaryDate': start.isoformat(), 'allWeightMetrics': [
+                            {'calendarDate': start.isoformat(), 'timestampGMT': NOW, 'weight': 60000}]}]}, 'synthetic')
+            network = SummaryNetwork()
+            result = self.run_backfill(conn, network, end, endpoints=['daily_weigh_ins'])
+            self.assertEqual((result['received'], result['not_provided'], result['remaining_endpoints']), (4, 22, 0))
+            self.assertTrue(result['projection_complete'])
+            self.assertEqual(len(network.requests), 4)
+            with store.transaction(conn):
+                weights = conn.execute('select weight_kg from garmin.day_summary where user_id=%s and connection_id=%s and weight_kg is not null', (conn.user_id, conn.connection_id)).fetchall()
+                self.assertEqual(weights, [(60.0,)] * 4)
+            again = Network()
+            self.run_backfill(conn, again, end, endpoints=['daily_weigh_ins'])
+            self.assertEqual(again.requests, [])
+
+    def test_shape_failure_records_safe_message_and_spends_rejected_budget(self):
+        with self.database() as conn:
+            events = []
+            network = Network(ranges={'daily_weigh_ins': {'unexpected': 'SECRET weight=60000'}})
+            with fetch_diagnostics.progress_events(events.append), self.assertLogs(collect.logger, level='WARNING') as logs:
+                result = self.run_backfill(conn, network, endpoints=['daily_weigh_ins'])
+            self.assertEqual(result['errors'], 1)
+            with store.transaction(conn):
+                row = conn.execute('select kind,error_code,message from garmin.fetch_error where user_id=%s and connection_id=%s', (conn.user_id, conn.connection_id)).fetchone()
+            self.assertEqual(row, ('rejected', 'invalid_response', 'daily_weigh_ins: expected_daily_weight_summaries_list'))
+            self.assertIn('expected_daily_weight_summaries_list', logs.output[0])
+            self.assertIn('expected_daily_weight_summaries_list', events[0])
+            self.assertNotIn('SECRET', ''.join(logs.output) + ''.join(events) + row[2])
+            # 날짜별 rejected 상한에 이르면 자동 무한 재시도를 하지 않는다.
+            for n in range(1, cfg().max_rejected_attempts):
+                with patch.object(dates, 'today', return_value=DAY + timedelta(days=n + 1)):
+                    backfill.run(conn, cfg(), network, DAY, DAY, endpoints=['daily_weigh_ins'], sleep=lambda _: None)
+            with store.transaction(conn):
+                remaining = [i for i in coverage.items(conn, cfg(), DAY, DAY) if i.endpoint == 'daily_weigh_ins']
+            self.assertEqual(len(remaining), 1)
+            self.assertFalse(remaining[0].plannable)
+            before = len(network.requests)
+            self.run_backfill(conn, network, endpoints=['daily_weigh_ins'])
+            self.assertEqual(len(network.requests), before)
 
     def test_interruption_and_rate_limit_resume_only_remaining(self):
         for stop in (None, errors.RateLimited('synthetic')):

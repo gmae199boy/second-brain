@@ -842,6 +842,9 @@ def _fetch(
     except errors.NoData:
         payload, library_version = None, garmin.LIBRARY_VERSION
     except (errors.Transient, errors.Rejected) as error:
+        from garmin_pipeline import fetch_diagnostics
+        code, reason = fetch_diagnostics.diagnostic(error, endpoint)
+        message = f"{endpoint}: {reason}"[:240]
         kind = (
             coverage.FetchErrorKind.TRANSIENT
             if isinstance(error, errors.Transient)
@@ -851,8 +854,8 @@ def _fetch(
             store.identity_lock(conn, 'fetch_error')
             conn.execute(
                 "INSERT INTO garmin.fetch_error"
-                " (user_id, connection_id, run_id, scope, key, endpoint, kind, local_date, occurred_at, error_code)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " (user_id, connection_id, run_id, scope, key, endpoint, kind, local_date, occurred_at, error_code, message)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     conn.user_id, conn.connection_id, run_id,
                     scope,
@@ -861,15 +864,18 @@ def _fetch(
                     kind.value,
                     today.isoformat(),
                     dates.now_ms(),
-                    kind.value,
+                    code,
+                    message,
                 ),
             )
+        fetch_diagnostics.emit(endpoint, code, reason)
         logger.warning(
-            "항목 실패: scope=%s key=%s endpoint=%s error=%s",
+            "항목 실패: scope=%s key=%s endpoint=%s error=%s message=%s",
             scope,
             key,
             endpoint,
             type(error).__name__,
+            message,
         )
         return kind
     else:

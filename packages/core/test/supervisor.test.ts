@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { runSupervisor } from '../src/queue/supervisor.js';
+import { publicGarminFetchDiagnostic, runSupervisor } from '../src/queue/supervisor.js';
 import { drainQueue } from '../src/queue/drain.js';
 import { manualTime } from '../src/testing/fakes/clock.js';
 import { fakeProcessLauncher, fakeProcessInspector } from '../src/testing/fakes/process.js';
@@ -10,7 +10,7 @@ import { memorySchemaStore } from '../src/testing/fakes/schema-store.js';
 import type { ProcessLauncher } from '../src/ports/process.js';
 const now = new Date('2026-10-29T00:00:00Z');
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-async function kit(options: { holdGroup?: string; keys?: (string | null)[]; launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void; protectedLaunches?: Parameters<typeof runSupervisor>[0]['protectedLaunches']; prepareLaunch?: Parameters<typeof runSupervisor>[0]['prepareLaunch'] } = {}) {
+async function kit(options: { kind?: string; holdGroup?: string; keys?: (string | null)[]; launcher?: ProcessLauncher; configureStore?: (store: ReturnType<typeof memoryStore>) => void; log?: (message: string) => void; protectedLaunches?: Parameters<typeof runSupervisor>[0]['protectedLaunches']; prepareLaunch?: Parameters<typeof runSupervisor>[0]['prepareLaunch'] } = {}) {
   const store = memoryStore();
   options.configureStore?.(store);
   const time = manualTime(now);
@@ -18,13 +18,14 @@ async function kit(options: { holdGroup?: string; keys?: (string | null)[]; laun
   const controller = new AbortController();
   const idGen = sequenceIdGen({ timestampMs: now.getTime() });
   const id = idGen.next();
+  if (options.kind) await store.recordExtensionInstall({ name: 'garmin', version: '1.2.9', now, workKinds: [options.kind] });
   for (const [index, key] of (options.keys ?? [null]).entries())
-    await store.addWork({ id: index === 0 ? id : idGen.next(), serializationKey: key, holdGroup: options.holdGroup, kind: 'process_probe', targetKind: 'probe', targetId: String(700000 + index), createdAt: now, nextAttemptAt: now });
+    await store.addWork({ id: index === 0 ? id : idGen.next(), serializationKey: key, holdGroup: options.holdGroup, kind: options.kind ?? 'process_probe', targetKind: 'probe', targetId: String(700000 + index), createdAt: now, nextAttemptAt: now });
   const running = runSupervisor({ schemaVersions: { core: 3 }, store: { ...store, ...memorySchemaStore({ version: 3 }) }, ...time, inspector: fakeProcessInspector(launcher), launcher: options.launcher ?? launcher, idGen,
     ...(options.prepareLaunch === undefined ? {} : { prepareLaunch: options.prepareLaunch }),
     ...(options.log === undefined ? {} : { log: options.log }),
     ...(options.protectedLaunches === undefined ? {} : { protectedLaunches: options.protectedLaunches }),
-    launches: { process_probe: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
+    launches: { [options.kind ?? 'process_probe']: () => ({ command: 'probe', args: [], env: {} }) }, signal: controller.signal });
   await flush();
   return { store, time, launcher, controller, idGen, id, running };
 }
@@ -484,4 +485,40 @@ it('passes preflight ID to protected preparation and validates its final overwri
     expect(JSON.parse(k.launcher.specs[0]!.env.BRAIN_SETTINGS_SNAPSHOT!).user_id).toBe(userId);
     k.launcher.processes[0]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[0]!.exit(); await flush();
   } finally { k.controller.abort(); await k.running; }
+});
+
+
+it('Garmin 실패 진단은 고정 사유만 받아 보호된 실행의 daemon 로그에 남긴다', async () => {
+  const message = 'garmin.fetch_error:daily_weigh_ins:invalid_response:expected_daily_weight_summaries_list';
+  const logs: string[] = [];
+  const k = await kit({ kind: 'garmin.backfill', log: message => { logs.push(message); }, protectedLaunches: {
+    'garmin.backfill': { extension: 'garmin', declarations: {}, errorCodes: [], async prepare(item, token) {
+      return { ok: true, spec: { command: 'probe', args: [], env: {
+        BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id,
+        BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind,
+        BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts),
+        BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"garmin","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}',
+      } } };
+    } },
+  } });
+  try {
+    const child = k.launcher.processes[0]!;
+    child.writeStderr('SECRET weight=60000');
+    child.push(JSON.stringify({ abi: 1, type: 'progress', message: message + ' SECRET weight=60000' }));
+    child.push(JSON.stringify({ abi: 1, type: 'progress', message }));
+    child.push(JSON.stringify({ abi: 1, type: 'result', summary: '{}' }));
+    child.exit(); await flush();
+    expect(logs).toEqual(['Garmin fetch_error endpoint=daily_weigh_ins code=invalid_response message=expected_daily_weight_summaries_list']);
+    expect(JSON.stringify(k.store.snapshot()) + logs.join('')).not.toMatch(/SECRET|60000/);
+    expect(k.store.snapshot().workAttempts[0]).toMatchObject({ outcome: 'succeeded', stderr: null });
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it('Garmin 진단 투영은 endpoint·사유·길이·일감 종류를 제한한다', () => {
+  for (const message of [undefined, 'garmin.fetch_error:secret:transient:network_or_service_failure',
+    'garmin.fetch_error:daily_weigh_ins:transient:health_60000',
+    'garmin.fetch_error:daily_weigh_ins:transient:network_or_service_failure\nSECRET', 'x'.repeat(10000)])
+    expect(publicGarminFetchDiagnostic('garmin.backfill', message)).toBeUndefined();
+  expect(publicGarminFetchDiagnostic('other.kind', 'garmin.fetch_error:daily_weigh_ins:transient:http_503')).toBeUndefined();
+  expect(publicGarminFetchDiagnostic('garmin.collect', 'garmin.fetch_error:daily_weigh_ins:transient:http_503')).toContain('message=http_503');
 });

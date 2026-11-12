@@ -134,5 +134,9 @@ class Rejected(DomainError):
     """데이터 호출의 403·기타 4xx. 그 항목만 실패로 남긴다."""
 
 
+class InvalidResponse(Rejected):
+    """응답 형식 오류. 일시 장애가 아니며 기존 rejected 재시도 상한을 따른다."""
+
+
 class NoData(DomainError):
     """404·`None`·`[]`·빈 응답. 오류가 아니라 원본 `null`로 저장한다(AD-3)."""

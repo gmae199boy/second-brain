@@ -10,7 +10,9 @@ def main():
         print(json.dumps({'abi': 1, 'type': 'error', 'code': 'COLLECT_UNAVAILABLE', 'retryable': True}))
         return 1
     try:
-        summary = runtime.run()
+        from garmin_pipeline.fetch_diagnostics import progress_events
+        with progress_events():
+            summary = runtime.run()
     except (runtime.InvalidCollectInput, runtime.CredentialEvidenceError):
         event = {'abi': 1, 'type': 'error', 'code': 'COLLECT_INVALID', 'retryable': False}
     except runtime.store.LockTimeout:

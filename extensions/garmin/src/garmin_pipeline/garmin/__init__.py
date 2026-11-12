@@ -304,9 +304,9 @@ class _Session:
             except errors.NoData:
                 return RawResponse(endpoint, activities, LIBRARY_VERSION)
             if not isinstance(page.payload, list):
-                raise errors.Transient('invalid activity range')
+                raise errors.InvalidResponse('expected_range_list')
             activities.extend(page.payload)
-        raise errors.Transient('activity range pagination limit')
+        raise errors.InvalidResponse('activity_range_pagination_limit')
 
     def fetch_activity(self, endpoint: str, activity_id: int) -> RawResponse:
         call = _ACTIVITY_CALLS.get(endpoint)
@@ -373,50 +373,93 @@ class _Session:
         raise domain_error from None
 
 
-def split_range(endpoint, payload, days, zone):
-    """기간 응답을 일별 기존 원문 모양으로 분할한다. 날짜 불명 행을 버리지 않는다."""
-    result = {day: [] for day in days}
-    if endpoint == 'daily_weigh_ins':
-        if not isinstance(payload, dict) or not isinstance(payload.get('dateWeightList'), list):
-            raise errors.Transient('invalid weight range')
-        rows = payload['dateWeightList']
-    elif endpoint in ('activities_by_date', 'body_battery') and isinstance(payload, list):
-        rows = payload
-    else:
-        raise errors.Transient('invalid range shape')
-    for row in rows:
-        if not isinstance(row, dict):
-            raise errors.Transient('invalid range row')
-        if endpoint == 'activities_by_date':
-            stamp = row.get('startTimeLocal')
-        elif endpoint == 'body_battery':
-            stamp = row.get('date')
+def _range_day(stamp, result):
+    """원문 값을 오류 메시지에 넣지 않고 요청한 날짜인지 검사한다."""
+    try:
+        if not isinstance(stamp, str):
+            raise ValueError
+        key = stamp[:10]
+        if date.fromisoformat(key).isoformat() != key:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise errors.InvalidResponse('invalid_range_date') from None
+    if key not in result:
+        raise errors.InvalidResponse('range_date_outside_request')
+    return key
+
+
+def _weight_day(row, zone):
+    stamp = row.get('calendarDate')
+    if stamp is not None:
+        return stamp
+    moment = row.get('timestampGMT', row.get('date'))
+    try:
+        if isinstance(moment, (int, float)) and not isinstance(moment, bool):
+            parsed = datetime.fromtimestamp(moment / 1000, timezone.utc)
+        elif isinstance(moment, str):
+            parsed = datetime.fromisoformat(moment.replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
         else:
-            stamp = row.get('calendarDate')
-            if stamp is None:
-                moment = row.get('timestampGMT', row.get('date'))
-                try:
-                    if isinstance(moment, (int, float)) and not isinstance(moment, bool):
-                        stamp = datetime.fromtimestamp(moment / 1000, timezone.utc).astimezone(ZoneInfo(zone)).date().isoformat()
-                    elif isinstance(moment, str):
-                        parsed = datetime.fromisoformat(moment.replace('Z', '+00:00'))
-                        if parsed.tzinfo is None:
-                            parsed = parsed.replace(tzinfo=timezone.utc)
-                        stamp = parsed.astimezone(ZoneInfo(zone)).date().isoformat()
-                except (ValueError, TypeError, OverflowError, OSError):
-                    raise errors.Transient('invalid weight date') from None
-        try:
-            key = stamp[:10]
-            if date.fromisoformat(key).isoformat() != key:
-                raise ValueError('invalid date')
-        except (ValueError, TypeError):
-            raise errors.Transient('invalid range date') from None
-        # 범위 밖 응답은 정상 완료로 확정하지 않고 재시도할 수 있게 둔다.
-        if key not in result:
-            raise errors.Transient('range row outside requested days')
-        result[key].append(row)
+            raise ValueError
+        return parsed.astimezone(ZoneInfo(zone)).date().isoformat()
+    except (ValueError, TypeError, OverflowError, OSError):
+        raise errors.InvalidResponse('invalid_weight_date') from None
+
+
+def _split_weight_range(payload, days, zone):
+    """range API는 summary 목록, dayview API는 dateWeightList다. 앞뒤 측정·평균은 분리한다."""
+    result = {day: [] for day in days}
+    if not isinstance(payload, dict):
+        raise errors.InvalidResponse('expected_weight_range_object')
+    if 'dailyWeightSummaries' not in payload:
+        # 기존 일별 호환 원문과 합성 클라이언트도 계속 지원한다.
+        rows = payload.get('dateWeightList')
+        if not isinstance(rows, list):
+            raise errors.InvalidResponse('expected_daily_weight_summaries_list')
+        for row in rows:
+            if not isinstance(row, dict):
+                raise errors.InvalidResponse('expected_weight_metric_object')
+            result[_range_day(_weight_day(row, zone), result)].append(row)
+        return {day: {**payload, 'dateWeightList': rows} if rows else None
+                for day, rows in result.items()}
+    summaries = payload['dailyWeightSummaries']
+    if not isinstance(summaries, list):
+        raise errors.InvalidResponse('expected_daily_weight_summaries_list')
+    seen = set()
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            raise errors.InvalidResponse('expected_weight_summary_object')
+        stamp = summary.get('summaryDate')
+        key = _range_day(stamp, result)
+        if stamp != key or key in seen:
+            raise errors.InvalidResponse('invalid_weight_summary_date')
+        seen.add(key)
+        rows = summary.get('allWeightMetrics')
+        if not isinstance(rows, list):
+            raise errors.InvalidResponse('expected_all_weight_metrics_list')
+        for row in rows:
+            if not isinstance(row, dict):
+                raise errors.InvalidResponse('expected_weight_metric_object')
+            if _range_day(_weight_day(row, zone), result) != key:
+                raise errors.InvalidResponse('weight_summary_date_mismatch')
+        # 전체 원문은 backfill_range.*에 이미 보존했다. 일별 원문에 기간 평균을 섞지 않는다.
+        result[key] = rows
+    return {day: {'dateWeightList': rows} if rows else None for day, rows in result.items()}
+
+
+def split_range(endpoint, payload, days, zone):
+    """기간 응답을 일별 기존 원문 모양으로 분할한다. 형식 오류는 일시 장애가 아니다."""
     if endpoint == 'daily_weigh_ins':
-        return {day: {**payload, 'dateWeightList': rows} if rows else None for day, rows in result.items()}
+        return _split_weight_range(payload, days, zone)
+    result = {day: [] for day in days}
+    if endpoint not in ('activities_by_date', 'body_battery') or not isinstance(payload, list):
+        raise errors.InvalidResponse('expected_range_list')
+    for row in payload:
+        if not isinstance(row, dict):
+            raise errors.InvalidResponse('expected_range_row_object')
+        stamp = row.get('startTimeLocal') if endpoint == 'activities_by_date' else row.get('date')
+        result[_range_day(stamp, result)].append(row)
     return {day: rows or None for day, rows in result.items()}
 
 

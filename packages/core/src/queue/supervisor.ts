@@ -9,6 +9,25 @@ import type { ChannelStore } from '../channels/store.js';
 import { createAbiRun, createAbiStderr, decodeAbiEnv, isAbiUserId, type AbiRunVerdict } from '../process-abi/codec.js';
 import { checkSchema, type SchemaVersions } from '../schema.js';
 import { cleanProcessGroup, inspectGroup, type GroupIdentity } from './process-cleanup.js';
+
+// 보호된 확장의 stderr·임의 문자열은 계속 버리고 고정 어휘 진단만 daemon 로그로 보낸다.
+export function publicGarminFetchDiagnostic(kind: string, message: string | undefined): string | undefined {
+  if (!['garmin.backfill', 'garmin.collect', 'garmin.collect_retry', 'garmin.collect_recent'].includes(kind) ||
+      !message || message.length > 240) return undefined;
+  const match = /^garmin\.fetch_error:([a-z_]+):(transient|rejected|invalid_response):([a-z_0-9]+)$/.exec(message);
+  if (!match) return undefined;
+  const [, endpoint, code, reason] = match;
+  const endpoints = ['sleep_data', 'hrv_data', 'rhr_day', 'heart_rates', 'stress_data', 'body_battery',
+    'user_summary', 'training_readiness', 'daily_weigh_ins', 'lifestyle_logging_data', 'activities_by_date',
+    'activity', 'activity_details', 'activity_hr_in_timezones', 'activity_exercise_sets'];
+  const reasons = ['expected_weight_range_object', 'expected_daily_weight_summaries_list',
+    'expected_weight_summary_object', 'invalid_weight_summary_date', 'expected_all_weight_metrics_list',
+    'expected_weight_metric_object', 'weight_summary_date_mismatch', 'invalid_weight_date', 'invalid_range_date',
+    'range_date_outside_request', 'expected_range_list', 'expected_range_row_object',
+    'activity_range_pagination_limit', 'invalid_response', 'request_failed', 'network_or_service_failure'];
+  if (!endpoints.includes(endpoint!) || !(reasons.includes(reason!) || /^http_[1-5][0-9]{2}$/.test(reason!))) return undefined;
+  return `Garmin fetch_error endpoint=${endpoint} code=${code} message=${reason}`;
+}
 // Persist only narrowly defined, non-health public Garmin result summaries.
 export function publicCollectSummary(kind: string, summary: string | undefined): Record<string, string | number> | undefined {
   if (!summary || summary.length > 2048) return undefined;
@@ -309,6 +328,13 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
               if (run.violation) { failed = run.violation.reason; terminate('protocol'); break; }
               for (const event of progress) {
                 const now = clock.now();
+                if (event.type === 'progress') {
+                  const diagnostic = publicGarminFetchDiagnostic(item.kind, event.message);
+                  // 로그 쓰기 실패는 수집이나 임대 갱신을 방해하지 않는다.
+                  if (diagnostic !== undefined) {
+                    try { await options.log?.(diagnostic); } catch { /* 다음 이벤트를 계속 처리한다. */ }
+                  }
+                }
                 if (event.type !== 'heartbeat') lastProgress = now.getTime();
                 if (event.type === 'result' || event.type === 'error') sawFinal = true;
                 const lastWritten = event.type === 'heartbeat' ? lastRenewed : lastProgressPersisted;
