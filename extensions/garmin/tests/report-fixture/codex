@@ -58,7 +58,7 @@ if scope != 'intake':
         observed['evaluations'] = {str(path.relative_to(folder)): json.loads(path.read_text())
                                    for path in sorted((folder / 'previous_evaluations').glob('*.json'))}
     else:
-        if len(lines) != 5: sys.exit(23)
+        if len(lines) < 5: sys.exit(23)
         profile = (runtime / lines[4]).resolve()
         if not profile.is_relative_to(runtime.resolve()): sys.exit(24)
         observed['profile'] = profile.read_text(encoding='utf-8')
