@@ -903,6 +903,7 @@
     "migrations/0016_report_publication.sql",
     "migrations/0017_period_analysis.sql",
     "migrations/0018_report_message.sql",
+    "migrations/0019_scope_snapshot.sql",
     "pyproject.toml",
     "skills/garmin-body-intake/SKILL.md",
     "skills/garmin-daily-analysis/SKILL.md",

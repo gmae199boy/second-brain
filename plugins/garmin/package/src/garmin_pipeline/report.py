@@ -1042,6 +1042,7 @@ def _save_evaluation(cfg, day, scope, analysis):
                 model=cfg.report_model or "",
                 created_at=dates.now_ms(),
                 message=getattr(analysis, "message", None),
+                structured=getattr(analysis, "structured", None),
             )
             conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
                          (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, day.isoformat(), scope, revision))
@@ -1152,15 +1153,12 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
                     # New arrivals belong to a later run; reject removes pending too.
                     if unhandled:
                         failed = True
-    exported = report_input.build(cfg, today, started_at=started_at)
-    measurements = digest.build(exported.manifest, exported.days, exported.activities,
-                                exported.labels, exported.body)
-    report_input.write_json(exported.path / 'digest.json', measurements)
+    exported = report_input.prepare_snapshot(cfg, today, os.environ['BRAIN_WORK_ID'], started_at=started_at)
     runtime = body.runtime_root(cfg)
     usages = []
     for scope in remaining:
         if scope == 'day':
-            inputs = [os.path.relpath(exported.path, runtime)]
+            inputs = [os.path.relpath(exported.path / 'day', runtime)]
         else:
             try:
                 folder = report_input.build_period(cfg, exported.path, today, scope)
@@ -1170,7 +1168,7 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
                 failed = True
                 continue
             inputs = [os.path.relpath(folder, runtime),
-                      os.path.relpath(exported.path / 'profile.md', runtime)]
+                      os.path.relpath(folder / 'profile.md', runtime)]
         _assert_attempt_current(cfg)
         analysis, _, failure, _ = _evaluate(cfg, writer, inputs, scope, usages)
         if failure is not None:
