@@ -1,7 +1,7 @@
 ---
 title: 운동 중심 분석 출력
 created: '2026-11-12'
-status: in-review
+status: built
 type: feature
 baseline_revision: acf8329112bf8c7ead0201fb766eb55885c13a32
 route: full
@@ -74,3 +74,5 @@ review_source: pinned
 ## Verification
 
 개발 중 `pnpm build`, `pnpm typecheck`, `git diff --check`를 사용한다. 최신 중앙 지시(main 75ec75c8)에 따라 개발 완료 뒤 관련 시험 파일만 지정해 실행한다. 이미 실행한 전체 pnpm test는 끝까지 보존하고 무관한 실패는 통합 단계 재검증 대상으로 기록한다. 전체 Python 회귀와 test:changed는 실행하지 않는다. 독립 리뷰어는 Codex gpt-6.1-sol/medium이며 시험·수정·하위 워커를 금지한 읽기 전용 과업을 맡긴다.
+
+검증 완료: 관련 Python 6개 파일 75개 시험 종료 코드 0, apps/cli/python-test/garmin-report.test.ts 17개 시험 종료 코드 0. 기존 전체 pnpm test는 종료 코드 1(5,424 통과/22 실패)이며 무관한 시간·DB·설치·Drive 실패는 최신 중앙 지시에 따라 통합 단계 재검증 대상으로 보고했다.
