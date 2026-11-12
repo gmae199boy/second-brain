@@ -21,6 +21,16 @@ export function publicCollectSummary(kind: string, summary: string | undefined):
       typeof v['status'] === 'string' && ['success','partial','blocked','auth_required','error','noop'].includes(v['status']) &&
       ['runs','errors'].every(k => typeof v[k] === 'number' && Number.isSafeInteger(v[k]) && (v[k] as number) >= 0))
     return {status:v['status'],runs:v['runs'] as number,errors:v['errors'] as number};
+  // 수집 실행 성공과 남은 backlog는 독립된 공개 집계다. 이 고정 계약만 보존한다.
+  const backlogCounts = ['remaining_endpoints','remaining_activities','remaining_dates','unplannable',
+    'deferred_dates','deferred_endpoints','deferred_first_call'];
+  const backlogKeys = ['status','runs','errors','execution_status','backlog_status',...backlogCounts];
+  if (['garmin.collect','garmin.collect_retry','garmin.collect_recent'].includes(kind) &&
+      Object.keys(v).sort().join(',') === [...backlogKeys].sort().join(',') &&
+      typeof v['status'] === 'string' && ['success','partial','blocked','auth_required','error','noop'].includes(v['status']) &&
+      v['execution_status'] === v['status'] && typeof v['backlog_status'] === 'string' && ['partial','complete'].includes(v['backlog_status']) &&
+      ['runs','errors',...backlogCounts].every(key => Number.isSafeInteger(v[key]) && (v[key] as number) >= 0))
+    return v as Record<string, string | number>;
   if (!['garmin.collect', 'garmin.collect_retry', 'garmin.collect_recent', 'garmin.artifacts'].includes(kind)) return undefined;
   if (kind === 'garmin.artifacts') {
     const keys = Object.keys(v).sort().join(',');

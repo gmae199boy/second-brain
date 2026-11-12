@@ -22,9 +22,9 @@ class ScheduledCollectIncomplete(Exception):
     pass
 
 
-def envelope(env):
+def envelope(env, *, work_kinds=('garmin.collect',)):
     try:
-        account, values = decode_envelope(env, work_kinds=('garmin.collect',),
+        account, values = decode_envelope(env, work_kinds=work_kinds,
                                           reject_duplicate_keys=False)
         timezone = values['garmin.timezone']
         ZoneInfo(timezone)
@@ -99,7 +99,7 @@ def run(env=None, *, port_factory=SupervisedGarmin, sleep=time.sleep):
             conn.execute('insert into garmin.collect_work_runs(work_id,user_id,connection_id,local_date,run_id) values (%s,%s,%s,%s,%s) on conflict (work_id,local_date) do update set user_id=excluded.user_id,connection_id=excluded.connection_id,run_id=excluded.run_id', (account.work_id, account.user_id, account.connection_id, day.isoformat(), run_id))
         collect.run(conn, cfg, port_factory(cfg, conn, sleep=sleep), sleep,
                     today=day if day is not None else dates.today(cfg), started_at=started_at, manual=day is None,
-                    retry_normalize_failed=day is not None,
+                    retry_normalize_failed=day is not None, oldest_backlog=True,
                     success_in_transaction=save_scheduled_success if day is not None else None,
                     notifier=ports.TableNotifier(conn))
         with store.transaction(conn):
@@ -130,4 +130,11 @@ def run(env=None, *, port_factory=SupervisedGarmin, sleep=time.sleep):
         if day is not None and public_status != 'success': raise ScheduledCollectIncomplete('scheduled collection incomplete')
         if not isinstance(count, int) or isinstance(count, bool) or not 0 <= count <= 9007199254740991:
             raise RuntimeError('invalid error count')
-        return json.dumps({'status': public_status, 'runs': 1, 'errors': count})
+        from garmin_pipeline import backlog
+        state = backlog.snapshot(conn, cfg, collect._history_start(conn, day or dates.today(cfg)), day or dates.today(cfg))
+        with store.transaction(conn):
+            saved = conn.execute("select value from garmin.meta where user_id=%s and connection_id=%s and key='collect_backlog'", (account.user_id, account.connection_id)).fetchone()
+        previous = json.loads(saved[0]) if saved else {}
+        state.update({key: previous.get(key, 0) for key in ('deferred_dates', 'deferred_endpoints', 'deferred_first_call')})
+        return json.dumps({'status': public_status, 'runs': 1, 'errors': count,
+            'execution_status': public_status, 'backlog_status': 'partial' if state['remaining_endpoints'] else 'complete', **state})

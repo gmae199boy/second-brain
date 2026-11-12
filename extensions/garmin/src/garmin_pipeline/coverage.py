@@ -241,6 +241,7 @@ def day_status(conn: store.Connection, day: date) -> DayStatus:
     row = conn.execute(
         "SELECT status, detail, finished_at FROM garmin.run"
         " WHERE user_id = %s AND connection_id = %s AND local_date = %s AND status != %s"
+        " AND NOT ('backfill' = ANY(string_to_array(detail, ' ')))"
         # LIKE는 `_`를 와일드카드로 읽으므로 앞부분을 그대로 비교한다.
         " ORDER BY status = %s AND (detail = %s OR substr(detail, 1, %s) = %s),"
         " started_at DESC, id DESC LIMIT 1",

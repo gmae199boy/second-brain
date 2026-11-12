@@ -13,7 +13,7 @@ import {
   type DoctorCheckSource,
   type Spool,
 } from 'second_brain';
-import { readConfig, type ReadConfigResult } from '../config/codec.js';
+import { readConfig, resolveStoreUrl, extensionDatabaseUrl, type ReadConfigResult } from '../config/codec.js';
 import { HOME_ENV, configFilePath, pluginRunPath, spoolPath, lastHookPath } from '../config/paths.js';
 import { describeErrorLine, oneLine } from '../error-text.js';
 import {
@@ -151,6 +151,7 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
       try {await stat(join(home,'.drive-refresh.lock'));return {id:'drive-refresh-lock',status:'warn',code:'DRIVE_REFRESH_LOCK_PRESENT',detail:'Drive 토큰 갱신 잠금이 있습니다. 소유자와 자식, 진행 중 I/O 종료를 확인한 뒤 복구하세요'};}
       catch(error){return (error as NodeJS.ErrnoException).code==='ENOENT'?{id:'drive-refresh-lock',status:'ok',detail:'Drive 토큰 갱신 잠금이 없습니다'}:{id:'drive-refresh-lock',status:'warn',code:'DRIVE_REFRESH_LOCK_UNKNOWN',detail:'Drive 토큰 갱신 잠금 상태를 확인할 수 없습니다'};}
     } },
+    { id: 'garmin-backlog', run: async () => garminBacklogCheck(home, await config()) },
     { id: 'daemon', run: async () => {
       const state = await daemonLiveness({ home, clock: options.clock ?? systemClock });
       const heartbeat = state.heartbeatAt === null ? '' : `, 마지막 heartbeat ${isoWithOffset(state.heartbeatAt)}`;
@@ -659,4 +660,31 @@ async function lastHookCheck(home: string, names: readonly string[]): Promise<Do
     }
   }
   return { id: 'last-hook', status: duplicate ? 'warn' : 'ok', ...(duplicate ? { code: 'PLUGIN_DUPLICATE' } : {}), detail: parts.join('. ') };
+}
+
+/** 설치된 확장의 읽기 진단만 실행한다. 출력은 정수 집계로 제한한다. */
+export async function garminBacklogCheck(home: string, config: ReadConfigResult): Promise<DoctorCheck> {
+  const id = 'garmin-backlog';
+  const root = join(home, 'extensions/garmin');
+  const entry = join(root, 'src/doctor_backlog.py');
+  if (!await isReadable(entry)) return { id, status: 'skip', detail: 'Garmin 미수집 진단이 설치되지 않았습니다' };
+  if (!config.ok) return { id, status: 'skip', detail: '설정이 없어 Garmin 미수집 상태를 조회하지 못했습니다' };
+  try {
+    const runtimeUrl = await resolveStoreUrl(home, config.config.storeUrlEnv, process.env);
+    if (!runtimeUrl) throw new Error('missing store');
+    const databaseUrl = await extensionDatabaseUrl(home, 'garmin', runtimeUrl);
+    const { stdout } = await execFile(join(root, '.venv/bin/python'), [entry], {
+      timeout: 20_000, maxBuffer: 4096, encoding: 'utf8',
+      env: { BRAIN_DATABASE_URL: databaseUrl, PYTHONDONTWRITEBYTECODE: '1' },
+    });
+    const value: unknown = JSON.parse(stdout);
+    const keys = ['remaining_endpoints', 'remaining_activities', 'remaining_dates', 'unplannable', 'deferred_dates', 'deferred_endpoints', 'deferred_first_call'];
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('invalid counts');
+    const counts = value as Record<string, unknown>;
+    if (Object.keys(counts).length !== keys.length || keys.some(key => !Number.isSafeInteger(counts[key]) || (counts[key] as number) < 0)) throw new Error('invalid counts');
+    return { id, status: (counts['remaining_endpoints'] as number) > 0 ? 'warn' : 'ok',
+      detail: `미수집 endpoint ${String(counts['remaining_endpoints'])}, 활동 ${String(counts['remaining_activities'])}, 날짜 ${String(counts['remaining_dates'])}; 최근 수집에서 날짜 상한으로 미룬 날짜 ${String(counts['deferred_dates'])}, 항목 ${String(counts['deferred_endpoints'])}; 최초 호출 보호로 미룬 항목 ${String(counts['deferred_first_call'])}; 재시도 상한 ${String(counts['unplannable'])}` };
+  } catch {
+    return { id, status: 'warn', detail: 'Garmin 미수집 상태를 확인하지 못했습니다' };
+  }
 }

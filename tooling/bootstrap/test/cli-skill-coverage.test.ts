@@ -42,6 +42,7 @@ it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin �
     const manual = manifest.work.flatMap(work => work.manual ? [`ext run garmin ${work.manual}`] : []);
     const queries = manifest.commands.map(command => `ext garmin ${command.name}`);
     expect(manual).toContain('ext run garmin report-send');
+    expect(manual).toContain('ext run garmin backfill');
     expect(manual.length).toBeGreaterThan(0);
     expect(uncovered([...manual, ...queries], garmin, [])).toEqual([]);
     expect(uncovered([...manual, 'ext run garmin new-manual'], garmin, [])).toContain('ext run garmin new-manual');
@@ -98,4 +99,9 @@ it('Garmin 분석 요청은 일일·기간·주간/월간 리뷰와 완료 후 �
   expect(text).toContain('다시 보내기 요청');
   expect(text).toContain('새 revision·첨부·서식 버전은 새 이벤트');
   expect(text).not.toContain('항상 발신한다');
+});
+
+it('Garmin 백필 스킬은 계획·실행·재개와 backlog 완료를 구별한다', () => {
+  const text=body('plugins/garmin/skills/brain-garmin-operations/SKILL.md');
+  for (const token of ['"dry_run":true', '"dry_run":false', 'expected_calls_min', 'remaining_endpoints', 'not_provided', 'projection_complete', 'execution_status', 'backlog_status']) expect(text).toContain(token);
 });

@@ -259,3 +259,20 @@ it('allows only bounded, generic status and integer counts for public result sum
   expect(publicCollectSummary('example.work', '{broken')).toBeUndefined();
   expect(publicCollectSummary('example.work', 'x'.repeat(2049))).toBeUndefined();
 });
+
+it('수집 backlog는 고정 상태와 명시한 비음수 정수만 공개하고 기존 요약을 보존한다', async () => {
+  const {publicCollectSummary}=await import('../src/queue/supervisor.js');
+  const value={status:'success',runs:1,errors:0,execution_status:'success',backlog_status:'partial',
+    remaining_endpoints:12,remaining_activities:2,remaining_dates:4,unplannable:0,
+    deferred_dates:1,deferred_endpoints:3,deferred_first_call:2};
+  expect(publicCollectSummary('garmin.collect',JSON.stringify(value))).toEqual(value);
+  expect(publicCollectSummary('garmin.collect',JSON.stringify({status:'success',runs:1,errors:0}))).toEqual({status:'success',runs:1,errors:0});
+  for(const change of [{health:80},{raw:'private'},{remaining_endpoints:-1},{remaining_dates:'4'},
+    {remaining_dates:0.5},{deferred_first_call:true},{runs:-1},{errors:'0'},
+    {status:'unknown'},{execution_status:'error'},{backlog_status:'unknown'},{backlog_status:['partial']}])
+    expect(publicCollectSummary('garmin.collect',JSON.stringify({...value,...change}))).toBeUndefined();
+  const {deferred_dates:removed,...missing}=value;
+  expect(removed).toBe(1);
+  expect(publicCollectSummary('garmin.collect',JSON.stringify(missing))).toBeUndefined();
+  expect(publicCollectSummary('other.work',JSON.stringify(value))).toBeUndefined();
+});

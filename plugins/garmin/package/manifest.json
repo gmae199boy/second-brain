@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -184,6 +184,59 @@
         "garmin.tokenstore"
       ],
       "missed": "latest"
+    },
+    {
+      "kind": "garmin.backfill",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/backfill.py",
+      "manual": "backfill",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.tokenstore"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "end_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "endpoints": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "sleep_data",
+                "hrv_data",
+                "rhr_day",
+                "heart_rates",
+                "stress_data",
+                "body_battery",
+                "user_summary",
+                "training_readiness",
+                "daily_weigh_ins",
+                "lifestyle_logging_data",
+                "activities_by_date",
+                "activity",
+                "activity_details",
+                "activity_hr_in_timezones",
+                "activity_exercise_sets"
+              ]
+            }
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     {
       "kind": "garmin.report",
@@ -855,6 +908,195 @@
       },
       "timeout_ms": 15000,
       "risk": "read"
+    },
+    {
+      "name": "backfill-status",
+      "runtime": "python",
+      "entry": "src/query_backfill_status.py",
+      "description": "백필 계획·결과 조회",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "work_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "connection_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "dry_run",
+                      "success",
+                      "partial",
+                      "rate_limited",
+                      "blocked_403",
+                      "skipped_blocked",
+                      "auth_failed",
+                      "error"
+                    ]
+                  },
+                  "plan": {
+                    "type": "object",
+                    "properties": {
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "date": {
+                              "type": "string",
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            },
+                            "endpoint": {
+                              "type": "string",
+                              "enum": [
+                                "sleep_data",
+                                "hrv_data",
+                                "rhr_day",
+                                "heart_rates",
+                                "stress_data",
+                                "body_battery",
+                                "user_summary",
+                                "training_readiness",
+                                "daily_weigh_ins",
+                                "lifestyle_logging_data",
+                                "activities_by_date",
+                                "activity",
+                                "activity_details",
+                                "activity_hr_in_timezones",
+                                "activity_exercise_sets"
+                              ]
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "date",
+                            "endpoint",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "expected_calls_min": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "additional_activity_details_unknown": {
+                        "type": "boolean"
+                      },
+                      "activity_list_pages_unknown": {
+                        "type": "boolean"
+                      },
+                      "remaining_endpoints": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "remaining_activities": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "remaining_dates": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "unplannable": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "items",
+                      "expected_calls_min",
+                      "additional_activity_details_unknown",
+                      "activity_list_pages_unknown",
+                      "remaining_endpoints",
+                      "remaining_activities",
+                      "remaining_dates",
+                      "unplannable"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "received": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "not_provided": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "deferred_first_call": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "errors": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "projection_complete": {
+                    "type": "boolean"
+                  },
+                  "remaining_endpoints": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "remaining_activities": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "remaining_dates": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "unplannable": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "status",
+                  "plan",
+                  "received",
+                  "not_provided",
+                  "remaining_endpoints",
+                  "remaining_activities",
+                  "remaining_dates",
+                  "unplannable"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "timeout_ms": 15000,
+      "risk": "read"
     }
   ],
   "requires": [
@@ -909,6 +1151,8 @@
     "skills/garmin-period-review/SKILL.md",
     "src/artifact_publish.py",
     "src/artifacts.py",
+    "src/backfill.py",
+    "src/backfill_runtime.py",
     "src/batch_import.py",
     "src/body_ipc.py",
     "src/body_runtime.py",
@@ -919,8 +1163,11 @@
     "src/collect_refresh.py",
     "src/collect_runtime.py",
     "src/contract.py",
+    "src/doctor_backlog.py",
     "src/garmin_pipeline/__init__.py",
     "src/garmin_pipeline/auth.py",
+    "src/garmin_pipeline/backfill.py",
+    "src/garmin_pipeline/backlog.py",
     "src/garmin_pipeline/body.py",
     "src/garmin_pipeline/charts.py",
     "src/garmin_pipeline/cli.py",
@@ -956,6 +1203,7 @@
     "src/period_analysis_runtime.py",
     "src/preflight.py",
     "src/query.py",
+    "src/query_backfill_status.py",
     "src/query_daily_values.py",
     "src/query_period_summary.py",
     "src/query_recent_evaluations.py",

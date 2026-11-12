@@ -15,6 +15,12 @@ import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 const source=fileURLToPath(new URL('../../../extensions/garmin/tests/supervised_fake_network.py',import.meta.url));
 const self='01940000-0000-7000-8000-00000000000a';
 type Request={work:string;target:string;kind:string;endpoint:string|null;key:string|null};
+function collectSummary(status:string, errors:number, remaining=0) {
+  return {status,runs:1,errors,execution_status:status,backlog_status:remaining ? 'partial':'complete',
+    remaining_endpoints:remaining,remaining_activities:0,remaining_dates:remaining ? 1:0,unplannable:0,
+    deferred_dates:0,deferred_endpoints:0,deferred_first_call:0};
+}
+
 async function requests(path:string):Promise<Request[]> {
   const text=await readFile(path,'utf8').catch(()=> '');
   return text.trim() ? text.trim().split('\n').map(line=>JSON.parse(line) as Request) : [];
@@ -172,7 +178,7 @@ it('installed manifest and supervisor collect rich fixture equal pinned SQLite t
     }
     expect(expected.tables.daily_metric?.rows.length).toBeGreaterThan(0);
     expect(expected.tables.workout?.rows.length).toBeGreaterThan(0);
-    expect(await fixture.db.rows(`select result_summary from brain.work_attempts where work_item_id='${work}'`)).toEqual([{result_summary:{status:'success',runs:1,errors:0}}]);
+    expect(await fixture.db.rows(`select result_summary from brain.work_attempts where work_item_id='${work}'`)).toEqual([{result_summary:collectSummary('success',0)}]);
     const again=await fixture.run(['ext','run','garmin','collect','--target',account,'--json']);
     expect(again.code,again.stdout+again.stderr).toBe(0); const noop=String(again.body.data.work_id);
     expect(noop).not.toBe(work);
@@ -201,7 +207,7 @@ it('installed entry rejects MFA and expired login before data and refuses blocke
       expect(ledger.filter(row=>row.kind==='login')).toHaveLength(mode==='mfa' || mode==='expired'?1:0);
       const rows=await fixture.db.rows(`select status from garmin.run where user_id='${self}' and connection_id='${account}' order by id desc limit 1`);
       if(mode==='mfa' || mode==='expired') expect(rows).toEqual([{status:'auth_failed'}]);
-      if(mode==='mfa' || mode==='expired') expect(await fixture.db.rows(`select result_summary from brain.work_attempts where work_item_id='${work}'`)).toEqual([{result_summary:{status:'auth_required',runs:1,errors:0}}]);
+      if(mode==='mfa' || mode==='expired') expect(await fixture.db.rows(`select result_summary from brain.work_attempts where work_item_id='${work}'`)).toEqual([{result_summary:collectSummary('auth_required',0,11)}]);
       if(mode==='blocked') expect(rows).toEqual([{status:'skipped_blocked'}]);
       if(mode==='blocked') await unlink(join(tokenstore,'block.json'));
     }
@@ -256,7 +262,7 @@ it('separate work and driver wait on the same connection while a different conne
     expect(await fixture.db.rows(`select count(*)::int n from garmin.raw_observations where user_id='${self}' and connection_id='${account}'`)).toEqual(before);
     await unlink(join(app.extension,'hold-'+account));
     await expect.poll(async()=> (await fixture.db.rows(`select outcome from brain.work_items where id='${first}'`))[0]?.outcome,{timeout:60000}).toBe('succeeded');
-    expect(await fixture.db.rows(`select result_summary,previous_result from brain.work_attempts where work_item_id='${first}'`)).toEqual([{result_summary:{status:'partial',runs:1,errors:1},previous_result:null}]);
+    expect(await fixture.db.rows(`select result_summary,previous_result from brain.work_attempts where work_item_id='${first}'`)).toEqual([{result_summary:collectSummary('partial',1,1),previous_result:null}]);
     const done=await waiting.done;
     expect(done.code,done.stderr).toBe(0);
     expect(JSON.parse(done.stdout)).toMatchObject({abi:1,type:'result'});

@@ -88,6 +88,7 @@
 """
 
 import contextlib
+import json
 import logging
 import psycopg
 import time
@@ -97,6 +98,7 @@ from datetime import date, timedelta
 from garmin_pipeline import (
     config,
     coverage,
+    backlog,
     dates,
     errors,
     garmin,
@@ -223,6 +225,7 @@ def run(
     notifier: ports.Notifier | None = None,
     retry_normalize_failed: bool = False,
     success_in_transaction=None,
+    oldest_backlog: bool = False,
 ) -> None:
     """실행 한 번: 수집(`_collect_once`) → 정규화(`normalize.run`) → `normalize_failed` 판정.
 
@@ -243,6 +246,7 @@ def run(
         recent_lists=recent_lists,
         notifier=notifier,
         success_in_transaction=success_in_transaction,
+        oldest_backlog=oldest_backlog,
     )
     if retry_normalize_failed:
         normalize.run(conn, timezone=cfg.timezone, retry_failed=True)
@@ -264,12 +268,21 @@ def _collect_once(
     recent_lists: bool,
     notifier: ports.Notifier,
     success_in_transaction=None,
+    oldest_backlog: bool = False,
 ) -> None:
     """수집 한 번: `abandoned` 정리 → 진입 표 → 계획 → 수집 → `run` 행 기록 → 끝 알림 판정."""
     _abandon_running(conn, notifier)
     entered = _enter(conn, cfg, port, today, started_at, force, manual=manual)
     if entered is None:
-        return
+        if not oldest_backlog:
+            return
+        with store.transaction(conn):
+            state = coverage.day_status(conn, today)
+        # backlog 재진입은 성공 뒤 누락을 채우는 경우만 허용한다.
+        # 인증 재로그인·partial 거부 재시도의 기존 진입 정책은 그대로 둔다.
+        if state.status != errors.RunStatus.SUCCESS or not backlog.snapshot(conn, cfg, _history_start(conn, today), today)['remaining_endpoints']:
+            return
+        entered = _retry_exclude(conn, cfg, today)
     if isinstance(entered, tuple):
         _notify_end(conn, notifier, today, entered)
         return
@@ -281,7 +294,14 @@ def _collect_once(
             "INSERT INTO garmin.run (user_id, connection_id, local_date, started_at, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (conn.user_id, conn.connection_id, today.isoformat(), started_at, errors.RunStatus.RUNNING.value),
         ).fetchone()[0]
-    plan = _plan(conn, cfg, history_start, today, exclude, recent_lists=recent_lists)
+    plan = _plan(conn, cfg, history_start, today, exclude, recent_lists=recent_lists, oldest_backlog=oldest_backlog)
+    metrics = {'deferred_first_call': 0}
+    selected = {day.isoformat() for day, _ in plan}
+    if oldest_backlog:
+        with store.transaction(conn):
+            pending_items = coverage.items(conn, cfg, history_start, today)
+        deferred = [i for i in pending_items if coverage.incomplete(i) and i.day_key not in selected]
+        metrics.update(deferred_dates=len({i.day_key for i in deferred}), deferred_endpoints=len(deferred))
     logger.info("collect 계획: dates=%d", len(plan))
     first_call = _first_call_endpoints(conn)
 
@@ -301,6 +321,7 @@ def _collect_once(
             failures,
             exclude,
             first_call,
+            metrics=metrics,
         )
         if plan
         else None
@@ -316,6 +337,13 @@ def _collect_once(
         )
         reason = None
     detail = _detail(cfg, failures, reason, manual=manual)
+    if oldest_backlog:
+        state = {**backlog.snapshot(conn, cfg, history_start, today), **metrics}
+        state['execution_status'] = str(status)
+        state['backlog_status'] = 'partial' if state['remaining_endpoints'] else 'complete'
+        with store.transaction(conn):
+            conn.execute("insert into garmin.meta(user_id,connection_id,key,value) values (%s,%s,'collect_backlog',%s) on conflict (user_id,connection_id,key) do update set value=excluded.value",
+                (conn.user_id, conn.connection_id, json.dumps(state)))
     with store.transaction(conn):
         conn.execute(
             "UPDATE garmin.run SET status = %s, finished_at = %s, detail = %s WHERE user_id=%s AND connection_id=%s AND id = %s",
@@ -554,6 +582,7 @@ def _collect_plan(
     failures: dict[coverage.FetchErrorKind, int],
     exclude: _Exclude,
     first_call: tuple[str, ...],
+    *, metrics=None,
 ) -> _Stop | None:
     """세션을 열어 계획을 수집한다. 실행을 멈추면 그 (상태, 사유 토큰)을 돌려준다.
 
@@ -618,6 +647,8 @@ def _collect_plan(
                 return _stop("data", error)
         return None
     finally:
+        if metrics is not None:
+            metrics['deferred_first_call'] = sum(skipped.values())
         for endpoint, count in skipped.items():
             if count:
                 logger.info(
@@ -743,6 +774,7 @@ def _plan(
     exclude: _Exclude,
     *,
     recent_lists: bool = False,
+    oldest_backlog: bool = False,
 ) -> list[tuple[date, list[str]]]:
     """(날짜, 그날 미완료 day endpoint 목록 `DAY_ENDPOINTS` 순)을 최신순으로 최대 `max_dates_per_run`개.
 
@@ -767,7 +799,12 @@ def _plan(
         endpoints = pending.setdefault(item.day_key, [])
         if item.scope == _DAY:
             endpoints.append(item.endpoint)
-    keys = sorted(pending, reverse=True)[: cfg.max_dates_per_run]
+    ordered = sorted(pending, reverse=True)
+    keys = ordered[: cfg.max_dates_per_run]
+    if oldest_backlog and ordered and cfg.max_dates_per_run > 0:
+        # 가장 오래된 1일을 먼저 호출하고 최신 9일을 섞는다. 최초 호출 상한에도 과거가 진행한다.
+        keys = ordered[-1:] + ordered[: min(cfg.max_dates_per_run - 1, len(ordered) - 1)]
+
     return [(date.fromisoformat(key), pending[key]) for key in keys]
 
 

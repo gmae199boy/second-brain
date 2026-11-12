@@ -1362,3 +1362,14 @@ brain channels send-pending --event garmin.report.completed --date 2026-11-10
 구독이 없거나 날짜 필터에서 제외된 이벤트는 오류 없이 보관하며 구독을 추가해도 과거 이벤트를 자동 발신하지 않습니다. `send-pending --event`의 날짜는 대상 날짜, `--id`는 이벤트 ID이고 두 필터는 택일입니다. 현재 구독의 목적지에 즉시 접수하며 같은 이벤트+구독의 기존 요청은 중복 생성하지 않습니다. 구독 시각·목적지 변경은 이후 이벤트부터 적용되고 기존 예약은 그대로입니다. 기존 `garmin.report`·`garmin.period_report` 경로는 migration에서 각각 `.completed`의 immediate 구독으로 이동합니다. 다른 topic 경로와 기존 send/send-pending/retry는 유지합니다. `doctor run`은 구독 수와 보관 이벤트 수도 표시합니다.
 
 core schema 47 갱신 시 결과 이벤트를 지원하지 않는 Garmin(1.2.7 미만)은 교체 대기 상태로 정지합니다. 데이터·예약·설정은 보존되며 Garmin 설치 스킬이 안내하는 검증된 package 경로를 `brain ext install --package <package-path>`에 지정해 새 패키지를 설치하면 기존 전환 절차가 정지를 해제합니다.
+
+
+### Garmin 누락 항목 백필
+
+`brain ext run garmin backfill --target <connection-id> --input '{"dry_run":true}' --json`으로 먼저 날짜·endpoint별 누락 수와 예상 최소 호출 수를 확인합니다. 기간은 기본 `history_start`부터 계정 시간대 오늘까지이며 `start_date`, `end_date`, `endpoints` 배열로 좁힐 수 있습니다. 같은 입력에서 `dry_run`을 `false`로 바꾸면 실제 계정 수집을 접수합니다. queued는 완료가 아니므로 `brain ext garmin backfill-status --input '{"connection_id":"<connection-id>","work_id":"<work-id>"}' --json`으로 계획·실행 결과를 확인합니다. work_id를 생략하면 해당 계정의 최근 결과이며 null이면 아직 공개 영수증이 없습니다. dry-run도 공개 결과 영수증만 남기고 수집 원문·run·토큰은 바꾸지 않습니다.
+
+기존 data는 재호출하지 않습니다. 과거 빈 응답은 백필에서 한 번 다시 확인하고 계속 비어 있으면 확인 시점을 남겨 다음 재개에서 제외합니다. 연속 누락 날짜의 활동 목록·체중 기록·Body Battery는 최대 7일 기간 API로 묶습니다. 세트 상세는 활동별로 호출하며 기본 일일 summary는 동일 원문 형태의 기간 API가 없어 날짜별로 호출합니다. 목록 페이징과 새로 발견한 활동의 상세 호출은 사전 확정할 수 없어 `expected_calls_min`은 하한입니다. 기존 간격·세션 잠금·토큰 계약·403/429 중단 보호를 지킵니다.
+
+결과의 `received`, `not_provided`, `remaining_endpoints`는 각각 이번에 받은 자료·Garmin 미제공·남은 항목입니다. `projection_complete`는 normalize·day_values 반영 상태이며 보고서·그래프·메시지는 다시 생성하거나 보내지 않습니다. 중단 뒤 같은 명령을 접수하면 남은 항목부터 계속합니다. 최초에 data가 없는 새 endpoint는 결과와 관계없이 실행당 최대 3회 호출 보호를 유지하므로 partial 결과는 추가 재개가 필요할 수 있습니다.
+
+정기 수집은 날짜 상한 10개 중 한 자리를 가장 오래된 미완료 날짜에 예약합니다. 최신순만 고르면 새 endpoint의 빈 응답·실패가 최근 날짜를 계속 차지해 과거 누락이 밀리므로 가장 오래된 1일을 먼저 호출하고 최신 9일을 섞습니다. 최신 날짜가 최초 호출 상한을 먼저 소진해 오래된 날짜를 굶기는 것도 막습니다. `execution_status=success`는 이번 실행의 성공이고 `backlog_status=complete`가 전체 누락 해소입니다. `brain doctor run --json`은 현재 남은 endpoint·활동·날짜 수와 최근 정기 실행에서 날짜 상한·최초 호출 보호로 미룬 수를 구별해 표시합니다. 오늘 이미 확인한 자료의 다음 날 확정 대기는 backlog에 세지 않습니다.
