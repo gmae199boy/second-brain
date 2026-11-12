@@ -1,0 +1,1287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "training_measurements_v1",
+  "title": "training_measurements_v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "training_measurements_v1"
+    },
+    "scope": {
+      "enum": [
+        "day",
+        "7d",
+        "30d",
+        "all"
+      ]
+    },
+    "report_date": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "as_of": {
+      "type": "string"
+    },
+    "data_cutoff": {
+      "type": "string"
+    },
+    "partial_date": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attribution": {
+      "const": "completed_at"
+    },
+    "current": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "actual_days": {
+          "type": "integer"
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sessions_with_sets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "active_sets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "weighted_sets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bodyweight_sets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "missing_load_sets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "volume_sets": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "sessions",
+            "sessions_with_sets",
+            "active_sets",
+            "weighted_sets",
+            "bodyweight_sets",
+            "missing_load_sets",
+            "volume_sets"
+          ],
+          "additionalProperties": false
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string"
+              },
+              "source_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start_at": {
+                "type": "string"
+              },
+              "end_at": {
+                "type": "string"
+              },
+              "completed_date": {
+                "type": "string"
+              },
+              "status": {
+                "const": "completed"
+              },
+              "updated_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "duration_s": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "moving_duration_s": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "rest_s": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "distance_m": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "speed_m_s": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "pace_s_km": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "pace_basis": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hr_avg": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "hr_max": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "zones": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "zone": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "seconds": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "low_bpm": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "source_ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "zone",
+                    "seconds",
+                    "low_bpm",
+                    "source_ref"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "heart_rate": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "bpm": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "at",
+                    "bpm"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "heart_rate_source_ref": {
+                "type": "string"
+              },
+              "incline": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "limitations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "exercise_key": {
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "type": "string"
+                    },
+                    "equipment": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "variant": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "order": {
+                      "type": "integer"
+                    },
+                    "set_no": {
+                      "type": "integer"
+                    },
+                    "set_type": {
+                      "enum": [
+                        "ACTIVE",
+                        "REST"
+                      ]
+                    },
+                    "start_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "end_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reps": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "load_kg": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "load_kind": {
+                      "enum": [
+                        "weighted",
+                        "bodyweight",
+                        "missing",
+                        "assisted",
+                        "unknown"
+                      ]
+                    },
+                    "duration_s": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "rest_s": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "rpe": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "rir": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "role": {
+                      "enum": [
+                        "warmup",
+                        "work",
+                        "unknown"
+                      ]
+                    },
+                    "source_ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "exercise_key",
+                    "display_name",
+                    "equipment",
+                    "variant",
+                    "order",
+                    "set_no",
+                    "set_type",
+                    "start_at",
+                    "end_at",
+                    "reps",
+                    "load_kg",
+                    "load_kind",
+                    "duration_s",
+                    "rest_s",
+                    "rpe",
+                    "rir",
+                    "role",
+                    "source_ref"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "session_id",
+              "source_refs",
+              "type",
+              "start_at",
+              "end_at",
+              "completed_date",
+              "status",
+              "updated_at",
+              "duration_s",
+              "moving_duration_s",
+              "rest_s",
+              "distance_m",
+              "speed_m_s",
+              "pace_s_km",
+              "pace_basis",
+              "hr_avg",
+              "hr_max",
+              "zones",
+              "heart_rate",
+              "heart_rate_source_ref",
+              "incline",
+              "limitations",
+              "sets"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "strength": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "exercise_key": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "exposures": {
+                "type": "integer"
+              },
+              "sets": {
+                "type": "integer"
+              },
+              "reps": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "volume_kg": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "volume_partial": {
+                "type": "boolean"
+              },
+              "volume_sets": {
+                "type": "integer"
+              },
+              "missing_load_sets": {
+                "type": "integer"
+              },
+              "bodyweight_sets": {
+                "type": "integer"
+              },
+              "max_kg": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "max_kg_reps": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "session_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "same_load_reps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "load_kg": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "load_kind": {
+                      "type": "string"
+                    },
+                    "observations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "session_id": {
+                            "type": "string"
+                          },
+                          "reps": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "session_id",
+                          "reps"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "load_kg",
+                    "load_kind",
+                    "observations"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "comparability": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "limited",
+                      "comparable"
+                    ]
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "status",
+                  "limitations"
+                ],
+                "additionalProperties": false
+              },
+              "monthly": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "month": {
+                      "type": "string"
+                    },
+                    "exposures": {
+                      "type": "integer"
+                    },
+                    "sets": {
+                      "type": "integer"
+                    },
+                    "reps": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "volume_kg": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "volume_sets": {
+                      "type": "integer"
+                    },
+                    "missing_load_sets": {
+                      "type": "integer"
+                    },
+                    "bodyweight_sets": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "month",
+                    "exposures",
+                    "sets",
+                    "reps",
+                    "volume_kg",
+                    "volume_sets",
+                    "missing_load_sets",
+                    "bodyweight_sets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "exercise_key",
+              "display_name",
+              "exposures",
+              "sets",
+              "reps",
+              "volume_kg",
+              "volume_partial",
+              "volume_sets",
+              "missing_load_sets",
+              "bodyweight_sets",
+              "max_kg",
+              "max_kg_reps",
+              "session_ids",
+              "same_load_reps",
+              "comparability",
+              "monthly"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "actual_days",
+        "coverage",
+        "sessions",
+        "strength"
+      ],
+      "additionalProperties": false
+    },
+    "comparison": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "actual_days": {
+              "type": "integer"
+            },
+            "coverage": {
+              "type": "object",
+              "properties": {
+                "sessions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sessions_with_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "active_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "weighted_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "bodyweight_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "missing_load_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "volume_sets": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "sessions",
+                "sessions_with_sets",
+                "active_sets",
+                "weighted_sets",
+                "bodyweight_sets",
+                "missing_load_sets",
+                "volume_sets"
+              ],
+              "additionalProperties": false
+            },
+            "sessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "source_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "start_at": {
+                    "type": "string"
+                  },
+                  "end_at": {
+                    "type": "string"
+                  },
+                  "completed_date": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "completed"
+                  },
+                  "updated_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "duration_s": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "moving_duration_s": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "rest_s": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_m": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "speed_m_s": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "pace_s_km": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "pace_basis": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "hr_avg": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "hr_max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "zones": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "zone": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "seconds": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "low_bpm": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "source_ref": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "zone",
+                        "seconds",
+                        "low_bpm",
+                        "source_ref"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "heart_rate": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "at": {
+                          "type": "string"
+                        },
+                        "bpm": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "bpm"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "heart_rate_source_ref": {
+                    "type": "string"
+                  },
+                  "incline": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "exercise_key": {
+                          "type": "string"
+                        },
+                        "display_name": {
+                          "type": "string"
+                        },
+                        "equipment": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "variant": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "order": {
+                          "type": "integer"
+                        },
+                        "set_no": {
+                          "type": "integer"
+                        },
+                        "set_type": {
+                          "enum": [
+                            "ACTIVE",
+                            "REST"
+                          ]
+                        },
+                        "start_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "end_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reps": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "load_kg": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "load_kind": {
+                          "enum": [
+                            "weighted",
+                            "bodyweight",
+                            "missing",
+                            "assisted",
+                            "unknown"
+                          ]
+                        },
+                        "duration_s": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "rest_s": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "rpe": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "rir": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "role": {
+                          "enum": [
+                            "warmup",
+                            "work",
+                            "unknown"
+                          ]
+                        },
+                        "source_ref": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "exercise_key",
+                        "display_name",
+                        "equipment",
+                        "variant",
+                        "order",
+                        "set_no",
+                        "set_type",
+                        "start_at",
+                        "end_at",
+                        "reps",
+                        "load_kg",
+                        "load_kind",
+                        "duration_s",
+                        "rest_s",
+                        "rpe",
+                        "rir",
+                        "role",
+                        "source_ref"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "source_refs",
+                  "type",
+                  "start_at",
+                  "end_at",
+                  "completed_date",
+                  "status",
+                  "updated_at",
+                  "duration_s",
+                  "moving_duration_s",
+                  "rest_s",
+                  "distance_m",
+                  "speed_m_s",
+                  "pace_s_km",
+                  "pace_basis",
+                  "hr_avg",
+                  "hr_max",
+                  "zones",
+                  "heart_rate",
+                  "heart_rate_source_ref",
+                  "incline",
+                  "limitations",
+                  "sets"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "strength": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "exercise_key": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "exposures": {
+                    "type": "integer"
+                  },
+                  "sets": {
+                    "type": "integer"
+                  },
+                  "reps": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "volume_kg": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "volume_partial": {
+                    "type": "boolean"
+                  },
+                  "volume_sets": {
+                    "type": "integer"
+                  },
+                  "missing_load_sets": {
+                    "type": "integer"
+                  },
+                  "bodyweight_sets": {
+                    "type": "integer"
+                  },
+                  "max_kg": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "max_kg_reps": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "session_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "same_load_reps": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "load_kg": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "load_kind": {
+                          "type": "string"
+                        },
+                        "observations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "session_id": {
+                                "type": "string"
+                              },
+                              "reps": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "session_id",
+                              "reps"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "load_kg",
+                        "load_kind",
+                        "observations"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "comparability": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "limited",
+                          "comparable"
+                        ]
+                      },
+                      "limitations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "limitations"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "monthly": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "month": {
+                          "type": "string"
+                        },
+                        "exposures": {
+                          "type": "integer"
+                        },
+                        "sets": {
+                          "type": "integer"
+                        },
+                        "reps": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "volume_kg": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "volume_sets": {
+                          "type": "integer"
+                        },
+                        "missing_load_sets": {
+                          "type": "integer"
+                        },
+                        "bodyweight_sets": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "month",
+                        "exposures",
+                        "sets",
+                        "reps",
+                        "volume_kg",
+                        "volume_sets",
+                        "missing_load_sets",
+                        "bodyweight_sets"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "exercise_key",
+                  "display_name",
+                  "exposures",
+                  "sets",
+                  "reps",
+                  "volume_kg",
+                  "volume_partial",
+                  "volume_sets",
+                  "missing_load_sets",
+                  "bodyweight_sets",
+                  "max_kg",
+                  "max_kg_reps",
+                  "session_ids",
+                  "same_load_reps",
+                  "comparability",
+                  "monthly"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "actual_days",
+            "coverage",
+            "sessions",
+            "strength"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recovery_context": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "measurements": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "date",
+          "relation",
+          "measurements"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "configured",
+            "unset"
+          ]
+        },
+        "snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "snapshot_id",
+        "source_ref"
+      ],
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "scope",
+    "report_date",
+    "timezone",
+    "snapshot_id",
+    "as_of",
+    "data_cutoff",
+    "partial_date",
+    "attribution",
+    "current",
+    "comparison",
+    "recovery_context",
+    "profile",
+    "limitations"
+  ],
+  "additionalProperties": false
+}
