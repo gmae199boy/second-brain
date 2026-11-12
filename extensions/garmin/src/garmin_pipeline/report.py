@@ -28,6 +28,7 @@ from garmin_pipeline.analysis_agent import (AnalysisRequest, CodexAdapter, Claud
 from garmin_pipeline import (
     body,
     analysis_output,
+    analysis_diagnostics,
     charts,
     config,
     dates,
@@ -126,6 +127,10 @@ class WriterFailed(Exception):
     def __init__(self, reason: errors.ReportFailReason | str, detail: str = "") -> None:
         self.reason = errors.ReportFailReason(reason)
         self.detail = detail
+        self.diagnostic_code = analysis_diagnostics.code_for(self.reason, detail)
+        diagnostic = analysis_diagnostics.current.get()
+        if diagnostic is not None:
+            diagnostic.code = self.diagnostic_code
         super().__init__(f"{self.reason}: {detail}" if detail else str(self.reason))
 
 
@@ -191,6 +196,7 @@ def codex_argv(
     intake: bool = False,
     scope: str | None = None,
     output_contract: str | None = None,
+    feedback_code: str | None = None,
 ) -> list[str]:
     """`codex exec` argv(셸 없음). `-i`가 값을 여러 개 받으므로 프롬프트를 그 앞에 둔다."""
     argv = [
@@ -214,7 +220,8 @@ def codex_argv(
         "-o",
         str(output),
         codex_prompt(images if inputs is None else inputs, intake=intake, scope=scope)
-        + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else ""),
+        + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else "")
+        + (f"\n이전 시도 검증 실패 코드: {feedback_code}. 해당 계약 위반을 바로잡는다." if feedback_code else ""),
     ]
     if intake and cfg.report_model is None:
         index = argv.index("-m")
@@ -432,7 +439,15 @@ class AnalysisWriter:
             raise WriterFailed(
                 failed, f"임시 폴더를 만들지 못함: {type(error).__name__}"
             ) from None
+        diagnostic = analysis_diagnostics.current.get()
+        output = workdir / CODEX_OUTPUT_FILENAME
+        events = workdir / 'events.jsonl'
         try:
+            if diagnostic is not None:
+                diagnostic.input_bytes = sum(file.stat().st_size for item in inputs
+                    for file in ((body.runtime_root(cfg) / item).rglob('*')
+                                 if (body.runtime_root(cfg) / item).is_dir()
+                                 else [body.runtime_root(cfg) / item]) if file.is_file())
             measurements = None if intake else analysis_output.measurements_for_inputs(
                 body.runtime_root(cfg), inputs, scope)
             resource = (
@@ -486,6 +501,9 @@ class AnalysisWriter:
                     result = replace(result, usage=usage)
                 return result
         finally:
+            if diagnostic is not None:
+                diagnostic.output_bytes = output.stat().st_size if output.exists() else 0
+                diagnostic.event_bytes = events.stat().st_size if events.exists() else 0
             shutil.rmtree(workdir, ignore_errors=True)
 
     @staticmethod
@@ -1279,7 +1297,7 @@ def _read_work_revisions(cfg, today):
         conn.close()
 
 
-MAX_SCOPE_ATTEMPTS = 6  # 최초 실행 1회 + 실패 기간 재시도 최대 5회.
+MAX_SCOPE_ATTEMPTS = 3  # One initial attempt and two repairs with validation feedback.
 
 
 def _reserve_scope_attempt(cfg, day, scope):
@@ -1291,16 +1309,65 @@ def _reserve_scope_attempt(cfg, day, scope):
                 set failures=garmin.report_scope_failures.failures+1
                 where garmin.report_scope_failures.failures < %s returning failures""",
                 (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, MAX_SCOPE_ATTEMPTS)).fetchone()
-            return row is not None
+            return row[0] if row else None
+
+
+def _scope_retry_state(cfg, day, scope):
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            row = conn.execute("""select error_code, terminal from garmin.analysis_attempt_diagnostics
+                where work_id=%s and report_date=%s and scope=%s order by attempt desc limit 1""",
+                (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope)).fetchone()
+            return row if row else (None, False)
+
+
+def _record_scope_diagnostic(cfg, day, scope, attempt, diagnostic=None, *, elapsed_ms=None, terminal=False):
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            key = (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, attempt)
+            if diagnostic is None:
+                conn.execute("""insert into garmin.analysis_attempt_diagnostics(work_id,report_date,scope,attempt)
+                    values (%s,%s,%s,%s)""", key)
+            else:
+                conn.execute("""update garmin.analysis_attempt_diagnostics
+                    set ended_at=clock_timestamp(),elapsed_ms=%s,error_code=%s,terminal=%s,
+                        input_bytes=%s,output_bytes=%s,event_bytes=%s
+                    where work_id=%s and report_date=%s and scope=%s and attempt=%s""",
+                    (elapsed_ms, diagnostic.code, terminal, diagnostic.input_bytes,
+                     diagnostic.output_bytes, diagnostic.event_bytes, *key))
 
 
 def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
-    while _reserve_scope_attempt(cfg, day, scope):
+    feedback, terminal = _scope_retry_state(cfg, day, scope)
+    if terminal:
+        return None, None, errors.ReportFailReason.OUTPUT_INVALID, None
+    while (attempt := _reserve_scope_attempt(cfg, day, scope)) is not None:
         _assert_attempt_current(cfg)
-        analysis, text, failure, summary = _evaluate(cfg, writer, inputs, scope, usages)
-        if failure is None:
-            return analysis, text, failure, summary
-    return None, None, errors.ReportFailReason.CODEX_FAILED, None
+        _record_scope_diagnostic(cfg, day, scope, attempt)
+        diagnostic = analysis_diagnostics.Attempt(feedback=feedback)
+        token = analysis_diagnostics.current.set(diagnostic)
+        started = time.monotonic()
+        terminal = False
+        try:
+            analysis, text, failure, summary = _evaluate(cfg, writer, inputs, scope, usages)
+            if failure is None:
+                return analysis, text, failure, summary
+            if diagnostic.code == 'SUCCESS':
+                diagnostic.code = analysis_diagnostics.code_for(failure)
+            # Infrastructure/capability failures do not improve by repairing model output.
+            terminal = diagnostic.code in analysis_diagnostics.DETERMINISTIC or diagnostic.code == feedback
+            terminal = terminal or attempt >= MAX_SCOPE_ATTEMPTS
+            feedback = diagnostic.code
+        except BaseException:
+            diagnostic.code = 'INTERRUPTED'
+            raise
+        finally:
+            analysis_diagnostics.current.reset(token)
+            _record_scope_diagnostic(cfg, day, scope, attempt, diagnostic,
+                elapsed_ms=int((time.monotonic() - started) * 1000), terminal=terminal)
+        if terminal:
+            break
+    return None, None, errors.ReportFailReason.OUTPUT_INVALID, None
 
 
 def run_supervised(cfg, writer, *, regenerate=False, today=None):

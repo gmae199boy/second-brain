@@ -60,8 +60,10 @@ def validate(data, measurements=None):
         valid = target in ('training_summary', 'progression', 'message')
         if match:
             valid = int(match[2]) < len(data[match[1]])
-        if not valid or limitation['scope'] != data['scope']:
+        if not valid:
             raise ValueError('invalid limitation target')
+        if limitation['scope'] != data['scope']:
+            raise ValueError('limitation scope mismatch')
     if measurements is None:
         return
     expected = {

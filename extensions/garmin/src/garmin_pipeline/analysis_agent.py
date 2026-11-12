@@ -93,8 +93,11 @@ class CodexAdapter:
 
     def prepare(self, request):
         from garmin_pipeline.report import codex_argv
+        from garmin_pipeline import analysis_diagnostics
+        diagnostic = analysis_diagnostics.current.get()
         return codex_argv(request.cfg, request.schema, request.output, [], request.executable,
-                          inputs=request.inputs, scope=request.scope, output_contract=request.schema.name), None
+                          inputs=request.inputs, scope=request.scope, output_contract=request.schema.name,
+                          feedback_code=diagnostic.feedback if diagnostic else None), None
 
     def decode(self, request, events):
         from garmin_pipeline.report import _usage
@@ -156,7 +159,10 @@ class ClaudeAdapter:
         if not documents:
             raise ValueError('missing analysis input')
         prompt = request.scratch / 'input.json'
-        private_write(prompt, json.dumps({'scope': request.scope or 'day', 'files': documents}, ensure_ascii=False))
+        from garmin_pipeline import analysis_diagnostics
+        diagnostic = analysis_diagnostics.current.get()
+        private_write(prompt, json.dumps({'scope': request.scope or 'day', 'files': documents,
+            'previous_validation_code': diagnostic.feedback if diagnostic else None}, ensure_ascii=False))
         schema = json.dumps(json.loads(request.schema.read_text(encoding='utf-8')), separators=(',', ':'))
         return [request.executable, '-p', '--safe-mode', '--no-session-persistence',
                 '--setting-sources', '', '--settings', '{"disableAllHooks":true}',
