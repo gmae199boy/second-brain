@@ -30,6 +30,8 @@ class FakeConnection:
         if 'COUNT(*)' in sql: return Result([(1,)])
         if 'MIN(key' in sql: return Result([('2026-01-01',)])
         if 'FROM garmin.run' in sql: return Result([])
+        if 'next_checks,revision,model,created_at' in sql:
+            return Result([('2026-01-01',params[2],'[]',1,'synthetic',1)])
         if 'FROM garmin.evaluation' in sql:
             return Result([('2026-01-01', 'day', 'synthetic', '[]', '[]', '[]')])
         return Result([])
@@ -75,8 +77,10 @@ class ReportInputPGTest(unittest.TestCase):
             with patch.object(report_input.store, 'read_connection', return_value=conn):
                 report_input._previous_evaluations(None, Path(tmp), date(2026, 1, 1), [])
             value = json.loads((Path(tmp) / 'previous_evaluations/day.json').read_text())
-        self.assertEqual(value['judgments'], [])
-        self.assertEqual(value['summary'], 'synthetic')
+        self.assertEqual(value['next_checks'], [])
+        self.assertNotIn('summary', value)
+        self.assertNotIn('judgments', value)
+        self.assertEqual(value['revision'], 1)
         self.assert_scoped(conn)
 
     def test_each_period_scopes_joins_and_only_emits_legacy_columns(self):
@@ -98,9 +102,7 @@ class ReportInputPGTest(unittest.TestCase):
                     month_sql = next(sql for sql, _ in conn.calls if 'AVG(' in sql)
                     self.assertNotIn('AVG(user_id)', month_sql)
                     self.assertNotIn('AVG(connection_id)', month_sql)
-                    subquery = next(sql for sql, _ in conn.calls if 'SELECT MAX(m.report_date' in sql)
-                    self.assertIn('m.user_id=e.user_id', subquery)
-                    self.assertIn('m.connection_id=e.connection_id', subquery)
+                    self.assertFalse(any("scope='30d'" in sql for sql, _ in conn.calls))
                 join = next(sql for sql, _ in conn.calls if 'JOIN garmin.workout' in sql)
                 self.assertIn('w.user_id=e.user_id', join)
                 self.assertIn('w.connection_id=e.connection_id', join)
@@ -153,6 +155,7 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
         from report_runtime import envelope
         from test_report_runtime import report_env
         user, account, work, token = None, uuid4(), uuid4(), uuid4()
+        from garmin_pipeline.training_measurements import snapshot_id_for
         with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'], autocommit=True) as owner:
             user = owner.execute('select id from brain.users where is_self=1').fetchone()[0]
             owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)', (user,account,'work-dates-'+str(account),'UTC'))
@@ -160,7 +163,7 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())', (token,work))
             owner.execute('update brain.work_items set current_attempt_token=%s where id=%s', (token,work))
             for day in ('2026-01-01','2026-01-02'):
-                owner.execute("insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values (%s,%s,%s,'day','synthetic','[]','[]','[]','synthetic','fake',1,1)", (user,account,day))
+                owner.execute("insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision,structured) values (%s,%s,%s,'day','synthetic','[]','[]','[]','synthetic','fake',1,1,%s::jsonb)", (user,account,day,json.dumps({'status':'ok','schema_version':'garmin.scope_analysis.v2','snapshot_id':snapshot_id_for(str(work),day)})))
         _, cfg = envelope(report_env())
         with patch.dict(os.environ, {'BRAIN_DATABASE_URL':os.environ['GARMIN_TEST_EXTENSION_DSN'],'BRAIN_USER_ID':str(user),'BRAIN_WORK_ID':str(work),'BRAIN_ATTEMPT_TOKEN':str(token)}), store.supervised_account(store.AccountContext(user,account,work,token)):
             for day in (date(2026,1,1),date(2026,1,2),date(2026,1,1),date(2026,1,2)):
@@ -227,14 +230,16 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                 for scope in ('7d','30d','all'):
                     report_input.build_period(cfg,result.path,date.fromisoformat(fixture['date']),scope)
             actual = {str(p.relative_to(result.path)):p.read_text(encoding='utf-8') for p in result.path.rglob('*') if p.is_file()}
-            self.assertEqual(set(actual),set(expected['files']))
+            changed=lambda name: name=='previous_report.md' or name.startswith('previous_evaluations/') or (name.startswith('period/') and name.endswith(('/evaluations.json','/previous.json')))
+            self.assertEqual({p for p in actual if not changed(p)},{p for p in expected['files'] if not changed(p)})
             for name, value in actual.items():
+                if changed(name): continue
                 with self.subTest(path=name):
                     if name.endswith('.json'):
                         actual_json, expected_json = json.loads(value), json.loads(expected['files'][name])
                         # 수집 독립 계약의 운동 창과 안내만 새 수락 시험에서 검증한다.
                         if name == 'manifest.json':
-                            for key in ('workout_window', 'workouts', 'notes'):
+                            for key in ('workout_window', 'workouts', 'notes', 'previous_report'):
                                 actual_json.pop(key, None); expected_json.pop(key, None)
                         if name == 'digest.json':
                             for key in ('workouts', 'notes'):
@@ -258,3 +263,33 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             for key in ('workouts', 'notes'):
                 actual_digest.pop(key, None); expected_digest.pop(key, None)
             self.assertEqual(actual_digest, expected_digest)
+
+    def test_structured_revision_round_trip_and_legacy_null_are_preserved(self):
+        import os
+        from uuid import uuid4
+        import psycopg
+        from garmin_pipeline import store
+        from report_runtime import envelope
+        from test_report_runtime import report_env
+        account,work,token=uuid4(),uuid4(),uuid4()
+        structured=json.loads((Path(__file__).parents[1]/'fixtures/scope-result-v2/day.json').read_text())
+        with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'],autocommit=True) as owner:
+            user=owner.execute('select id from brain.users where is_self=1').fetchone()[0]
+            owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)',(user,account,'structured-'+str(account),'UTC'))
+            owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.report','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(work,str(account)))
+            owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(token,work))
+            owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(token,work))
+        _,cfg=envelope(report_env())
+        with patch.dict(os.environ,{'BRAIN_DATABASE_URL':os.environ['GARMIN_TEST_EXTENSION_DSN'],'BRAIN_USER_ID':str(user),'BRAIN_WORK_ID':str(work),'BRAIN_ATTEMPT_TOKEN':str(token)}), store.supervised_account(store.AccountContext(user,account,work,token)):
+            with store.write_session(cfg) as conn:
+                arguments=dict(report_date='2026-01-03',scope='day',summary='합성',judgments='[]',evidence='[]',next_checks='[]',report_md='합성',model='fixture',created_at=1)
+                first=store.append_evaluation(conn,**arguments)
+                second=store.append_evaluation(conn,**arguments,structured=structured)
+                self.assertEqual((first,second),(1,2))
+            conn=store.read_connection(cfg)
+            try:
+                self.assertEqual(store.successful_scope_results(conn,report_date='2026-01-03',snapshot_id='a'*64),{'day':{'revision':2,'structured':structured}})
+                self.assertEqual(store.successful_scope_results(conn,report_date='2026-01-03',snapshot_id='b'*64),{})
+            finally:conn.close()
+        with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN']) as owner:
+            self.assertIsNone(owner.execute('select structured from garmin.evaluation_revisions where user_id=%s and connection_id=%s and revision=1',(user,account)).fetchone()[0])

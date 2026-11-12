@@ -258,7 +258,98 @@
         "sets": []
       }
     ],
-    "strength": []
+    "strength": [
+      {
+        "exercise_key": "PUSH_UP",
+        "display_name": "푸시업",
+        "exposures": 1,
+        "sets": 5,
+        "reps": 50,
+        "volume_kg": 50,
+        "volume_partial": true,
+        "volume_sets": 1,
+        "missing_load_sets": 3,
+        "bodyweight_sets": 1,
+        "max_kg": 5,
+        "max_kg_reps": [
+          10
+        ],
+        "session_ids": [
+          "synthetic-0"
+        ],
+        "same_load_reps": [
+          {
+            "load_kind": "weighted",
+            "load_kg": 5,
+            "observations": [
+              {
+                "session_id": "synthetic-0",
+                "reps": 10
+              }
+            ]
+          },
+          {
+            "load_kind": "bodyweight",
+            "load_kg": null,
+            "observations": [
+              {
+                "session_id": "synthetic-0",
+                "reps": 10
+              }
+            ]
+          },
+          {
+            "load_kind": "missing",
+            "load_kg": null,
+            "observations": [
+              {
+                "session_id": "synthetic-0",
+                "reps": 10
+              }
+            ]
+          },
+          {
+            "load_kind": "assisted",
+            "load_kg": null,
+            "observations": [
+              {
+                "session_id": "synthetic-0",
+                "reps": 10
+              }
+            ]
+          },
+          {
+            "load_kind": "unknown",
+            "load_kg": null,
+            "observations": [
+              {
+                "session_id": "synthetic-0",
+                "reps": 10
+              }
+            ]
+          }
+        ],
+        "comparability": {
+          "status": "limited",
+          "limitations": [
+            "equipment_or_load_convention_unverified",
+            "effort_and_plan_not_recorded"
+          ]
+        },
+        "monthly": [
+          {
+            "month": "2026-01",
+            "exposures": 1,
+            "sets": 5,
+            "reps": 50,
+            "volume_kg": 50,
+            "volume_sets": 1,
+            "missing_load_sets": 3,
+            "bodyweight_sets": 1
+          }
+        ]
+      }
+    ]
   },
   "comparison": null,
   "recovery_context": [],

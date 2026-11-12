@@ -376,7 +376,7 @@ def append_evaluation(conn: Connection, *, report_date: str, scope: str, summary
             select %s,%s,%s,%s,coalesce(max(revision),0)+1,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb
             from garmin.evaluation_revisions where user_id=%s and connection_id=%s and report_date=%s and scope=%s
             returning revision''', (conn.user_id,conn.connection_id,report_date,scope,summary,judgments,evidence,
-                                    next_checks,report_md,model,created_at,json.dumps(message, ensure_ascii=False),json.dumps(structured, ensure_ascii=False),conn.user_id,conn.connection_id,report_date,scope)).fetchone()
+                                    next_checks,report_md,model,created_at,json.dumps(message, ensure_ascii=False),json.dumps(structured, ensure_ascii=False) if structured is not None else None,conn.user_id,conn.connection_id,report_date,scope)).fetchone()
         return row[0]
 
 
@@ -392,5 +392,6 @@ def successful_scope_results(conn: Connection, *, report_date: str, snapshot_id:
         from garmin.evaluation_revisions
         where user_id=%s and connection_id=%s and report_date=%s
           and structured->>'snapshot_id'=%s and structured->>'schema_version'='garmin.scope_analysis.v2'
+          and structured->>'status'='ok'
         order by scope,revision desc''', (conn.user_id,conn.connection_id,report_date,snapshot_id)).fetchall()
     return {scope:{'revision':revision,'structured':structured} for scope,revision,structured in rows}

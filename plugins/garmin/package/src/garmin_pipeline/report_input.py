@@ -537,7 +537,9 @@ def build_period(
                 values = {'workout': workouts,
                           'day_summary': [d for d in values['day_summary'] if d['date'] in days],
                           'exercise_log': [e for e in values['exercise_log'] if e['activity_id'] in ids and ('exercise' not in focus or e['exercise'] == focus['exercise'])]}
-        evaluations = []
+        evaluations = _evaluations(conn,
+            f"SELECT {_EVALUATION_FIELDS} FROM garmin.evaluation WHERE user_id=%s AND connection_id=%s AND scope='day' AND report_date BETWEEN %s AND %s ORDER BY report_date",
+            (*account,start,end)) if scope=='custom' else []
         if scope == "custom":
             # 같은 초점·길이 중 이번 창과 겹치지 않는 가장 최근 기간의 최신 revision이다.
             with conn.cursor(row_factory=dict_row) as cur:
@@ -548,7 +550,7 @@ def build_period(
                     (*account, json.dumps(focus or {}), start, end, start))
                 previous = cur.fetchall()
         else:
-            selected = _previous_checks(conn, scope, end)
+            selected = _previous_checks(conn, scope, report_date.isoformat())
             previous = [selected] if selected else []
     finally:
         if connection is None:
@@ -586,7 +588,7 @@ def prepare_snapshot(cfg, report_date: date, work_id: str, *, started_at=None) -
     """네 기간 원본·이전 확인사항을 한 읽기 트랜잭션에서 고정한 뒤 모델 실행 전에 닫는다."""
     import hashlib
     from garmin_pipeline import digest, training_measurements
-    snapshot_id = hashlib.sha256(work_id.encode('utf-8')).hexdigest()
+    snapshot_id = training_measurements.snapshot_id_for(work_id,report_date)
     parent = cfg.data_dir / 'report-snapshots'
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target = parent / snapshot_id
@@ -594,39 +596,72 @@ def prepare_snapshot(cfg, report_date: date, work_id: str, *, started_at=None) -
         training_measurements.resolve_snapshot_root(cfg, snapshot_id)
         return _load_snapshot(target)
     temporary = Path(tempfile.mkdtemp(prefix='.snapshot-', dir=parent))
-    conn = store.read_connection(cfg)
+    conn = None
     try:
+        conn = store.read_connection(cfg)
         exported = build(cfg, report_date, started_at=started_at, connection=conn,
                          snapshot_id=snapshot_id, target_root=temporary)
         folder = exported.path
-        # 기존 기간 요약도 모델 시작 전에 같은 읽기 트랜잭션에서 내보낸다.
+        profile_path = folder / 'profile.json'
+        profile = json.loads(profile_path.read_text(encoding='utf-8')) if profile_path.is_file() else None
+        scope_measurements = {
+            scope:training_measurements.build_training_measurements(
+                exported.manifest,exported.days,exported.activities,exported.labels,exported.body,scope,profile=profile)
+            for scope in training_measurements.SCOPES}
+        # 모든 파일의 창은 C1과 같아야 한다. 완료일 귀속 운동은 C1 한 곳에서만 제공한다.
+        for scope in ('7d','30d','all'):
+            current=scope_measurements[scope]['current']
+            exported.manifest['period_windows'][scope]={'from':current['from'],'to':current['to']}
+        write_json(folder/'manifest.json',exported.manifest)
+        # 기존 회복 요약도 모델 시작 전에 같은 읽기 트랜잭션에서 내보낸다.
         for scope in ('7d', '30d', 'all'):
             build_period(cfg, folder, report_date, scope, connection=conn)
         day_folder = folder / 'day'
         day_folder.mkdir(mode=0o700)
         for name in ('days', 'activities', 'labels', 'body', 'previous_evaluations'):
             if (folder / name).exists(): shutil.copytree(folder / name, day_folder / name)
+        # day는 같은 snapshot의 최근 측정만 읽고 다른 기간 입력은 받지 않는다.
+        history_from=min((report_date-timedelta(days=HISTORY_DAYS)).isoformat(),scope_measurements['day']['comparison']['from'])
+        for path in (day_folder/'days').iterdir():
+            if path.name < history_from: shutil.rmtree(path)
+        for path in (day_folder/'activities').iterdir():
+            raw=exported.activities.get(path.name,{}).get('activity') or {}
+            start=(raw.get('summaryDTO') or {}).get('startTimeGMT')
+            parsed=digest._Digest(exported.manifest,{}, {}, {}, []).to_utc(start)
+            if parsed and parsed.astimezone(ZoneInfo(cfg.timezone)).date().isoformat() < history_from:
+                shutil.rmtree(path)
         for name in ('profile.md', 'profile.json'):
             # 생산은 프로필 워커 소유이며 여기서는 이미 생성된 사본만 같은 snapshot에 포함한다.
             if (folder / name).is_file(): shutil.copyfile(folder / name, day_folder / name)
         (day_folder / 'scratch').mkdir(mode=0o700)
         write_json(day_folder / 'manifest.json', exported.manifest)
         write_json(day_folder / 'digest.json', digest.build(exported.manifest,exported.days,exported.activities,exported.labels,exported.body))
-        profile_path = folder / 'profile.json'
-        profile = json.loads(profile_path.read_text(encoding='utf-8')) if profile_path.is_file() else None
         for scope in training_measurements.SCOPES:
             scope_folder = day_folder if scope == 'day' else folder / 'period' / scope
-            measurements = training_measurements.build_training_measurements(
-                exported.manifest,exported.days,exported.activities,exported.labels,exported.body,scope,profile=profile)
+            measurements = scope_measurements[scope]
             write_json(scope_folder / 'training_measurements.json', measurements)
+            # source_ref는 기간 입력 안에서 실제로 읽을 수 있는 고정 원본만 가리킨다.
+            sessions=measurements['current']['sessions']
+            if measurements['comparison'] is not None: sessions=sessions+measurements['comparison']['sessions']
+            if scope!='day':
+                for session_id in {session['session_id'] for session in sessions}:
+                    source=folder/'activities'/session_id
+                    if source.is_dir(): shutil.copytree(source,scope_folder/'activities'/session_id)
             if scope != 'day':
                 scope_info=json.loads((scope_folder / 'scope.json').read_text(encoding='utf-8'))
                 scope_info.update(snapshot_id=snapshot_id,timezone=cfg.timezone,
                     data_cutoff=exported.manifest['data_cutoff'],
                     measurements_version=training_measurements.SCHEMA_VERSION,
                     profile_snapshot_id=exported.manifest.get('profile_snapshot_id'),
-                    **{'from':measurements['current']['from'],'to':measurements['current']['to']})
+                    **{'from':measurements['current']['from'],'to':measurements['current']['to'],
+                       'actual_days':measurements['current']['actual_days']})
                 write_json(scope_folder / 'scope.json',scope_info)
+                legacy_values=json.loads((scope_folder/'day_values.json').read_text(encoding='utf-8'))
+                # 시작일로 귀속된 구 운동/종목 집계를 C1과 함께 전달하지 않는다.
+                recovery_key='months' if scope=='all' else 'day_summary'
+                write_json(scope_folder/'day_values.json',{
+                    recovery_key:legacy_values[recovery_key],
+                    'training_measurements_ref':'training_measurements.json'})
         # 재게시에서 쓰는 원본과 입력 해시는 동일 폴더에 보존한다. 결과·scratch는 해시에 포함하지 않는다.
         hashes={str(path.relative_to(folder)):hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in sorted(folder.rglob('*')) if path.is_file()}
@@ -635,7 +670,7 @@ def prepare_snapshot(cfg, report_date: date, work_id: str, *, started_at=None) -
             'profile_snapshot_id':exported.manifest.get('profile_snapshot_id'),'files':hashes})
         folder.rename(target)
     finally:
-        conn.close()
+        if conn is not None: conn.close()
         shutil.rmtree(temporary,ignore_errors=True)
     return _load_snapshot(target)
 

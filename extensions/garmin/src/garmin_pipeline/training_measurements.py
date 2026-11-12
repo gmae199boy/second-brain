@@ -16,11 +16,67 @@ def load_training_measurements(snapshot: Path, scope: str | None = None) -> dict
     if scope is not None:
         if scope not in SCOPES:
             raise ValueError('invalid training scope')
+        # scope 지정은 항상 봉인된 snapshot-root API다. metadata 부재를 standalone으로 취급하지 않는다.
+        validate_snapshot(folder)
         folder = folder / 'day' if scope == 'day' else folder / 'period' / scope
+    else:
+        stored_root = (folder.parent if folder.name=='day' else
+                       folder.parent.parent if folder.parent.name=='period' and folder.name in SCOPES else None)
+        if stored_root is not None and stored_root.parent.name=='report-snapshots':
+            validate_snapshot(stored_root)
+        else:
+            for root in (folder,folder.parent,folder.parent.parent):
+                if (root/'snapshot.json').is_file():
+                    validate_snapshot(root)
+                    break
     result = json.loads((folder / 'training_measurements.json').read_text(encoding='utf-8'))
-    if result.get('schema_version') != SCHEMA_VERSION or (scope and result.get('scope') != scope):
-        raise ValueError('invalid training measurements version or scope')
+    _validate_measurements(result)
+    if scope and result['scope'] != scope:
+        raise ValueError('invalid training measurements scope')
     return result
+
+
+def _validate_measurements(value):
+    from jsonschema import Draft202012Validator
+    from datetime import datetime
+    schema=json.loads((Path(__file__).parent/'schemas/training_measurements_v1.schema.json').read_text(encoding='utf-8'))
+    try:
+        Draft202012Validator(schema).validate(value)
+        cutoff=datetime.fromisoformat(value['data_cutoff'])
+        if cutoff.utcoffset() is None: raise ValueError('missing cutoff timezone')
+    except Exception as error:
+        raise ValueError('invalid training measurements') from error
+
+
+def validate_snapshot(folder: Path, snapshot_id: str | None = None) -> dict:
+    """봉인된 필수 입력과 해시·기간 provenance를 확인한다. 손상 시 원본을 재조회하지 않는다."""
+    import hashlib
+    folder=Path(folder)
+    metadata=json.loads((folder/'snapshot.json').read_text(encoding='utf-8'))
+    required={'manifest.json','day/manifest.json','day/digest.json','labels/exercise_types_ko.json'}
+    for scope in SCOPES:
+        prefix='day' if scope=='day' else f'period/{scope}'
+        required.add(f'{prefix}/training_measurements.json')
+        if scope!='day': required.update(f'{prefix}/{name}.json' for name in ('scope','day_values','previous','evaluations'))
+    files=metadata.get('files')
+    if (metadata.get('complete') is not True or not isinstance(files,dict) or not required.issubset(files)
+            or (snapshot_id is not None and metadata.get('snapshot_id')!=snapshot_id)):
+        raise ValueError('incomplete or mismatched report snapshot')
+    for relative,expected in files.items():
+        path=Path(relative)
+        if path.is_absolute() or '..' in path.parts:
+            raise ValueError('invalid snapshot file reference')
+        if hashlib.sha256((folder/path).read_bytes()).hexdigest()!=expected:
+            raise ValueError('report snapshot hash mismatch')
+    for scope in SCOPES:
+        prefix='day' if scope=='day' else f'period/{scope}'
+        value=json.loads((folder/prefix/'training_measurements.json').read_text(encoding='utf-8'))
+        _validate_measurements(value)
+        if any((value['scope']!=scope,value['snapshot_id']!=metadata.get('snapshot_id'),
+                value['data_cutoff']!=metadata.get('data_cutoff'),value['report_date']!=metadata.get('report_date'),
+                value['profile']['snapshot_id']!=metadata.get('profile_snapshot_id'))):
+            raise ValueError('report snapshot provenance mismatch')
+    return metadata
 
 
 def _number(value):
@@ -64,7 +120,7 @@ def _sessions(engine):
             candidates = [x for x in raw.get('exercises', []) if isinstance(x, dict)]
             exercise = max(candidates, key=lambda x: _number(x.get('probability')) or 0) if candidates else {}
             category, name = exercise.get('category'), exercise.get('name')
-            key = '_'.join(str(x) for x in (category, name) if x) or 'UNKNOWN'
+            key = '_'.join(str(x) for x in (category, name, exercise.get('equipment')) if x) or 'UNKNOWN'
             counts[key] = counts.get(key, 0) + (raw['setType'] == 'ACTIVE')
             start = engine.to_utc(raw.get('startTime'))
             duration = _number(raw.get('duration'))
@@ -85,7 +141,7 @@ def _sessions(engine):
         session = {'session_id':str(activity_id),'source_refs':[f'{source}/activity.json'],
             'type':record['type'],'start_at':_iso(record['_start'],engine.timezone),
             'end_at':_iso(record['_end'],engine.timezone),'completed_date':record['_end'].astimezone(engine.timezone).date().isoformat(),
-            'status':'completed','updated_at':None,'duration_s':duration,'moving_duration_s':moving,
+            'status':'completed','updated_at':str(raw_activity.get('updateDate')) if raw_activity.get('updateDate') is not None else None,'duration_s':duration,'moving_duration_s':moving,
             'rest_s':sum(x['duration_s'] for x in sets if x['set_type']=='REST' and x['duration_s'] is not None) if sets else None,
             'distance_m':distance,'speed_m_s':speed,'pace_s_km':1000/speed if speed else None,
             'pace_basis':'summary.averageSpeed' if speed else None,'hr_avg':record['hr_avg'],'hr_max':record['hr_max'],
@@ -147,6 +203,39 @@ def _strength(sessions):
     return result
 
 
+
+def _recovery_context(engine,start,end,scope):
+    from datetime import date,timedelta
+    cache={}
+    def observed(key):
+        if key not in cache:
+            cache[key]=((engine.sleep_for(engine,key),engine.full_day(engine,key))
+                        if key in engine.days else (None,None))
+        return cache[key]
+    selected=[key for key in sorted(engine.days)
+              if start-timedelta(days=7)<=date.fromisoformat(key)<=end+timedelta(days=1)]
+    if scope=='all': selected=list({key[:7]:key for key in selected}.values())
+    result=[]
+    for key in selected:
+        sleep,day=observed(key)
+        previous=[observed((date.fromisoformat(key)-timedelta(days=i)).isoformat()) for i in range(1,8)]
+        baselines={}
+        for metric,part,field in (('sleep_total_s',0,'total_s'),('hrv_avg',0,'hrv_avg'),
+                                   ('resting_hr',1,'resting_hr'),('bb_wake',1,'bb_wake')):
+            value=_number(((sleep,day)[part] or {}).get(field))
+            samples=[row[part][field] for row in previous if row[part] and _number(row[part].get(field)) is not None]
+            mean=sum(samples)/len(samples) if samples else None
+            baselines[metric]={'value':value,'baseline_mean':mean,
+                'delta':value-mean if value is not None and mean is not None else None,'observed_days':len(samples)}
+        result.append({'date':key,'relation':'night_ending_on_date; compare_with_session_start_at',
+            'measurements':{'sleep':engine.public(sleep),'day':engine.public(day),
+                'sleep_start_at':_iso(sleep.get('_start'),engine.timezone) if sleep else None,
+                'sleep_end_at':_iso(sleep.get('_end'),engine.timezone) if sleep else None,
+                'baseline_window':{'from':(date.fromisoformat(key)-timedelta(days=7)).isoformat(),
+                                   'to':(date.fromisoformat(key)-timedelta(days=1)).isoformat()},
+                'baseline_changes':baselines,'limitations':['sensor_wear_not_verified','association_not_causation']}})
+    return result
+
 def build_training_measurements(manifest: dict, days: dict, activities: dict, labels: dict,
                                 body: list, scope: str, *, profile: dict | None = None) -> dict:
     """고정 원본에서 C1 생성. DB·네트워크를 읽지 않으며 모든 기간에서 같은 계산을 쓴다."""
@@ -164,7 +253,7 @@ def build_training_measurements(manifest: dict, days: dict, activities: dict, la
     current=window(start,end)
     comparison=None
     if scope!='all':
-        length=(end-start).days+1
+        length=30 if scope=='day' else (end-start).days+1
         comparison=window(start-timedelta(days=length),start-timedelta(days=1))
     if scope=='all':
         # 전체 세트는 입력에 펼치지 않는다. 월 요약과 종목별 초기/최근/최고 기록의 대표 세션을 쓴다.
@@ -172,18 +261,17 @@ def build_training_measurements(manifest: dict, days: dict, activities: dict, la
         for strength in current['strength']:
             ids=strength['session_ids']
             representatives.update(ids[:1]+ids[-2:])
-            strength['same_load_reps']=[{**row,'observations':row['observations'][:1]+row['observations'][-2:]} for row in strength['same_load_reps']]
+            strength['same_load_reps']=[{**row,'observations':[row['observations'][i] for i in sorted({0,*range(max(0,len(row['observations'])-2),len(row['observations']))})]} for row in strength['same_load_reps']]
+        for kind in {s['type'] for s in current['sessions']}:
+            typed=[s['session_id'] for s in current['sessions'] if s['type']==kind]
+            representatives.update(typed[:1]+typed[-2:])
         current['sessions']=[{**s,'heart_rate':[]} for s in current['sessions'] if s['session_id'] in representatives]
-    recovery=[]
-    for day in sorted(days):
-        if start-timedelta(days=7)<=date.fromisoformat(day)<=end+timedelta(days=1):
-            recovery.append({'date':day,'relation':'night_ending_on_date; compare_with_session_start_at',
-                'measurements':{'sleep':engine.sleep_for(engine,day),'day':engine.full_day(engine,day)}})
+    recovery=_recovery_context(engine,start,end,scope)
     return engine.tidy({'schema_version':SCHEMA_VERSION,'scope':scope,'report_date':manifest['report_date'],
         'timezone':manifest['timezone'],'snapshot_id':manifest['snapshot_id'],'as_of':manifest['data_cutoff'],
         'data_cutoff':manifest['data_cutoff'],'partial_date':manifest['report_date'],'attribution':'completed_at',
         'current':current,'comparison':comparison,'recovery_context':recovery,
-        'profile':{'status':'configured' if profile else 'unset','snapshot_id':manifest.get('profile_snapshot_id'),
+        'profile':{'status':'configured' if profile and profile.get('status')!='unset' else 'unset','snapshot_id':manifest.get('profile_snapshot_id'),
                    'source_ref':'profile.json' if profile else None},
         'limitations':['equipment_or_load_convention_unverified','missing_sets_do_not_imply_no_training']})
 
@@ -197,7 +285,11 @@ def resolve_snapshot_root(cfg, snapshot_id: str) -> Path:
     if not isinstance(snapshot_id, str) or not re.fullmatch(r'[a-f0-9]{64}', snapshot_id):
         raise ValueError('invalid report snapshot id')
     folder = cfg.data_dir / 'report-snapshots' / snapshot_id
-    manifest = json.loads((folder / 'snapshot.json').read_text(encoding='utf-8'))
-    if manifest.get('snapshot_id') != snapshot_id or manifest.get('complete') is not True:
-        raise ValueError('incomplete or mismatched report snapshot')
+    validate_snapshot(folder,snapshot_id)
     return folder
+
+
+def snapshot_id_for(work_id: str, report_date) -> str:
+    """하나의 work가 날짜 경계를 넘겨도 입력 경로가 충돌하지 않는 결정적 ID다."""
+    import hashlib
+    return hashlib.sha256(f'{work_id}:{report_date}'.encode('utf-8')).hexdigest()

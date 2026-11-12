@@ -52,8 +52,9 @@ class SupervisedReportTest(unittest.TestCase):
         self.stack.enter_context(patch.object(report, '_read_work_revisions', side_effect=lambda cfg, day: {k: len(v) for k, v in self.rows.items()}))
         self.stack.enter_context(patch('report_publish.publish_and_wait'))
         self.event = self.stack.enter_context(patch('report_channel.success'))
+        self.stack.enter_context(patch('garmin_pipeline.training_measurements.resolve_snapshot_root'))
         self.stack.enter_context(patch.object(report.body, 'pending', side_effect=lambda cfg: list(self.pending)))
-        self.stack.enter_context(patch.object(report.report_input, 'build', return_value=self.exported))
+        self.stack.enter_context(patch.object(report.report_input, 'prepare_snapshot', return_value=self.exported))
         self.stack.enter_context(patch.object(report.report_input, 'build_period', side_effect=lambda cfg, folder, day, scope: folder / scope))
         self.stack.enter_context(patch.object(report.report_input, 'write_json'))
         self.stack.enter_context(patch.object(report.digest, 'build', return_value={}))
@@ -67,7 +68,8 @@ class SupervisedReportTest(unittest.TestCase):
 
     def run_report(self, regenerate=False):
         if regenerate: self.work_rows = {}
-        return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
+        with patch.dict('os.environ', {'BRAIN_WORK_ID':'synthetic-work'}):
+            return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
 
     def test_all_scopes_start_without_collect_lock_or_sleep(self):
         with patch.object(store, 'write_lock_held', side_effect=AssertionError('수집 락 관측 금지')), \
