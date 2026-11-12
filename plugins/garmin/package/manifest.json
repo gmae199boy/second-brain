@@ -1245,6 +1245,7 @@
     "src/garmin_pipeline/schemas/training_analysis_output_v2.schema.json",
     "src/garmin_pipeline/schemas/training_measurements_v1.schema.json",
     "src/garmin_pipeline/store/__init__.py",
+    "src/garmin_pipeline/training_charts.py",
     "src/garmin_pipeline/training_measurements.py",
     "src/import.py",
     "src/import_preflight.py",
