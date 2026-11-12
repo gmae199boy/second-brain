@@ -2103,14 +2103,16 @@ export function memorySettingsStore(options:{selfUserId?:string|(()=>string|null
   let tail:Promise<void>=Promise.resolve();
   const serialized=async<T>(fn:()=>Promise<T>):Promise<T>=>{let release!:()=>void;const prior=tail;tail=new Promise<void>(resolve=>{release=resolve;});await prior;try{return await fn();}finally{release();}};
   const refresh=async()=>{const self=typeof options.selfUserId==='function'?options.selfUserId():options.selfUserId??null;const raw=read(self,'drive.keep_local_days')?.value??'30';if(!/^(0|[1-9][0-9]*)$/.test(raw)||Number(raw)>100_000_000)return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'보관 기간이 유효하지 않습니다'};return options.applyRetention?options.applyRetention(Number(raw)):{ok:true as const};};
-  const write=async(input:import('../../ports/store.js').SettingRecord & {userId:string|null},insertOnly:boolean)=>{
+  const write=async(input:import('../../ports/store.js').SettingRecord & {userId:string|null;expectedValue?:string|null},insertOnly:boolean)=>{
     const key=keyOf(input.userId,input.key),row={key:input.key,value:input.value,updatedAt:new Date(input.updatedAt)};
+    if(Object.hasOwn(input,'expectedValue') && (input.key!=='garmin.analysis_profile'||input.userId===null))return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'이 설정은 비교 저장을 지원하지 않습니다'};
+    if(Object.hasOwn(input,'expectedValue') && (settings.get(key)?.value ?? null)!==input.expectedValue)return {ok:false as const,code:'DB_LOCKED' as const,message:'설정이 변경되었습니다. 다시 조회한 뒤 수정하세요'};
     if(input.key!=='drive.keep_local_days'){if(!insertOnly||!settings.has(key))settings.set(key,row);return {ok:true as const};}
     return serialized(async()=>{if(!/^(0|[1-9][0-9]*)$/.test(input.value)||Number(input.value)>100_000_000)return {ok:false as const,code:'DB_UNAVAILABLE' as const,message:'보관 기간이 유효하지 않습니다'};const prior=settings.get(key);if(!insertOnly||!prior)settings.set(key,row);try{const result=await refresh();if(!result.ok){if(prior)settings.set(key,prior);else settings.delete(key);}return result;}catch(error){if(prior)settings.set(key,prior);else settings.delete(key);throw error;}});
   };
   return {
     async getExactSetting({userId,key}) { return settings.get(keyOf(userId,key)); },
-    async getSettings({ keys, userId }) { return { ok: true, settings: [...new Set(keys)].flatMap(key => { const row = read(userId, key); return row ? [{ ...row, updatedAt: new Date(row.updatedAt) }] : []; }) }; },
+    async getSettings({ keys, userId, includeGlobal = true }) { return { ok: true, settings: [...new Set(keys)].flatMap(key => { const row = includeGlobal ? read(userId, key) : settings.get(keyOf(userId, key)); return row ? [{ ...row, updatedAt: new Date(row.updatedAt) }] : []; }) }; },
     async getSetting({ key, userId }) { const row = read(userId, key); return { ok: true, setting: row ? { ...row, updatedAt: new Date(row.updatedAt) } : null }; },
     setSetting: input=>write(input,false),
     insertSetting: input=>write(input,true),

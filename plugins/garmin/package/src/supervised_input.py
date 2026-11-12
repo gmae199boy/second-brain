@@ -7,7 +7,7 @@ from garmin_pipeline import store
 
 _STRING_SETTINGS = {'garmin.timezone', 'garmin.connection_id', 'garmin.tokenstore', 'garmin.capture_manifest',
                     'garmin.legacy_conversation_id', 'garmin.analysis_agent',
-                    'garmin.analysis_model', 'garmin.analysis_reasoning_effort'}
+                    'garmin.analysis_model', 'garmin.analysis_reasoning_effort', 'garmin.analysis_profile'}
 # 하위 호환 설정은 허용만 하고 분석·수집 입력으로 검증하거나 사용하지 않는다.
 _ALLOWED = _STRING_SETTINGS | {'garmin.analysis_timeout_minutes', 'garmin.channel_conversation_id'}
 
@@ -17,6 +17,8 @@ def validate_settings(values):
         raise ValueError('invalid settings')
     if any(not isinstance(values[k], str) for k in _STRING_SETTINGS & values.keys()):
         raise ValueError('invalid string setting')
+    from garmin_pipeline.analysis_profile import parse
+    parse(values.get('garmin.analysis_profile'))
     if values.get('garmin.analysis_agent', 'codex') != 'codex':
         raise ValueError('invalid analysis agent')
     if 'garmin.analysis_model' in values and not values['garmin.analysis_model'].strip():

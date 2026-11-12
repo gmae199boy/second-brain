@@ -129,6 +129,7 @@ it('isolates accounts and leaves no open extension transaction while the model w
 it('observes account-specific raw, body, projection, evaluation and period profile inputs',async()=>{
   const t=await setup();
   try {
+    await t.store.setSetting({userId:null,key:'garmin.analysis_profile',value:'{"schema_version":1,"goals":{"primary":"global-profile-must-not-leak"}}',updatedAt:new Date()});
     const yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
     for(const [target,tag,steps] of [[t.account,'alpha',1231],[t.other,'bravo',4562]] as const) {
       await t.fixture.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${target}','day','${yesterday}','user_summary','{"marker":"raw-${tag}","totalSteps":${steps}}',1,1,'fixture'); insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${target}','${yesterday}',${steps}); insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values ('${self}','${target}','${yesterday}','day','eval-${tag}','[]','[]','[]','prior-${tag}','fixture',1,1)`);
@@ -141,6 +142,10 @@ it('observes account-specific raw, body, projection, evaluation and period profi
     for(const [target,work,own,other,steps,weight] of [[t.account,a,'alpha','bravo',1231,71],[t.other,b,'bravo','alpha',4562,82]] as const) {
       const calls=(await t.calls()).filter(row=>row.work===work);
       expect(calls.map(row=>row.scope)).toEqual(['day','7d','30d','all']);
+      const pinned=JSON.parse(await readFile(join(t.extension,'reports/accounts',self,target,'data/profile-snapshots',`${work}.json`),'utf8'));
+      expect(pinned.source).toBe('legacy_file');
+      expect(pinned.profile_status).toBe('absent');
+      expect(JSON.stringify(pinned)).not.toContain('global-profile-must-not-leak');
       for(const call of calls) {
         expect(call.cwd).toBe(join(t.extension,'reports/accounts',self,target));
         expect(call.skill).toBe(call.scope==='day'?'garmin-daily-analysis':'garmin-period-review');
@@ -152,7 +157,7 @@ it('observes account-specific raw, body, projection, evaluation and period profi
       expect(calls[0]!.observed.digest).toMatchObject({day:{yesterday:{steps}}});
       expect(day).toContain(`raw-${own}`); expect(day).toContain(`eval-${own}`); expect(day).toContain(`body-${own}`); expect(day).toContain(`"weight_kg":${weight}`);
       for(const call of calls.slice(1)) {
-        expect(call.observed.profile).toBe(`profile-${target}`);
+        expect(call.observed.profile).toContain(`profile-${target}`);
         expect(JSON.stringify(call.observed.day_values)).toContain(String(steps));
       }
       const revisions=await t.revisions(target);

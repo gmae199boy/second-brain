@@ -23,6 +23,7 @@ import { schedulesRemoveCommand } from './schedules-remove.js';
 import { schedulesUpdateCommand } from './schedules-update.js';
 import { schedulesRunCommand } from './schedules-run.js';
 import { configGetCommand } from './config-get.js';
+import { configPatchCommand } from './config-patch.js';
 import { configSetCommand } from './config-set.js';
 import { filesRedactCommand } from './files-redact.js';
 import { messagesRedactCommand } from './messages-redact.js';
@@ -74,7 +75,7 @@ export const commands: readonly CommandSpec[] = [
   extDisableCommand,
   doctorRun,
   configGetCommand,
-  configSetCommand,
+  configSetCommand, configPatchCommand,
   messagesRedactCommand,
   filesRedactCommand, filesShowCommand, sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesSyncCommand,sourcesDisconnectCommand,
   failuresListCommand,

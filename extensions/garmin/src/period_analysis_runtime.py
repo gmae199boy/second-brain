@@ -69,11 +69,11 @@ def _analyze(cfg, data, writer):
         report_input.write_json(folder / 'manifest.json', {
             'period_windows': {'custom': {'from': start, 'to': end}}, 'months': months,
             'data_cutoff': dates.now_ms(), 'partial_date': partial})
-        try:
-            profile = cfg.profile_path.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            profile = '사용자 프로필이 없다. 목표나 선호를 추정하지 않는다.\n'
-        (folder / 'profile.md').write_text(profile, encoding='utf-8')
+        from garmin_pipeline import analysis_profile
+        metadata = analysis_profile.write(cfg, folder)
+        manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        manifest['analysis_profile'] = metadata
+        report_input.write_json(folder / 'manifest.json', manifest)
         focus = {k: data[k] for k in ('metric', 'aggregation', 'activity_type', 'exercise') if k in data}
         inputs = report_input.build_period(cfg, folder, date.fromisoformat(end), 'custom', focus=focus)
         report._assert_attempt_current(cfg)

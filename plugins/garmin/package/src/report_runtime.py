@@ -36,7 +36,8 @@ def envelope(env, *, sending=False):
             report_model=model, report_reasoning_effort=values.get('garmin.analysis_reasoning_effort', 'high'),
             profile_path=root / 'profile.md', date_pause_seconds=5, call_pause_min_seconds=1,
             call_pause_max_seconds=2, max_dates_per_run=10, max_rejected_attempts=3,
-            max_consecutive_403=3, lock_wait_seconds=60, cffi_api_session=False)
+            max_consecutive_403=3, lock_wait_seconds=60, cffi_api_session=False,
+            analysis_profile=values.get('garmin.analysis_profile'), profile_snapshot_id=str(account.work_id))
         return account, cfg
     except (KeyError, ValueError, TypeError, OverflowError, OSError) as exc:
         raise InvalidReportInput('invalid supervised report input') from exc

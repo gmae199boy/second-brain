@@ -105,3 +105,11 @@ it('Garmin 백필 스킬은 계획·실행·재개와 backlog 완료를 구별�
   const text=body('plugins/garmin/skills/brain-garmin-operations/SKILL.md');
   for (const token of ['"dry_run":true', '"dry_run":false', 'expected_calls_min', 'remaining_endpoints', 'not_provided', 'projection_complete', 'execution_status', 'backlog_status']) expect(text).toContain(token);
 });
+
+it('프로필 항목 수정은 공개 config patch와 설정 스킬에 함께 노출된다', () => {
+  expect(names).toContain('config patch');
+  const text = body('plugin/skills/brain-config/SKILL.md');
+  expect(mentions(text, 'config patch')).toBe(true);
+  for (const term of ['garmin.analysis_profile', 'goals.target_weight_kg', 'alcohol_units', 'unset', '재생성', 'DB_LOCKED']) expect(text).toContain(term);
+  expect(uncovered(['config patch'], core.filter(path => !path.includes('/brain-config/')), [])).toEqual(['config patch']);
+});

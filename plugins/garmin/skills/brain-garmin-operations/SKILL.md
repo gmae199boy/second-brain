@@ -38,3 +38,8 @@ description: Garmin 누락 항목 백필·밀린 수집 확인, 수동 수집, �
 일일 report·재생성·report-send는 `garmin.report.completed`, 기간 분석은 `garmin.period_report.completed` 결과 이벤트를 기록한다. 지난 날짜의 예약 따라잡기도 이벤트를 기록하며 당일·과거 판정과 발송은 core 구독 설정이 담당한다. 확장 스크립트는 메신저·채널·발송 시각을 판별하거나 발송을 요청하지 않는다. 구독이 없어도 분석·저장은 성공한다.
 
 기간 분석은 저장된 전체 기간 보고서 문서를 요약 뒤에 첨부한다. 현재 임의 기간용 그래프 렌더러는 없어 기간 분석에 그래프 앨범은 포함되지 않는다.
+
+
+## 분석 프로필
+
+현재 사용자 분석 프로필은 `brain config get garmin.analysis_profile --json`으로 조회한다. 목표 체중·목표·기구·선호·음주 단위를 바꾸라는 요청은 brain-config의 `brain config patch garmin.analysis_profile <patch> --json` 절차로 명시 항목만 바꾸고 재조회한다. 예를 들어 목표 체중 75kg는 `brain config patch garmin.analysis_profile '{"set":{"goals.target_weight_kg":75}}' --json`이다. 프로필을 바꿔도 기존 평가는 자동 갱신되지 않으며 재생성을 요청했을 때만 `report-regenerate`로 반영한다. 단순 재발신은 저장된 평가를 사용한다. 계정 profile.md나 옛 분석 입력을 편집·복원하여 설정을 우회하지 않는다.

@@ -23,7 +23,7 @@ import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
 import type { SchemaVersions } from './schema.js';
-import { getSetting, setSetting, settingDefinitions } from './settings/index.js';
+import { getSetting, setSetting, patchSetting, settingDefinitions } from './settings/index.js';
 import { addSchedule, updateSchedule, listSchedules, removeSchedule, runSchedule, type CreateScheduleInput, type AddDailyResult, type RunScheduleResult } from './queue/schedules.js';
 import { tickSchedules, type ScheduleTickResult } from './queue/schedule-tick.js';
 import { SCHEDULE_PROBE_KIND, scheduleProbeHandler } from './queue/schedule-probe-work.js';
@@ -787,11 +787,12 @@ export function createIngestBrain(dependencies: IngestSessionDependencies): Inge
 }
 
 export type SettingsBrain = { config: {
+  patch(input: { key: string; patch: import('./settings/garmin-analysis-profile.js').ProfilePatch }): Promise<import('./settings/index.js').SettingResult>;
   get(input: { key: string }): Promise<import('./settings/index.js').SettingResult>;
   set(input: { key: string; value: string; scope?: 'user' | 'global' }): Promise<import('./settings/index.js').SettingResult>;
 } };
 export function createSettingsBrain(dependencies: import('./settings/index.js').SettingsDependencies): SettingsBrain {
   // Validate registrations at assembly time, before any I/O.
   settingDefinitions(dependencies.settingDefinitions);
-  return { config: { get: input => getSetting(dependencies, input), set: input => setSetting(dependencies, input) } };
+  return { config: { patch: input => patchSetting(dependencies, input), get: input => getSetting(dependencies, input), set: input => setSetting(dependencies, input) } };
 }

@@ -56,3 +56,22 @@ it('user rows override global rows and insert preserves existing scope value', a
     expect(await store.getSetting({ userId: null, key: 'probe.value' })).toMatchObject({ setting: { value: 'global' } });
   } finally { await store.close(); await admin.end(); await db.drop(); }
 });
+
+it('프로필 비교 저장은 동시 첫 저장·변경 충돌과 사용자 격리를 보장한다', async () => {
+  const db = await database(), store = postgresStore({ databaseUrl: db.appUrl });
+  const userId = '019a0000-0000-7000-8000-000000000001', key = 'garmin.analysis_profile', updatedAt = new Date();
+  try {
+    await db.query(`insert into brain.users(id,name,is_self,created_at) values ('${userId}','synthetic',1,now())`);
+    const results = await Promise.all(['a', 'b'].map(value => store.setSetting({ userId, key, value, updatedAt, expectedValue: null })));
+    expect(results.filter(r => r.ok)).toHaveLength(1);
+    expect(results.find(r => !r.ok)).toMatchObject({ code: 'DB_LOCKED' });
+    const current = await store.getSetting({ userId, key });
+    if (!current.ok || !current.setting) throw Error('프로필 없음');
+    const prior = current.setting.value;
+    const writes = await Promise.all(['c', 'd'].map(value => store.setSetting({ userId, key, value, updatedAt, expectedValue: prior })));
+    expect(writes.filter(r => r.ok)).toHaveLength(1);
+    expect(writes.find(r => !r.ok)).toMatchObject({ code: 'DB_LOCKED' });
+    await store.setSetting({ userId: null, key, value: 'global', updatedAt });
+    expect(await store.getSettings({ userId: '019a0000-0000-7000-8000-000000000002', keys: [key], includeGlobal: false })).toEqual({ ok: true, settings: [] });
+  } finally { await store.close(); await db.drop(); }
+});
