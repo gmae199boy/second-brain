@@ -280,13 +280,17 @@ it('cancel while intake waits preserves pending and kills the supervised child a
 it('revoked attempt cannot append or invoke subsequent scopes after the held model returns',async()=>{
   const t=await setup();
   try {
-    await writeFile(join(t.control,'hold-day'),'hold'); const work=await t.enqueue(); const call=await t.waitCall(work,'day');
+    await writeFile(join(t.control,'hold-day'),'hold'); await writeFile(join(t.control,'hold-7d'),'hold');
+    const work=await t.enqueue(); const [call]=await Promise.all([t.waitCall(work,'day'),t.waitCall(work,'7d')]);
     await t.fixture.db.query(`update brain.work_items set current_attempt_token=null where id='${work}'`);
-    await unlink(join(t.control,'hold-day'));
+    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'hold-7d'));
     await expect.poll(()=>[pidAlive(call.pgid),pidAlive(call.pid)],{timeout:45000}).toEqual([false,false]);
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeNull();
     expect(await t.revisions()).toEqual([]);
-    expect((await t.calls()).filter(row=>row.work===work).map(row=>row.scope).sort()).toEqual(['day','7d'].sort());
+    const invoked=(await t.calls()).filter(row=>row.work===work).map(row=>row.scope);
+    expect(invoked).toContain('day');
+    expect(invoked.sort()).toEqual(['7d','day']);
+    expect(invoked.every(scope=>scope==='day' || scope==='7d')).toBe(true);
   } finally {await t.close();}
 },180000);
 
