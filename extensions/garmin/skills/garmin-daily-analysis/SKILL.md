@@ -5,6 +5,12 @@ description: Garmin 측정 계약으로 완료한 모든 운동의 수행과 다
 
 # garmin-daily-analysis
 
+## Compact 입력 우선
+
+`training_measurements.compact.json`이 있으면 새 C1 계약이다. 기존 원본/manifest/digest/day_values 읽기 지시보다 이 절을 우선한다. profile 파일(있을 때)과 compact 파일, previous.json(있을 때)만 읽는다. `measurements` 안의 schema_version·머리 키·current·comparison·recovery_context를 사용한다. 원본 전체 cat, Python 재투영, 임의 파일 검색을 하지 않는다. 모든 운동·세트·비교창·coverage·결측은 보존되어 있다. 조밀한 심박 샘플만 호스트가 min/max/mean·표본 수·시작/끝으로 요약했다. 표본 수는 존 시간이 아니며 품질은 unknown이다. 실제 존 경계와 체류시간은 sessions.zones를 그대로 쓴다.
+
+`evidence_ref_index`는 원본 training_measurements.json의 세션/세트/심박 Pointer다. C7 source_ref는 이 원본 경로를 사용한다. compact의 measurements 접두어나 heart_rate_summary 필드 경로를 사용하지 않는다. 집계된 심박 근거는 heart_rate_ref가 가리키는 원본 배열에 연결한다. compact 파일이 있어도 measurements_version은 training_measurements_v1이다. compact 파일이 없을 때만 아래 원본 읽기 지시를 따른다.
+
 ## 누구를 위한 리포트인가
 - 독자는 한 사람이다. 사용자가 예약한 시각에 휴대폰으로 읽는다. 수집이 진행 중이거나 일부 미완료일 수 있다.
 - 쓰임은 셋이다: 방금 한 운동 평가와 다음 운동 제안, 오늘 컨디션 판단, 기록과 추세 확인.

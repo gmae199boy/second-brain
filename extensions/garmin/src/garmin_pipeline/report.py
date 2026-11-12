@@ -29,6 +29,7 @@ from garmin_pipeline import (
     body,
     analysis_output,
     analysis_diagnostics,
+    compact_measurements,
     charts,
     config,
     dates,
@@ -450,6 +451,11 @@ class AnalysisWriter:
                                  else [body.runtime_root(cfg) / item]) if file.is_file())
             measurements = None if intake else analysis_output.measurements_for_inputs(
                 body.runtime_root(cfg), inputs, scope)
+            if measurements is not None:
+                inputs = compact_measurements.prepare(body.runtime_root(cfg), inputs,
+                    workdir / 'model-input', measurements)
+                if diagnostic is not None:
+                    diagnostic.input_bytes = sum(p.stat().st_size for p in (workdir / 'model-input').iterdir() if p.is_file())
             resource = (
                 importlib.resources.files("garmin_pipeline")
                 / "schemas"
