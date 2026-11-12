@@ -87,19 +87,19 @@ it('resumes 30d/all after 7d commit, skips complete day even with pending photo,
     const memory=()=>t.fixture.db.rows(`select s.id,m.body,f.content_hash from brain.sessions s join brain.messages m on m.session_id=s.id cross join brain.files f where s.id='${sid}' and f.id='${fid}'`);
     const before=await memory(); await writeFile(join(t.control,'hold-30d'),'hold');
     const first=await t.enqueue(); const firstCall=await t.waitCall(first,'30d');
-    expect((await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
+    await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const processRow=(await t.fixture.db.rows(`select pgid from brain.work_attempts where work_item_id='${first}'`))[0];
     killGroup(Number(processRow?.pgid)); await t.failedAttempt(first,firstCall.attempt,'died');
     await unlink(join(t.control,'hold-30d')); await t.retryNow(first);
     const resumed=await t.waitCall(first,'30d',{except:firstCall.attempt}); await t.outcome(first,'succeeded');
-    expect((await t.calls()).filter(c=>c.work===first && c.attempt===resumed.attempt).map(c=>c.scope)).toEqual(['30d','all']);
+    expect((await t.calls()).filter(c=>c.work===first && c.attempt===resumed.attempt).map(c=>c.scope).sort()).toEqual(['30d','all'].sort());
     const originals=await t.revisions(); expect(originals).toHaveLength(4);
     const image=await t.photo(); const skip=await t.enqueue(); await t.outcome(skip,'succeeded');
     expect((await t.calls()).filter(c=>c.work===skip)).toEqual([]); expect(await readFile(image)).toBeDefined();
     await copyFile(image,join(t.extension,'reports/accounts',self,t.account,'inbox/inbody/another.png'));
     const regen=await t.enqueue(t.account,true); await t.outcome(regen,'succeeded');
     const regenCalls=(await t.calls()).filter(c=>c.work===regen);
-    expect(regenCalls.map(c=>c.scope)).toEqual(['intake','day','7d','30d','all']);
+    expect(regenCalls.map(c=>c.scope).sort()).toEqual(['intake','day','7d','30d','all'].sort());
     const intake=regenCalls[0]!;
     expect(intake.observed.pending).toEqual(['inbox/inbody/another.png','inbox/inbody/synthetic.png']);
     expect(intake.argv.slice(intake.argv.indexOf('-i'))).toEqual(['-i','inbox/inbody/another.png','inbox/inbody/synthetic.png']);
@@ -142,7 +142,7 @@ it('observes account-specific raw, body, projection, evaluation and period profi
     await Promise.all([t.outcome(a,'succeeded'),t.outcome(b,'succeeded')]);
     for(const [target,work,own,other,steps,weight] of [[t.account,a,'alpha','bravo',1231,71],[t.other,b,'bravo','alpha',4562,82]] as const) {
       const calls=(await t.calls()).filter(row=>row.work===work);
-      expect(calls.map(row=>row.scope)).toEqual(['day','7d','30d','all']);
+      expect(calls.map(row=>row.scope).sort()).toEqual(['day','7d','30d','all'].sort());
       const pinned=JSON.parse(await readFile(join(t.extension,'reports/accounts',self,target,'data/profile-snapshots',`${work}.json`),'utf8'));
       expect(pinned.source).toBe('legacy_file');
       expect(pinned.profile_status).toBe('absent');
@@ -154,12 +154,15 @@ it('observes account-specific raw, body, projection, evaluation and period profi
         expect(JSON.stringify(call.observed)).not.toContain(`eval-${other}`);
         expect(JSON.stringify(call.observed)).not.toContain(`body-${other}`);
       }
-      const day=JSON.stringify(calls[0]!.observed);
-      expect(calls[0]!.observed.digest).toMatchObject({day:{yesterday:{steps}}});
-      expect(day).toContain(`raw-${own}`); expect(day).toContain(`check-${own}`); expect(day).not.toContain(`eval-${own}`); expect(day).toContain(`body-${own}`); expect(day).toContain(`"weight_kg":${weight}`);
-      for(const call of calls.slice(1)) {
+      const dayCall=calls.find(call=>call.scope==='day')!;
+      const day=JSON.stringify(dayCall.observed);
+      expect(dayCall.observed.compact).toMatchObject({view_schema_version:'training_measurements_compact_v1',measurements:{scope:'day'}});
+      expect(day).toContain(`check-${own}`); expect(day).not.toContain(`eval-${own}`);
+      expect(day).not.toContain(`raw-${own}`); // Dense raw exports are not model input.
+      for(const call of calls) {
         expect(call.observed.profile).toContain(`profile-${target}`);
-        expect(JSON.stringify(call.observed.day_values)).toContain(String(steps));
+        expect(call.observed.compact).toMatchObject({measurements:{scope:call.scope}});
+        expect(JSON.stringify(call.observed.compact)).toContain(String(steps));
       }
       const revisions=await t.revisions(target);
       for(const call of calls) {
@@ -182,7 +185,7 @@ it('failed regeneration appends successful scopes only and latest selects each m
     const terminal=(await t.fixture.db.rows(`select token,error_code,error_retryable from brain.work_attempts where work_item_id='${regen}' order by started_at desc limit 1`))[0]!;
     const regenAttempt=String(terminal.token);
     expect(terminal).toMatchObject({error_code:'EXTENSION_WORKER_ERROR',error_retryable:false});
-    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===regenAttempt).map(row=>row.scope)).toEqual(['day',...Array(6).fill('7d'),'30d','all']);
+    expect((await t.calls()).filter(row=>row.work===regen && row.attempt===regenAttempt).map(row=>row.scope).sort()).toEqual(['day',...Array(2).fill('7d'),'30d','all'].sort());
     const after=await t.revisions(); expect(after).toHaveLength(7);
     for(const row of before) expect(after).toContainEqual(row);
     for(const scope of ['day','7d','30d','all']) {
@@ -230,15 +233,15 @@ it('invalid body stays pending, completed day skips it, and explicit regeneratio
   } finally {await t.close();}
 },180000);
 
-it('finishes the previous model descendants before starting the next scope',async()=>{
+it('quiesces parallel model descendants before validating and starting a later batch',async()=>{
   const t=await setup(); let childPid=0;
   try {
     await writeFile(join(t.control,'grandchild-day'),'yes');
-    await writeFile(join(t.control,'hold-7d'),'hold');
-    const work=await t.enqueue(); await t.waitCall(work,'7d');
+    await writeFile(join(t.control,'hold-30d'),'hold');
+    const work=await t.enqueue(); await t.waitCall(work,'30d');
     childPid=Number(await readFile(join(t.control,`child-${t.account}-day`),'utf8'));
     expect(pidAlive(childPid)).toBe(false);
-    await unlink(join(t.control,'hold-7d')); await t.outcome(work,'succeeded');
+    await unlink(join(t.control,'hold-30d')); await t.outcome(work,'succeeded');
   } finally {if(childPid && pidAlive(childPid)) process.kill(childPid,'SIGKILL'); await t.close();}
 },180000);
 
@@ -254,7 +257,7 @@ it('revoked body request fails at host fence and leaves its input pending',async
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeNull();
     expect(await readFile(image)).toBeDefined();
     expect(await t.revisions()).toEqual([]);
-    expect((await t.calls()).filter(row=>row.work===work && row.attempt===call.attempt).map(row=>row.scope)).toEqual(['intake']);
+    expect((await t.calls()).filter(row=>row.work===work && row.attempt===call.attempt).map(row=>row.scope).sort()).toEqual(['intake'].sort());
     await expect(readFile(join(t.extension,'reports/accounts',self,t.account,'data/body/2020-01-02.json'))).rejects.toThrow();
   } finally {await t.close();}
 },180000);
@@ -283,11 +286,11 @@ it('revoked attempt cannot append or invoke subsequent scopes after the held mod
     await expect.poll(()=>[pidAlive(call.pgid),pidAlive(call.pid)],{timeout:45000}).toEqual([false,false]);
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeNull();
     expect(await t.revisions()).toEqual([]);
-    expect((await t.calls()).filter(row=>row.work===work).map(row=>row.scope)).toEqual(['day']);
+    expect((await t.calls()).filter(row=>row.work===work).map(row=>row.scope).sort()).toEqual(['day','7d'].sort());
   } finally {await t.close();}
 },180000);
 
-it('model timeout cleans descendants and retries the failed scope within the same attempt',async()=>{
+it('model timeout quiesces descendants and stops repair while other scopes succeed',async()=>{
   const t=await setup(); let childPid=0;
   try {
     await t.store.setSetting({userId:self,key:'garmin.analysis_timeout_minutes',value:'1',updatedAt:new Date()});
@@ -295,14 +298,15 @@ it('model timeout cleans descendants and retries the failed scope within the sam
     const work=await t.enqueue(); const day=await t.waitCall(work,'day');
     await expect.poll(()=>readFile(join(t.control,`child-${t.account}-day`),'utf8').then(Number).catch(()=>0),{timeout:15000}).toBeGreaterThan(0);
     childPid=Number(await readFile(join(t.control,`child-${t.account}-day`),'utf8'));
-    await expect.poll(async()=> (await t.calls()).filter(c=>c.work===work && c.scope==='day').length,{timeout:100000}).toBe(2);
+    await t.outcome(work,'failed');
     expect(pidAlive(childPid)).toBe(false);
-    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'grandchild-day'));
-    await t.outcome(work,'succeeded');
     const calls=(await t.calls()).filter(c=>c.work===work);
-    expect(calls.map(c=>c.scope)).toEqual(['day','day','7d','30d','all']);
+    expect(calls.filter(c=>c.scope==='day')).toHaveLength(1);
+    expect(new Set(calls.map(c=>c.scope))).toEqual(new Set(['day','7d','30d','all']));
     expect(new Set(calls.map(c=>c.attempt))).toEqual(new Set([day.attempt]));
-    expect(await t.revisions()).toHaveLength(4);
+    expect(await t.revisions()).toHaveLength(3);
+    const diagnostics=await t.fixture.db.rows(`select error_code,terminal from garmin.analysis_attempt_diagnostics where work_id='${work}' and scope='day'`);
+    expect(diagnostics).toEqual([{error_code:'AGENT_TIMEOUT',terminal:true}]);
   } finally {if(childPid && pidAlive(childPid)) process.kill(childPid,'SIGKILL'); await t.close();}
 },240000);
 
@@ -314,7 +318,7 @@ it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and 
   try {
     await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'grandchild-30d'),'yes');
     const work=await t.enqueue(); const call=await t.waitCall(work,'30d');
-    expect((await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
+    await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const before=await t.revisions();
     modelPid=call.pid;
     await expect.poll(()=>readFile(join(t.control,`child-${t.account}-30d`),'utf8').then(Number).catch(()=>0),{timeout:15000}).toBeGreaterThan(0);
@@ -326,10 +330,10 @@ it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and 
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeTruthy();
     expect(await t.revisions()).toEqual(before);
     const resumed=await t.waitCall(work,'30d',{except:call.attempt});
-    expect((await t.calls()).filter(row=>row.work===work && row.attempt===call.attempt).map(row=>row.scope)).toEqual(['day','7d','30d']);
+    expect((await t.calls()).filter(row=>row.work===work && row.attempt===call.attempt).map(row=>row.scope).sort()).toEqual(['day','7d','30d','all'].sort());
     await unlink(join(t.control,'hold-30d')); await unlink(join(t.control,'grandchild-30d'));
     await t.outcome(work,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===work && row.attempt===resumed.attempt).map(row=>row.scope)).toEqual(['30d','all']);
+    expect((await t.calls()).filter(row=>row.work===work && row.attempt===resumed.attempt).map(row=>row.scope).sort()).toEqual(['30d','all'].sort());
     const after=await t.revisions(); expect(after).toHaveLength(4);
     for(const row of before) expect(after).toContainEqual(row);
   } finally {
@@ -352,17 +356,17 @@ it('same account regenerate reports lock busy while another account proceeds',as
     await unlink(join(t.control,`hold-${t.account}-day`)); await t.outcome(first,'succeeded');
     expect(await t.revisions(t.account)).toHaveLength(4); expect(await t.revisions(t.other)).toHaveLength(4);
     await t.retryNow(busy); const retry=await t.waitCall(busy,'day',{except:busyAttempt}); await t.outcome(busy,'succeeded');
-    expect((await t.calls()).filter(row=>row.work===busy && row.attempt===retry.attempt).map(row=>row.scope)).toEqual(['day','7d','30d','all']);
+    expect((await t.calls()).filter(row=>row.work===busy && row.attempt===retry.attempt).map(row=>row.scope).sort()).toEqual(['day','7d','30d','all'].sort());
   } finally {await t.close();}
 },180000);
 
-it.each(['fail','invalid','status-failed'])('model %s exhausts five retries only for 7d and preserves later successes',async(mode)=>{
+it.each(['fail','invalid','status-failed'])('model %s stops repeated errors after one repair for 7d and preserves later successes',async(mode)=>{
   const t=await setup();
   try {
     await writeFile(join(t.control,`${mode}-7d`),'yes');
     const first=await t.enqueue(); await t.outcome(first,'failed');
     expect((await t.revisions()).map(row=>row.scope).sort()).toEqual(['30d','all','day']);
-    expect((await t.calls()).filter(row=>row.work===first).map(row=>row.scope)).toEqual(['day',...Array(6).fill('7d'),'30d','all']);
+    expect((await t.calls()).filter(row=>row.work===first).map(row=>row.scope).sort()).toEqual(['day',...Array(2).fill('7d'),'30d','all'].sort());
     const attempts=await t.fixture.db.rows(`select error_code,error_retryable from brain.work_attempts where work_item_id='${first}'`);
     expect(attempts).toMatchObject([{error_code:'EXTENSION_WORKER_ERROR',error_retryable:false}]);
     const notice=await t.fixture.db.rows(`select bundle from brain.result_events where source_work_item_id='${first}'`);
@@ -487,7 +491,7 @@ it('감독자의 Claude 선택·로그인 위치·네 기간과 custom 분석을
     expect(custom.code,custom.stdout+custom.stderr).toBe(0);
     await t.outcome(String(custom.body.data.work_id),'succeeded');
     const calls=(await readFile(join(t.control,'claude-calls.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
-    expect(calls.map(call=>call.scope)).toEqual(['day','7d','30d','all','custom']);
+    expect(calls.map(call=>call.scope).sort()).toEqual(['day','7d','30d','all','custom'].sort());
     for (const call of calls) expect(call).toMatchObject({config_dir:login,model:'sonnet',effort:'high'});
     expect(new Set(calls.map(call=>call.cwd)).size).toBe(5);
     expect(await t.fixture.db.rows('select distinct model from garmin.evaluation_revisions')).toEqual([{model:'claude:sonnet'}]);

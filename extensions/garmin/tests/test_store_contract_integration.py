@@ -51,6 +51,42 @@ class RealStoreContractTest(unittest.TestCase):
         with psycopg.connect(self.ext_dsn) as ext:
             self.assertTrue(ext.execute('select garmin.attempt_valid(%s,%s)',(self.work,self.token)).fetchone()[0])
 
+    def test_attempt_reservation_and_diagnostic_roll_back_together(self):
+        from garmin_pipeline import report
+        cfg = SimpleNamespace(lock_wait_seconds=2)
+        original = store.Connection.execute
+        def fail_insert(conn, sql, args=()):
+            if 'insert into garmin.analysis_attempt_diagnostics' in sql:
+                raise RuntimeError('synthetic crash boundary')
+            return original(conn, sql, args)
+        with self.envelope(self.accounts[0]), patch.object(store.Connection, 'execute', fail_insert):
+            with self.assertRaisesRegex(RuntimeError, 'crash boundary'):
+                report._reserve_scope_attempt(cfg, REPORT_DAY, 'day')
+        with psycopg.connect(self.owner_dsn) as owner:
+            self.assertEqual(owner.execute('select count(*) from garmin.report_scope_failures where work_id=%s', (self.work,)).fetchone()[0], 0)
+            self.assertEqual(owner.execute('select count(*) from garmin.analysis_attempt_diagnostics where work_id=%s', (self.work,)).fetchone()[0], 0)
+
+    def test_restart_reconciles_abandoned_attempt_without_losing_feedback_and_fences_completion(self):
+        from garmin_pipeline import report, analysis_diagnostics
+        cfg = SimpleNamespace(lock_wait_seconds=2)
+        with self.envelope(self.accounts[0]):
+            self.assertEqual(report._reserve_scope_attempt(cfg, REPORT_DAY, 'day'), 1)
+            diagnostic = analysis_diagnostics.Attempt(code='EVIDENCE_SOURCE',input_bytes=10,output_bytes=20,event_bytes=30)
+            report._record_scope_diagnostic(cfg, REPORT_DAY, 'day', 1, diagnostic, elapsed_ms=7)
+            self.assertEqual(report._reserve_scope_attempt(cfg, REPORT_DAY, 'day'), 2)
+            # Simulated process death leaves attempt 2 unfinished. New valid owner resumes.
+            self.assertEqual(report._scope_retry_state(cfg, REPORT_DAY, 'day'), ('EVIDENCE_SOURCE', False))
+            with psycopg.connect(self.owner_dsn) as owner:
+                rows = owner.execute('select attempt,error_code,ended_at is not null,input_bytes,output_bytes,event_bytes from garmin.analysis_attempt_diagnostics where work_id=%s order by attempt', (self.work,)).fetchall()
+                self.assertEqual(rows, [(1,'EVIDENCE_SOURCE',True,10,20,30),(2,'INTERRUPTED',True,0,0,0)])
+            self.assertEqual(report._reserve_scope_attempt(cfg, REPORT_DAY, 'day'), 3)
+            with psycopg.connect(self.owner_dsn) as owner:
+                owner.execute('update brain.work_items set current_attempt_token=null where id=%s', (self.work,))
+            with self.assertRaises(store.StaleAttempt):
+                report._record_scope_diagnostic(cfg, REPORT_DAY, 'day', 3, diagnostic, elapsed_ms=9)
+            with psycopg.connect(self.owner_dsn) as owner:
+                self.assertEqual(owner.execute('select error_code,ended_at from garmin.analysis_attempt_diagnostics where work_id=%s and attempt=3', (self.work,)).fetchone(), ('IN_PROGRESS',None))
+
     def writer(self, account):
         user, connection, _ = account
         return store.Connection(psycopg.connect(self.ext_dsn,autocommit=True),

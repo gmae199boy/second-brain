@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import sys
+import threading
 import unittest
 from datetime import date
 from pathlib import Path
@@ -57,9 +58,20 @@ class SupervisedReportTest(unittest.TestCase):
         self.attempts = {}
         def reserve(cfg, day, scope):
             count = self.attempts.get(scope, 0)
-            self.attempts[scope] = min(count + 1, 6)
-            return count < 6
+            self.attempts[scope] = min(count + 1, report.MAX_SCOPE_ATTEMPTS)
+            return count + 1 if count < report.MAX_SCOPE_ATTEMPTS else None
         self.stack.enter_context(patch.object(report, '_reserve_scope_attempt', side_effect=reserve))
+        self.diagnostics = {}
+        def retry_state(cfg, day, scope):
+            rows = self.diagnostics.get(scope, [])
+            return (rows[-1]['code'], rows[-1]['terminal']) if rows else (None, False)
+        def diagnostic(cfg, day, scope, attempt, value=None, **kwargs):
+            if value is not None:
+                self.diagnostics.setdefault(scope, []).append({'code': value.code,
+                    'feedback': value.feedback, 'terminal': kwargs['terminal'],
+                    'elapsed_ms': kwargs['elapsed_ms']})
+        self.stack.enter_context(patch.object(report, '_scope_retry_state', side_effect=retry_state))
+        self.stack.enter_context(patch.object(report, '_record_scope_diagnostic', side_effect=diagnostic))
         self.stack.enter_context(patch.object(report.body, 'pending', side_effect=lambda cfg: list(self.pending)))
         self.stack.enter_context(patch.object(report.report_input, 'prepare_snapshot', return_value=self.exported))
         self.stack.enter_context(patch.object(report.report_input, 'build_period', side_effect=lambda cfg, folder, day, scope: folder / scope))
@@ -74,7 +86,7 @@ class SupervisedReportTest(unittest.TestCase):
         self.stack.enter_context(patch.object(report, '_assert_attempt_current', side_effect=lambda cfg: None))
 
     def run_report(self, regenerate=False):
-        if regenerate: self.work_rows = {}; self.attempts = {}
+        if regenerate: self.work_rows = {}; self.attempts = {}; self.diagnostics = {}
         with patch.dict('os.environ', {'BRAIN_WORK_ID':'synthetic-work'}):
             return report.run_supervised(self.cfg, self.writer, regenerate=regenerate, today=DAY)
 
@@ -82,7 +94,7 @@ class SupervisedReportTest(unittest.TestCase):
         with patch.object(store, 'write_lock_held', side_effect=AssertionError('수집 락 관측 금지')), \
              patch.object(report.time, 'sleep', side_effect=AssertionError('수집 대기 금지')):
             self.assertEqual(self.run_report(), {'status': 'success', 'scopes': 4})
-        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
 
     def test_daily_and_regenerate_emit_once_only_after_saving_and_publication(self):
         for regenerate in (False, True):
@@ -104,17 +116,17 @@ class SupervisedReportTest(unittest.TestCase):
     def test_order_immediate_append_and_failed_scope_budget_survives_resume(self):
         self.fail = '30d'
         with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
-        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d'] + ['30d'] * 6 + ['all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d'] + ['30d'] * 2 + ['all', 'saved:all'])
         self.failure_event.assert_called_once_with(self.cfg, DAY, ['30d'])
         self.fail = None; self.calls.clear()
         with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
-        self.assertEqual(self.calls, [])
+        self.assertCountEqual(self.calls, [])
         self.assertEqual(set(self.rows), {'day', '7d', 'all'})
 
     def test_complete_skip_and_explicit_regenerate_append(self):
         self.run_report(); first = {k: list(v) for k, v in self.rows.items()}; self.calls.clear()
         self.assertEqual(self.run_report(), {'status': 'noop', 'scopes': 0})
-        self.assertEqual(self.calls, [])
+        self.assertCountEqual(self.calls, [])
         self.run_report(regenerate=True)
         for scope, old in first.items():
             self.assertEqual(self.rows[scope][:1], old)
@@ -132,10 +144,10 @@ class SupervisedReportTest(unittest.TestCase):
     def test_intake_failure_continues_analysis_and_pending_survives(self):
         self.pending = ['inbox/inbody/input.txt']; self.fail = 'intake'
         with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-        self.assertEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
         self.assertEqual(self.pending, ['inbox/inbody/input.txt'])
         self.fail = None; self.calls.clear(); self.run_report()
-        self.assertEqual(self.calls, [])
+        self.assertCountEqual(self.calls, [])
         self.run_report(regenerate=True)
         self.assertEqual(self.calls[0], 'intake')
 
@@ -143,11 +155,11 @@ class SupervisedReportTest(unittest.TestCase):
         self.pending = ['inbox/inbody/first.txt', 'inbox/inbody/second.txt']
         self.leave_pending = True
         with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-        self.assertEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
         self.assertEqual(self.pending, ['inbox/inbody/first.txt', 'inbox/inbody/second.txt'])
         self.calls.clear()
         self.assertEqual(self.run_report(), {'status': 'noop', 'scopes': 0})
-        self.assertEqual(self.calls, [])
+        self.assertCountEqual(self.calls, [])
         self.leave_pending = False
         self.run_report(regenerate=True)
         self.assertEqual(self.pending, [])
@@ -172,17 +184,17 @@ class SupervisedReportTest(unittest.TestCase):
     def test_initial_pending_file_error_reports_failure_after_all_scopes_and_skips_complete_day(self):
         with patch.object(report.body, 'pending', side_effect=OSError('synthetic')):
             with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-        self.assertEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
         self.calls.clear()
         with patch.object(report.body, 'pending', side_effect=AssertionError('skip must not read')):
             self.assertEqual(self.run_report(), {'status': 'noop', 'scopes': 0})
-        self.assertEqual(self.calls, [])
+        self.assertCountEqual(self.calls, [])
 
     def test_pending_recheck_file_error_continues_all_scopes(self):
         self.pending = ['inbox/inbody/input.txt']
         with patch.object(report.body, 'pending', side_effect=[list(self.pending), OSError('synthetic')]):
             with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-        self.assertEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
+        self.assertCountEqual(self.calls, ['intake', 'day', 'saved:day', '7d', 'saved:7d', '30d', 'saved:30d', 'all', 'saved:all'])
 
     def test_period_local_file_error_does_not_stop_later_scopes(self):
         for error in (OSError('synthetic'), json.JSONDecodeError('synthetic', '', 0), UnicodeDecodeError('utf8', b'\xff', 0, 1, 'synthetic')):
@@ -192,10 +204,10 @@ class SupervisedReportTest(unittest.TestCase):
                 return folder / scope
             with self.subTest(error=type(error).__name__), patch.object(report.report_input, 'build_period', side_effect=build):
                 with self.assertRaises(report.SupervisedReportFailed): self.run_report()
-            self.assertEqual(self.calls, ['day', 'saved:day', '30d', 'saved:30d', 'all', 'saved:all'])
+            self.assertCountEqual(self.calls, ['day', 'saved:day', '30d', 'saved:30d', 'all', 'saved:all'])
             self.calls.clear()
             self.assertEqual(self.run_report(), {'status':'success', 'scopes':1})
-            self.assertEqual(self.calls, ['7d', 'saved:7d'])
+            self.assertCountEqual(self.calls, ['7d', 'saved:7d'])
 
     def test_period_store_and_cancel_errors_stop_before_later_scopes(self):
         import psycopg
@@ -203,7 +215,7 @@ class SupervisedReportTest(unittest.TestCase):
             self.rows.clear(); self.calls.clear()
             with self.subTest(error=type(error).__name__), patch.object(report.report_input, 'build_period', side_effect=error):
                 with self.assertRaises(type(error)): self.run_report()
-            self.assertEqual(self.calls, ['day', 'saved:day'])
+            self.assertEqual(self.calls, [])
 
     def test_pending_store_and_cancel_errors_propagate_initial_and_recheck(self):
         import psycopg
@@ -213,13 +225,14 @@ class SupervisedReportTest(unittest.TestCase):
                 effects = [list(self.pending), error] if recheck else [error]
                 with self.subTest(error=type(error).__name__, recheck=recheck), patch.object(report.body, 'pending', side_effect=effects):
                     with self.assertRaises(type(error)): self.run_report()
-                self.assertEqual(self.calls, ['intake'] if recheck else [])
+                self.assertCountEqual(self.calls, ['intake'] if recheck else [])
 
     def test_stale_save_stops_and_never_records_success(self):
         self.stale = True
         with self.assertRaises(store.StaleAttempt): self.run_report()
         self.assertEqual(self.rows, {})
-        self.assertEqual(self.calls, ['day'])
+        self.assertIn('day', self.calls)
+        self.assertFalse(any(c.startswith('saved:') for c in self.calls))
 
     def test_revoked_after_failed_scope_stops_before_next_model(self):
         self.fail = 'day'
@@ -229,7 +242,7 @@ class SupervisedReportTest(unittest.TestCase):
             if result: raise result
         with patch.object(report, '_assert_attempt_current', side_effect=check):
             with self.assertRaises(store.StaleAttempt): self.run_report()
-        self.assertEqual(self.calls, ['day'])
+        self.assertCountEqual(self.calls, ['day'])
         self.assertEqual(self.rows, {})
 
     def test_store_failure_from_writer_does_not_become_scope_failure(self):
@@ -241,16 +254,71 @@ class SupervisedReportTest(unittest.TestCase):
         with patch.object(self.writer, 'write', side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt): self.run_report()
         self.assertEqual(self.rows, {})
-        self.assertEqual(self.calls, [])
+        self.assertFalse(any(c.startswith('saved:') for c in self.calls))
 
     def test_latest_scope_snapshot_closes_on_success_and_error(self):
         conn = SimpleNamespace(close=lambda: self.calls.append('closed'))
         with patch.object(store, 'read_connection', return_value=conn), patch.object(store, 'latest_evaluation', side_effect=[('row',), None, None, None]):
             self.assertEqual(self.completed_scopes(self.cfg, DAY), {'day'})
-        self.assertEqual(self.calls, ['closed']); self.calls.clear()
+        self.assertCountEqual(self.calls, ['closed']); self.calls.clear()
         with patch.object(store, 'read_connection', return_value=conn), patch.object(store, 'latest_evaluation', side_effect=RuntimeError('failure')):
             with self.assertRaises(RuntimeError): self.completed_scopes(self.cfg, DAY)
-        self.assertEqual(self.calls, ['closed'])
+        self.assertCountEqual(self.calls, ['closed'])
+
+    def test_concurrency_two_and_early_failure_while_other_scope_is_running(self):
+        entered = threading.Event(); release = threading.Event()
+        active = 0; peak = 0; lock = threading.Lock()
+        def analyse(scope):
+            nonlocal active, peak
+            with lock:
+                active += 1; peak = max(peak, active)
+            try:
+                if scope == '7d':
+                    entered.set()
+                    if not release.wait(5): raise AssertionError('early failure was not emitted')
+                if scope == 'day':
+                    if not entered.wait(5): raise AssertionError('second scope did not start')
+                    raise report.WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, 'provider model effort mismatch')
+                self.calls.append(scope)
+                return report.DailyAnalysis('ok', 'synthetic')
+            finally:
+                with lock: active -= 1
+        def failed(cfg, day, scopes):
+            self.assertEqual(scopes, ['day'])
+            self.assertNotIn('7d', self.rows)
+            release.set()
+        with patch.object(self.writer, 'analysis', side_effect=analyse), patch('report_channel.failure', side_effect=failed):
+            with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        self.assertEqual(peak, 2)
+        self.assertEqual(set(self.rows), {'7d','30d','all'})
+        self.assertEqual(self.attempts['day'], 1)
+
+    def test_validation_code_feedback_repeated_error_stops_and_is_durable(self):
+        def fail(cfg, inputs):
+            raise report.WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, 'unresolved evidence source')
+        with patch.object(self.writer, 'write', side_effect=fail):
+            with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        rows = self.diagnostics['day']
+        self.assertEqual([r['code'] for r in rows], ['EVIDENCE_SOURCE','EVIDENCE_SOURCE'])
+        self.assertEqual([r['feedback'] for r in rows], [None,'EVIDENCE_SOURCE'])
+        self.assertTrue(rows[-1]['terminal'])
+        self.assertTrue(all(r['elapsed_ms'] >= 0 for r in rows))
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        self.assertEqual(len(self.diagnostics['day']), 2)
+
+    def test_success_after_validation_feedback_saves_only_valid_result(self):
+        calls = 0
+        def repaired(cfg, inputs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise report.WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, 'unresolved evidence source')
+            self.assertEqual(report.analysis_diagnostics.current.get().feedback, 'EVIDENCE_SOURCE')
+            return report.DailyAnalysis('ok', 'repaired')
+        with patch.object(self.writer, 'write', side_effect=repaired):
+            self.assertEqual(self.run_report()['status'], 'success')
+        self.assertEqual(self.rows['day'], ['repaired'])
+        self.assertEqual([r['code'] for r in self.diagnostics['day']], ['EVIDENCE_SOURCE','SUCCESS'])
 
 
 class RuntimeBindingTest(unittest.TestCase):

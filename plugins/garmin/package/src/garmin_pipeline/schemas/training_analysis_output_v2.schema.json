@@ -431,10 +431,17 @@
             ]
           },
           "scope": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "day",
+              "7d",
+              "30d",
+              "all"
+            ]
           },
           "affected_judgment": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^(training_summary|progression|message|(strength_findings|aerobic_findings|next_workout_actions|recovery_context)\\[[0-9]+\\])$"
           },
           "detail": {
             "type": "string"

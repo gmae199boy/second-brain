@@ -5,6 +5,12 @@ description: Garmin 측정 계약으로 완료한 모든 운동의 수행과 다
 
 # garmin-daily-analysis
 
+## Compact 입력 우선
+
+`training_measurements.compact.json`이 있으면 새 C1 계약이다. 기존 원본/manifest/digest/day_values 읽기 지시보다 이 절을 우선한다. profile 파일(있을 때)과 compact 파일, previous.json(있을 때)만 읽는다. `measurements` 안의 schema_version·머리 키·current·comparison·recovery_context를 사용한다. 원본 전체 cat, Python 재투영, 임의 파일 검색을 하지 않는다. 모든 운동·세트·비교창·coverage·결측은 보존되어 있다. 조밀한 심박 샘플만 호스트가 min/max/mean·표본 수·시작/끝으로 요약했다. 표본 수는 존 시간이 아니며 품질은 unknown이다. 실제 존 경계와 체류시간은 sessions.zones를 그대로 쓴다.
+
+`evidence_ref_index`는 원본 training_measurements.json의 세션/세트/심박 Pointer다. C7 source_ref는 이 원본 경로를 사용한다. compact의 measurements 접두어나 heart_rate_summary 필드 경로를 사용하지 않는다. 집계된 심박 근거는 heart_rate_ref가 가리키는 원본 배열에 연결한다. compact 파일이 있어도 measurements_version은 training_measurements_v1이다. compact 파일이 없을 때만 아래 원본 읽기 지시를 따른다.
+
 ## 누구를 위한 리포트인가
 - 독자는 한 사람이다. 사용자가 예약한 시각에 휴대폰으로 읽는다. 수집이 진행 중이거나 일부 미완료일 수 있다.
 - 쓰임은 셋이다: 방금 한 운동 평가와 다음 운동 제안, 오늘 컨디션 판단, 기록과 추세 확인.
@@ -73,3 +79,7 @@ aerobic_findings.activity_refs는 current.sessions의 실제 session_id이며 �
 ## 프로필 적용
 
 - `profile.json`과 `profile.md`를 먼저 읽는다. DB 설정의 작업별 사본이며 `profile_status`·`missing_fields`·`source`를 코드가 판정한다. `absent`는 구조화 프로필 없음, `partial`은 일부 미설정이다. 명시한 목표까지 미상이라고 쓰지 않고 실제 누락 항목만 한계로 표시한다. 누락된 목표·목표 체중·기구·선호·식사·음주 단위는 추정하지 않는다. `legacy_file`은 기존 계정 파일의 읽기 전용 자료이며 구조화 필드는 여전히 미설정이다.
+
+## 검증 가능한 한계 참조
+
+`limitations.scope`는 종목 이름이 아니라 최상위 `scope`와 같은 day/7d/30d/all이다. 모든 한계 행에서 그대로 복사한다. `affected_judgment`는 training_summary/progression/message 또는 실제 존재하는 단일 행(예: aerobic_findings[0], strength_findings[0])만 허용한다. aerobic_findings처럼 배열 전체를 가리키지 않는다. 여러 행에 걸친 한계는 행마다 분리한다. evidence의 source_ref는 원본 파일에 적힌 raw source_ref를 복사하지 않고 training_measurements.json#/로 시작하는 해당 측정 JSON의 Pointer를 사용한다.

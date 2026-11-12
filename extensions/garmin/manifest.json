@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -393,7 +393,13 @@
     }
   ],
   "settings": [
-    {"key":"garmin.analysis_profile","type":"string","scope":"user","required":[],"default":""},
+    {
+      "key": "garmin.analysis_profile",
+      "type": "string",
+      "scope": "user",
+      "required": [],
+      "default": ""
+    },
     {
       "key": "garmin.capture_manifest",
       "type": "string",

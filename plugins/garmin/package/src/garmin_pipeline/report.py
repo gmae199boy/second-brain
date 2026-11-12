@@ -5,15 +5,19 @@ Codex runs in the runtime root in the supervisor process group and without API k
 """
 
 import contextlib
+import contextvars
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib.resources
 import json
 import logging
 import os
 import shutil
 import signal
+import sys
 import psycopg
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -28,6 +32,8 @@ from garmin_pipeline.analysis_agent import (AnalysisRequest, CodexAdapter, Claud
 from garmin_pipeline import (
     body,
     analysis_output,
+    analysis_diagnostics,
+    compact_measurements,
     charts,
     config,
     dates,
@@ -101,6 +107,10 @@ FALLBACK_TEXT: dict[errors.ReportFailReason, str] = {
 _DIR_MODE = 0o700
 
 logger = logging.getLogger(__name__)
+# Model children remain in the supervisor-owned group so cancellation kills all.
+# During parallel analysis only the host, after draining the pool, cleans that group.
+_model_batch = contextvars.ContextVar('garmin_model_batch', default=None)
+_analysis_cancel = contextvars.ContextVar('garmin_analysis_cancel', default=None)
 
 @dataclass(frozen=True)
 class DailyAnalysis:
@@ -126,6 +136,10 @@ class WriterFailed(Exception):
     def __init__(self, reason: errors.ReportFailReason | str, detail: str = "") -> None:
         self.reason = errors.ReportFailReason(reason)
         self.detail = detail
+        self.diagnostic_code = analysis_diagnostics.code_for(self.reason, detail)
+        diagnostic = analysis_diagnostics.current.get()
+        if diagnostic is not None:
+            diagnostic.code = self.diagnostic_code
         super().__init__(f"{self.reason}: {detail}" if detail else str(self.reason))
 
 
@@ -191,6 +205,7 @@ def codex_argv(
     intake: bool = False,
     scope: str | None = None,
     output_contract: str | None = None,
+    feedback_code: str | None = None,
 ) -> list[str]:
     """`codex exec` argv(셸 없음). `-i`가 값을 여러 개 받으므로 프롬프트를 그 앞에 둔다."""
     argv = [
@@ -214,7 +229,8 @@ def codex_argv(
         "-o",
         str(output),
         codex_prompt(images if inputs is None else inputs, intake=intake, scope=scope)
-        + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else ""),
+        + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else "")
+        + (f"\n이전 시도 검증 실패 코드: {feedback_code}. 해당 계약 위반을 바로잡는다." if feedback_code else ""),
     ]
     if intake and cfg.report_model is None:
         index = argv.index("-m")
@@ -308,6 +324,58 @@ def _cleanup_owned_group(group):
             time.sleep(.05)
     if _group_members(group):
         raise ProcessCleanupError('supervised descendants still alive')
+
+
+class ModelBatch:
+    """Quiesce all active model trees before any sibling decodes or retries.
+
+    All children keep the supervisor group. Popen and cancellation use the same
+    gate; a completed direct child holds its slot until the last sibling reaps
+    and group cleanup verifies that no tool descendant remains.
+    """
+    def __init__(self, group, cancelled):
+        self.group = group
+        self.cancelled = cancelled
+        self.condition = threading.Condition()
+        self.active = 0
+        self.generation = 0
+        self.error = None
+
+    def spawn(self, argv, **kwargs):
+        with self.condition:
+            if self.cancelled.is_set() or self.error is not None:
+                raise ProcessCleanupError('analysis spawn gate closed')
+            proc = subprocess.Popen(argv, **kwargs)
+            self.active += 1
+            return proc
+
+    def complete(self):
+        with self.condition:
+            generation = self.generation
+            self.active -= 1
+            if self.active == 0:
+                try:
+                    _cleanup_owned_group(self.group)
+                except BaseException as error:
+                    self.error = error
+                    self.cancelled.set()
+                finally:
+                    self.generation += 1
+                    self.condition.notify_all()
+            else:
+                self.condition.wait_for(lambda: self.generation != generation)
+            if self.error is not None:
+                raise ProcessCleanupError('model batch cleanup unconfirmed') from self.error
+
+    def cleanup(self):
+        with self.condition:
+            _cleanup_owned_group(self.group)
+
+    def cancel(self):
+        # Taking this lock proves every earlier Popen is registered and no later
+        # Popen can cross cancellation, including delayed preparation/probes.
+        with self.condition:
+            self.cancelled.set()
 
 
 def _abi_progress() -> None:
@@ -432,9 +500,22 @@ class AnalysisWriter:
             raise WriterFailed(
                 failed, f"임시 폴더를 만들지 못함: {type(error).__name__}"
             ) from None
+        diagnostic = analysis_diagnostics.current.get()
+        output = workdir / CODEX_OUTPUT_FILENAME
+        events = workdir / 'events.jsonl'
         try:
+            if diagnostic is not None:
+                diagnostic.input_bytes = sum(file.stat().st_size for item in inputs
+                    for file in ((body.runtime_root(cfg) / item).rglob('*')
+                                 if (body.runtime_root(cfg) / item).is_dir()
+                                 else [body.runtime_root(cfg) / item]) if file.is_file())
             measurements = None if intake else analysis_output.measurements_for_inputs(
                 body.runtime_root(cfg), inputs, scope)
+            if measurements is not None:
+                inputs = compact_measurements.prepare(body.runtime_root(cfg), inputs,
+                    workdir / 'model-input', measurements)
+                if diagnostic is not None:
+                    diagnostic.input_bytes = sum(p.stat().st_size for p in (workdir / 'model-input').iterdir() if p.is_file())
             resource = (
                 importlib.resources.files("garmin_pipeline")
                 / "schemas"
@@ -449,6 +530,13 @@ class AnalysisWriter:
                 )
             )
             with importlib.resources.as_file(resource) as schema_path:
+                if measurements is not None:
+                    # Scope-specific generation constraints mirror the reference validator.
+                    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                    schema['properties']['scope']['const'] = measurements['scope']
+                    schema['properties']['limitations']['items']['properties']['scope']['const'] = measurements['scope']
+                    schema_path = workdir / analysis_output.SCHEMA
+                    schema_path.write_text(json.dumps(schema), encoding="utf-8")
                 output = workdir / CODEX_OUTPUT_FILENAME
                 output.touch(mode=0o600)
                 request = AnalysisRequest(cfg, inputs, scope, schema_path, output, workdir, executable)
@@ -479,6 +567,9 @@ class AnalysisWriter:
                     result = replace(result, usage=usage)
                 return result
         finally:
+            if diagnostic is not None:
+                diagnostic.output_bytes = output.stat().st_size if output.exists() else 0
+                diagnostic.event_bytes = events.stat().st_size if events.exists() else 0
             shutil.rmtree(workdir, ignore_errors=True)
 
     @staticmethod
@@ -510,7 +601,9 @@ class AnalysisWriter:
         started = time.monotonic()
         try:
             with (stdin_path.open("rb") if stdin_path else contextlib.nullcontext(subprocess.DEVNULL)) as input_stream:
-                proc = subprocess.Popen(
+                batch = _model_batch.get()
+                spawn = subprocess.Popen if batch is None else batch.spawn
+                proc = spawn(
                 argv,
                 cwd=cwd or body.runtime_root(cfg),
                 env=env,
@@ -530,6 +623,9 @@ class AnalysisWriter:
             deadline = started + timeout
             next_progress = started + PROGRESS_INTERVAL_SECONDS
             while True:
+                cancelled = _analysis_cancel.get()
+                if cancelled is not None and cancelled.is_set():
+                    raise WriterFailed(failed, 'analysis cancelled')
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
@@ -555,8 +651,13 @@ class AnalysisWriter:
                         next_progress = now + PROGRESS_INTERVAL_SECONDS
         finally:
             try:
-                _end_child(proc)
-                _cleanup_owned_group(group)
+                try:
+                    _end_child(proc)
+                finally:
+                    if batch is None:
+                        _cleanup_owned_group(group)
+                    else:
+                        batch.complete()
             finally:
                 if trapped:
                     signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
@@ -639,7 +740,7 @@ def _daily_analysis(
             reason = errors.ReportFailReason.CODEX_FAILED
         logger.warning("하루 분석 작성기 실패: %s (%s)", reason, error.detail or "-")
         return _fallback(reason), reason, None
-    except (store.StoreError, psycopg.Error):
+    except (store.StoreError, psycopg.Error, ProcessCleanupError):
         raise
     except Exception as error:  # noqa: BLE001 - 작성기의 예상 밖 실패도 폴백으로 바꾼다
         reason = errors.ReportFailReason.CODEX_FAILED
@@ -1272,7 +1373,7 @@ def _read_work_revisions(cfg, today):
         conn.close()
 
 
-MAX_SCOPE_ATTEMPTS = 6  # 최초 실행 1회 + 실패 기간 재시도 최대 5회.
+MAX_SCOPE_ATTEMPTS = 3  # One initial attempt and two repairs with validation feedback.
 
 
 def _reserve_scope_attempt(cfg, day, scope):
@@ -1284,16 +1385,79 @@ def _reserve_scope_attempt(cfg, day, scope):
                 set failures=garmin.report_scope_failures.failures+1
                 where garmin.report_scope_failures.failures < %s returning failures""",
                 (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, MAX_SCOPE_ATTEMPTS)).fetchone()
-            return row is not None
+            if row is not None:
+                conn.execute("""insert into garmin.analysis_attempt_diagnostics(work_id,report_date,scope,attempt)
+                    values (%s,%s,%s,%s)""",
+                    (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, row[0]))
+            return row[0] if row else None
+
+
+def _scope_retry_state(cfg, day, scope):
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            key = (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope)
+            # A new valid report owner reconciles abandoned reservations. Interrupted
+            # calls consume budget but do not erase the prior actionable failure.
+            conn.execute("""update garmin.analysis_attempt_diagnostics
+                set ended_at=clock_timestamp(), error_code='INTERRUPTED',
+                    elapsed_ms=greatest(0,floor(extract(epoch from (clock_timestamp()-started_at))*1000)::bigint)
+                where work_id=%s and report_date=%s and scope=%s and ended_at is null""", key)
+            row = conn.execute("""select error_code, terminal from garmin.analysis_attempt_diagnostics
+                where work_id=%s and report_date=%s and scope=%s and ended_at is not null
+                and error_code not in ('IN_PROGRESS','INTERRUPTED','SUCCESS')
+                order by attempt desc limit 1""", key).fetchone()
+            return row if row else (None, False)
+
+
+def _record_scope_diagnostic(cfg, day, scope, attempt, diagnostic=None, *, elapsed_ms=None, terminal=False):
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            key = (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, attempt)
+            conn.execute("""update garmin.analysis_attempt_diagnostics
+                set ended_at=clock_timestamp(),elapsed_ms=%s,error_code=%s,terminal=%s,
+                    input_bytes=%s,output_bytes=%s,event_bytes=%s
+                where work_id=%s and report_date=%s and scope=%s and attempt=%s""",
+                (elapsed_ms, diagnostic.code, terminal, diagnostic.input_bytes,
+                 diagnostic.output_bytes, diagnostic.event_bytes, *key))
 
 
 def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
-    while _reserve_scope_attempt(cfg, day, scope):
+    feedback, terminal = _scope_retry_state(cfg, day, scope)
+    if terminal:
+        return None, None, errors.ReportFailReason.OUTPUT_INVALID, None
+    while True:
+        cancelled = _analysis_cancel.get()
+        if cancelled is not None and cancelled.is_set():
+            raise SupervisedReportFailed('analysis cancelled')
+        attempt = _reserve_scope_attempt(cfg, day, scope)
+        if attempt is None:
+            break
         _assert_attempt_current(cfg)
-        analysis, text, failure, summary = _evaluate(cfg, writer, inputs, scope, usages)
-        if failure is None:
-            return analysis, text, failure, summary
-    return None, None, errors.ReportFailReason.CODEX_FAILED, None
+        diagnostic = analysis_diagnostics.Attempt(feedback=feedback)
+        token = analysis_diagnostics.current.set(diagnostic)
+        started = time.monotonic()
+        terminal = False
+        try:
+            analysis, text, failure, summary = _evaluate(cfg, writer, inputs, scope, usages)
+            if failure is None:
+                return analysis, text, failure, summary
+            if diagnostic.code == 'SUCCESS':
+                diagnostic.code = analysis_diagnostics.code_for(failure)
+            # Infrastructure/capability failures do not improve by repairing model output.
+            terminal = diagnostic.code in analysis_diagnostics.DETERMINISTIC or diagnostic.code == feedback
+            terminal = terminal or diagnostic.code == 'AGENT_TIMEOUT'
+            terminal = terminal or attempt >= MAX_SCOPE_ATTEMPTS
+            feedback = diagnostic.code
+        except BaseException:
+            diagnostic.code = 'INTERRUPTED'
+            raise
+        finally:
+            analysis_diagnostics.current.reset(token)
+            _record_scope_diagnostic(cfg, day, scope, attempt, diagnostic,
+                elapsed_ms=int((time.monotonic() - started) * 1000), terminal=terminal)
+        if terminal:
+            break
+    return None, None, errors.ReportFailReason.OUTPUT_INVALID, None
 
 
 def run_supervised(cfg, writer, *, regenerate=False, today=None):
@@ -1349,9 +1513,10 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     exported = report_input.prepare_snapshot(cfg, today, os.environ['BRAIN_WORK_ID'], started_at=started_at)
     runtime = body.runtime_root(cfg)
     usages = []
+    prepared = {}
     for scope in remaining:
         if scope == 'day':
-            inputs = [os.path.relpath(exported.path / 'day', runtime)]
+            prepared[scope] = [os.path.relpath(exported.path / 'day', runtime)]
         else:
             try:
                 folder = report_input.build_period(cfg, exported.path, today, scope)
@@ -1360,17 +1525,70 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
             except (OSError, UnicodeError, json.JSONDecodeError):
                 failed = True
                 continue
-            inputs = [os.path.relpath(folder, runtime),
-                      os.path.relpath(folder / 'profile.md', runtime)]
-        analysis, _, failure, _ = _evaluate_with_retries(cfg, writer, inputs, scope, usages, today)
-        if failure is not None:
-            exhausted.append(scope)
-            failed = True
-            continue
-        _save_evaluation(cfg, today, scope, analysis)
+            prepared[scope] = [os.path.relpath(folder, runtime),
+                               os.path.relpath(folder / 'profile.md', runtime)]
+    # Each task inherits the selected account, but owns its own connections and
+    # short fenced writes. The outer report session advisory lock stays held.
+    group = _owned_process_group() if isinstance(writer, AnalysisWriter) else None
+    trapped, previous = _trap_sigterm()
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='garmin-analysis')
+    cancelled = threading.Event()
+    batch = ModelBatch(group, cancelled) if group is not None else None
+    token = _model_batch.set(batch)
+    cancel_token = _analysis_cancel.set(cancelled)
+    futures = {}
+    try:
+        def evaluate_scope(inputs, scope):
+            try:
+                return _evaluate_with_retries(cfg, writer, inputs, scope, usages, today)
+            except BaseException:
+                cancelled.set()
+                raise
+        for scope, inputs in prepared.items():
+            context = contextvars.copy_context()
+            futures[pool.submit(context.run, evaluate_scope, inputs, scope)] = scope
+        for future in as_completed(futures):
+            scope = futures[future]
+            analysis, _, failure, _ = future.result()
+            if failure is not None:
+                exhausted.append(scope)
+                failed = True
+                import report_channel
+                report_channel.failure(cfg, today, [scope])
+            else:
+                _assert_attempt_current(cfg)
+                _save_evaluation(cfg, today, scope, analysis)
+    finally:
+        primary = sys.exception()
+        if batch is not None:
+            batch.cancel()
+        else:
+            cancelled.set()
+        _analysis_cancel.reset(cancel_token)
+        _model_batch.reset(token)
+        cleanup_errors = []
+        def cleanup():
+            if batch is not None:
+                try:
+                    batch.cleanup()
+                except BaseException as error:
+                    cleanup_errors.append(error)
+        try:
+            for future in futures:
+                future.cancel()
+            cleanup()  # Stop all registered children before joining on cancellation.
+            try:
+                pool.shutdown(wait=True, cancel_futures=True)
+            finally:
+                cleanup()  # Verify again after every potential spawning thread ended.
+        finally:
+            if trapped:
+                signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
+        if cleanup_errors:
+            if primary is None:
+                raise ProcessCleanupError('parallel cleanup unconfirmed') from cleanup_errors[0]
+            primary.add_note('parallel cleanup unconfirmed; supervisor must verify group termination')
     if exhausted:
-        import report_channel
-        report_channel.failure(cfg, today, exhausted)
         raise ScopeAnalysisExhausted('scope retry budget exhausted')
     if failed:
         raise SupervisedReportFailed('analysis or body intake failed')

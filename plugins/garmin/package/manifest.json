@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -1194,6 +1194,7 @@
     "migrations/0019_scope_snapshot.sql",
     "migrations/0020_report_message_manifest.sql",
     "migrations/0021_fetch_error_message.sql",
+    "migrations/0022_analysis_attempt_diagnostics.sql",
     "pyproject.toml",
     "skills/garmin-body-intake/SKILL.md",
     "skills/garmin-daily-analysis/SKILL.md",
@@ -1215,6 +1216,7 @@
     "src/doctor_backlog.py",
     "src/garmin_pipeline/__init__.py",
     "src/garmin_pipeline/analysis_agent.py",
+    "src/garmin_pipeline/analysis_diagnostics.py",
     "src/garmin_pipeline/analysis_output.py",
     "src/garmin_pipeline/analysis_profile.py",
     "src/garmin_pipeline/auth.py",
@@ -1224,6 +1226,7 @@
     "src/garmin_pipeline/charts.py",
     "src/garmin_pipeline/cli.py",
     "src/garmin_pipeline/collect.py",
+    "src/garmin_pipeline/compact_measurements.py",
     "src/garmin_pipeline/config.py",
     "src/garmin_pipeline/coverage.py",
     "src/garmin_pipeline/dates.py",
@@ -1284,5 +1287,5 @@
     "min": "0.0.0",
     "max_exclusive": "1.0.0"
   },
-  "plugin_version": "0.1.16"
+  "plugin_version": "0.1.17"
 }

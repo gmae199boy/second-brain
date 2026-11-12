@@ -38,6 +38,7 @@ if scope == 'intake':
                     'body reject`가 0이 아닌 값으로 끝나면'):
         if command not in skill_text: sys.exit(26)
 observed = {}
+measurements = None
 if scope == 'intake':
     command = [str(extension / '.venv/bin/python'), str(extension / 'src/body_runtime.py'), 'pending']
     body_env = dict(os.environ)
@@ -48,7 +49,13 @@ if scope != 'intake':
     if len(lines) < 4 or lines[2] != '입력 폴더(운영 루트 기준 경로):': sys.exit(21)
     folder = (runtime / lines[3]).resolve()
     if not folder.is_relative_to(runtime.resolve()) or not folder.is_dir(): sys.exit(22)
-    if scope == 'day':
+    compact = folder / 'training_measurements.compact.json'
+    if compact.is_file():
+        observed['compact'] = json.loads(compact.read_text())
+        measurements = observed['compact']['measurements']
+        observed['profile'] = (folder / 'profile.md').read_text() if (folder / 'profile.md').exists() else ''
+        observed['previous'] = json.loads((folder / 'previous.json').read_text()) if (folder / 'previous.json').exists() else None
+    elif scope == 'day':
         observed['manifest'] = json.loads((folder / 'manifest.json').read_text())
         observed['digest'] = json.loads((folder / 'digest.json').read_text())
         observed['raw'] = {str(path.relative_to(folder)): json.loads(path.read_text())
@@ -101,9 +108,12 @@ else:
     if scope == 'custom':
         result['message'] = {'headline': '기간 회복 판단', 'recommendations': ['기간 운동 부담을 줄인다'],
                              'trend_line': '기간 후반 추세', 'limitations': ['직전 기간 자료가 없다']}
-if scope != 'intake' and (folder / 'training_measurements.json').is_file():
-    from scope_output import scope_output
-    result = scope_output(json.loads((folder / 'training_measurements.json').read_text()), result)
+if scope != 'intake':
+    if measurements is None and (folder / 'training_measurements.json').is_file():
+        measurements = json.loads((folder / 'training_measurements.json').read_text())
+    if measurements is not None:
+        from scope_output import scope_output
+        result = scope_output(measurements, result)
 output = Path(args[args.index('-o') + 1])
 output.write_text('{invalid-json' if (control / ('invalid-' + scope)).exists() else json.dumps(result))
 print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'cached_input_tokens': 0, 'output_tokens': 1}}), flush=True)

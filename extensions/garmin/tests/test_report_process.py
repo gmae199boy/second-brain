@@ -27,6 +27,63 @@ class ModelProcessTest(unittest.TestCase):
         group.start(); cleanup.start()
         self.addCleanup(group.stop); self.addCleanup(cleanup.stop)
 
+    def test_batch_holds_completed_slot_until_descendants_are_quiescent(self):
+        import threading
+        batch = report.ModelBatch(123, threading.Event())
+        with patch.object(report.subprocess, 'Popen', return_value=Mock()), \
+             patch.object(report, '_cleanup_owned_group') as clean:
+            batch.spawn(['one']); batch.spawn(['two'])
+            returned = threading.Event()
+            first = threading.Thread(target=lambda: (batch.complete(), returned.set()))
+            first.start()
+            self.assertFalse(returned.wait(.05))
+            clean.assert_not_called()
+            batch.complete(); first.join(2)
+            self.assertTrue(returned.is_set())
+            clean.assert_called_once_with(123)
+
+    def test_cancel_closes_spawn_gate_even_when_preparation_finishes_late(self):
+        import threading
+        batch = report.ModelBatch(123, threading.Event())
+        parked = threading.Event(); release = threading.Event(); errors_seen = []
+        def delayed():
+            parked.set(); release.wait(2)
+            try: batch.spawn(['late'])
+            except report.ProcessCleanupError: errors_seen.append('closed')
+        worker = threading.Thread(target=delayed); worker.start(); self.assertTrue(parked.wait(2))
+        with patch.object(report.subprocess, 'Popen') as spawn:
+            batch.cancel(); batch.cleanup(); release.set(); worker.join(2); batch.cleanup()
+            spawn.assert_not_called()
+        self.assertEqual(errors_seen, ['closed'])
+
+    def test_real_parallel_models_quiesce_leaked_tools_before_returning(self):
+        # Dedicated supervised group contains only this test's synthetic processes.
+        code = r"""
+import concurrent.futures, contextvars, pathlib, subprocess, sys, tempfile, threading
+from types import SimpleNamespace
+from garmin_pipeline import report
+with tempfile.TemporaryDirectory() as tmp:
+ cfg=SimpleNamespace(path=pathlib.Path(tmp)/'runtime-config')
+ group=report._owned_process_group(); cancelled=threading.Event()
+ batch=report.ModelBatch(group,cancelled)
+ token=report._model_batch.set(batch)
+ script='import subprocess,sys,time; subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"]); time.sleep(.1)'
+ def run():
+  report.AnalysisWriter._run(cfg,[sys.executable,'-c',script],5)
+  return True
+ try:
+  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+   tasks=[pool.submit(contextvars.copy_context().run,run) for _ in range(2)]
+   assert all(task.result() for task in tasks)
+  assert not report._group_members(group)
+ finally:
+  report._model_batch.reset(token)
+  report._cleanup_owned_group(group)
+"""
+        result = subprocess.run([sys.executable, '-c', code], start_new_session=True,
+            capture_output=True, text=True, timeout=25)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_missing_configured_agent_has_actionable_error_without_spawn(self):
         with patch.dict(os.environ, {'PATH': '/usr/bin:/bin'}, clear=True), patch.object(report.subprocess, 'Popen') as spawn:
             with self.assertRaisesRegex(report.AnalysisAgentNotFound, 'ANALYSIS_AGENT_NOT_FOUND.*brain config set agent.codex_path'):

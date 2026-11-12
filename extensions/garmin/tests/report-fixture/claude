@@ -31,6 +31,8 @@ with (root / 'claude-calls.jsonl').open('a') as stream:
 result = {'status':'ok','summary':'synthetic ' + scope,'report_md':'synthetic ' + scope,
           'judgments':[], 'evidence':[], 'next_checks':[], 'message':None}
 measurements = next((json.loads(file['content']) for file in prompt['files'] if file['path'].endswith('/training_measurements.json')), None)
+if measurements is None:
+    measurements = next((json.loads(file['content'])['measurements'] for file in prompt['files'] if file['path'].endswith('/training_measurements.compact.json')), None)
 if measurements is not None:
     from scope_output import scope_output
     result = scope_output(measurements, result)

@@ -9,6 +9,12 @@ description: 코드가 준비한 7d·30d·all·custom 기간 입력으로 운동
 
 실제 관측 일수와 coverage를 밝힌다. `partial_date`의 값은 data_cutoff까지의 진행 중 자료이므로 완료 날짜와 같은 기준으로 비교하지 않는다. 기준은 코드가 제공한 비중첩 비교 기간의 실제 측정값이다. `previous.json`은 같은 기간 과거 next_checks를 검증할 가설이며 비교 기간 측정값을 대신하지 않는다. 다른 범위 평가·evaluations.json의 판단은 읽지 않는다.
 
+## Compact 입력 우선
+
+`training_measurements.compact.json`이 있으면 새 C1 계약이다. 기존 원본/manifest/digest/day_values 읽기 지시보다 이 절을 우선한다. profile 파일(있을 때)과 compact 파일, previous.json(있을 때)만 읽는다. `measurements` 안의 schema_version·머리 키·current·comparison·recovery_context를 사용한다. 원본 전체 cat, Python 재투영, 임의 파일 검색을 하지 않는다. 모든 운동·세트·비교창·coverage·결측은 보존되어 있다. 조밀한 심박 샘플만 호스트가 min/max/mean·표본 수·시작/끝으로 요약했다. 표본 수는 존 시간이 아니며 품질은 unknown이다. 실제 존 경계와 체류시간은 sessions.zones를 그대로 쓴다.
+
+`evidence_ref_index`는 원본 training_measurements.json의 세션/세트/심박 Pointer다. C7 source_ref는 이 원본 경로를 사용한다. compact의 measurements 접두어나 heart_rate_summary 필드 경로를 사용하지 않는다. 집계된 심박 근거는 heart_rate_ref가 가리키는 원본 배열에 연결한다. compact 파일이 있어도 measurements_version은 training_measurements_v1이다. compact 파일이 없을 때만 아래 원본 읽기 지시를 따른다.
+
 ## 기간별 역할과 본문
 
 - 7d: 운동 빈도·계획 이행, 모든 종목의 노출/세트/reps와 비교 가능한 수행 변화, 다음 주 조정. 한 번의 기록은 단일 관측이다.
@@ -65,3 +71,7 @@ aerobic_findings.activity_refs는 current.sessions의 실제 session_id이며 �
 ## 프로필 적용
 
 범위 폴더의 `profile.json`과 프롬프트가 준 `profile.md`를 먼저 읽고 명시된 목표와 선호를 따른다. 코드가 제공한 `profile_status`·`missing_fields`·`source`로 전체 없음과 일부 미설정을 구분한다. 명시된 목표까지 미상이라고 쓰지 않고 실제 누락 항목만 한계에 적는다. 목표 체중·기구·선호·식사·음주 단위를 추정하지 않는다. 감량이 primary이면 감량을 우선한다. `legacy_file`은 기존 계정 파일의 읽기 전용 자료이고 구조화 필드는 미설정이다. 평소 식사는 당일 섭취 사실이 아니며 음주 환산 근거가 없으면 표준잔·열량을 추정하지 않는다. 옛 입력에 JSON이 없으면 미설정으로 취급한다. 
+
+## 검증 가능한 한계 참조
+
+`limitations.scope`는 종목 이름이 아니라 최상위 `scope`와 같은 day/7d/30d/all이다. 모든 한계 행에서 그대로 복사한다. `affected_judgment`는 training_summary/progression/message 또는 실제 존재하는 단일 행(예: aerobic_findings[0], strength_findings[0])만 허용한다. aerobic_findings처럼 배열 전체를 가리키지 않는다. 여러 행에 걸친 한계는 행마다 분리한다. evidence의 source_ref는 원본 파일에 적힌 raw source_ref를 복사하지 않고 training_measurements.json#/로 시작하는 해당 측정 JSON의 Pointer를 사용한다.
