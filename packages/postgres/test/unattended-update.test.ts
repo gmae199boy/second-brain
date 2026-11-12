@@ -151,10 +151,12 @@ it('core48 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하�
     await expect(runtime.packages.checkCore!(manifest)).rejects.toThrow('1.2.7');
     // 최신 패키지 전환은 기존 교체 프로토콜을 사용하며 auth/scheduler 단계 전에 gate를 해제한다.
     let output = '';
-    const exit = await dispatch(commands, ['ext','install','--package',fileURLToPath(new URL('../../../plugins/garmin/package', import.meta.url)),'--json'], { env: k.env, clock, stdout: text => { output += text; }, stderr: () => {} });
+    const currentPackage = fileURLToPath(new URL('../../../plugins/garmin/package', import.meta.url));
+    const currentManifest = JSON.parse(await readFile(join(currentPackage, 'manifest.json'), 'utf8'));
+    const exit = await dispatch(commands, ['ext','install','--package',currentPackage,'--json'], { env: k.env, clock, stdout: text => { output += text; }, stderr: () => {} });
     expect(exit, output).not.toBe(0);
     expect(['EXTENSION_LOGIN_REQUIRED', 'EXTENSION_SCHEDULER_UNAVAILABLE']).toContain(JSON.parse(output).error.code);
-    expect(await store.getExtension('garmin'), output).toMatchObject({ extension: { version: '1.2.10' } });
+    expect(await store.getExtension('garmin'), output).toMatchObject({ extension: { version: currentManifest.version } });
     expect(await store.readExtensionQuiesce('garmin'), output).toMatchObject({ owner: null });
     expect(await store.getExtensionInstallProgress('garmin')).toMatchObject({ journal: { progress: { name: 'garmin' } } });
     const progress = await store.getExtensionInstallProgress('garmin');

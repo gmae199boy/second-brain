@@ -179,11 +179,11 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       join garmin.evaluation_files ef on ef.request_id=i.request_id and ef.scope=i.scope
       join brain.file_locations fl on fl.file_id=ef.file_id and fl.store_kind='local' and fl.ownership='brain'
       where i.user_id='${self}' and i.connection_id='${account}' and i.report_date='${day}' and i.kind='graph' order by i.name`);
-    const graphGroups=[['01-day-heart.png','01-day-strength-1.png'],['02-7d-overview.png','02-7d-strength-1.png'],['03-30d-overview.png','03-30d-strength-1.png'],['04-all-overview.png','04-all-strength-1.png']];
+    // 완료 근력 세션이 한 건뿐인 fixture: day 심박만 제공하고 30d의 단일 관측은 그리지 않는다.
+    const graphGroups=[['01-day-heart.png']];
     const expectedGraphs=graphGroups.flat();
     expect(artifacts.map(row=>row.name)).toEqual(expectedGraphs);
-    for(const name of expectedGraphs) expect(name).toMatch(/^(01-day|02-7d|03-30d|04-all)-(strength-[1-3]|overview|heart)\.png$/);
-    for(const group of graphGroups) expect(group.length).toBeLessThanOrEqual(group[0]!.startsWith('01-day-')?4:3);
+    expect(artifacts.every(row=>row.name === '01-day-heart.png')).toBe(true);
     const reports=await world.db.rows(`select i.scope,i.name,encode(i.content,'hex') content,fr.sha256,fr.size_bytes,fl.locator,e.report_md
       from garmin.report_publication_items i join brain.file_requests fr on fr.id=i.request_id
       join garmin.evaluation_files ef on ef.request_id=i.request_id and ef.scope=i.scope
