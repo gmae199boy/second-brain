@@ -360,12 +360,8 @@ def build(
         for row in sidecars:
             write_json(temporary / "body" / f"{row['measured_on']}.json", row)
         write_json(temporary / "labels" / "exercise_types_ko.json", labels)
-        try:
-            (temporary / "profile.md").write_text(
-                cfg.profile_path.read_text(encoding="utf-8"), encoding="utf-8"
-            )
-        except (OSError, UnicodeError):
-            notes.append("profile.md 파일이 없거나 읽을 수 없다")
+        from . import analysis_profile
+        manifest['analysis_profile'] = analysis_profile.write(cfg, temporary)
         previous_report = cfg.reports_dir / f"{yesterday}.md"
         if previous_report.is_file():
             shutil.copyfile(previous_report, temporary / "previous_report.md")
@@ -580,6 +576,9 @@ def build_period(
             ("previous", previous[0] if previous else None),
         ):
             write_json(temporary / f"{name}.json", value)
+        for name in ('profile.json', 'profile.md'):
+            if (folder / name).is_file():
+                shutil.copyfile(folder / name, temporary / name)
         if target.exists():
             target.rename(backup)
         try:

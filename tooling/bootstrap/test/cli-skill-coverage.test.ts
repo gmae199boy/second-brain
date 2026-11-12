@@ -99,3 +99,12 @@ it('Garmin 분석 요청은 일일·기간·주간/월간 리뷰와 완료 후 �
   expect(text).toContain('새 revision·첨부·서식 버전은 새 이벤트');
   expect(text).not.toContain('항상 발신한다');
 });
+
+
+it('프로필 항목 수정은 공개 config patch와 설정 스킬에 함께 노출된다', () => {
+  expect(names).toContain('config patch');
+  const text = body('plugin/skills/brain-config/SKILL.md');
+  expect(mentions(text, 'config patch')).toBe(true);
+  for (const term of ['garmin.analysis_profile', 'goals.target_weight_kg', 'alcohol_units', 'unset', '재생성', 'DB_LOCKED']) expect(text).toContain(term);
+  expect(uncovered(['config patch'], core.filter(path => !path.includes('/brain-config/')), [])).toEqual(['config patch']);
+});

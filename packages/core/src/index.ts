@@ -336,3 +336,5 @@ export type { WorkProgress, WorkProgressSink } from './queue/progress.js';
 export type { ChannelControlStore, ChannelControlFailure, ChannelRoute, ChannelSubscription } from './channels/control.js';
 
 export * from './executable.js';
+
+export type { ProfilePatch } from './settings/garmin-analysis-profile.js';

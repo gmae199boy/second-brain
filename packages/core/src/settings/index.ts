@@ -1,3 +1,4 @@
+import { GARMIN_PROFILE_KEY } from './garmin-analysis-profile.js';
 import { isAbsoluteExecutablePath, CODEX_PATH_HINT } from '../executable.js';
 import type { SchemaVersions } from '../schema.js';
 import type { Clock } from '../ports/clock.js';
@@ -9,8 +10,10 @@ export type SettingValidation = { ok: true; value: string } | { ok: false; messa
 export interface SettingDefinition {
   key: string;
   scope?: 'user' | 'global';
+  userOnly?: boolean;
   defaultValue?: string;
   normalize(raw: string): SettingValidation;
+  patch?(raw: string, patch: import('./garmin-analysis-profile.js').ProfilePatch): SettingValidation;
 }
 export function normalizeTimeZone(value: string): SettingValidation {
   if (value === '' || /^[+-]/.test(value)) return { ok: false, message: 'timezone은 유효한 IANA 시간대 이름이어야 합니다' };
@@ -69,14 +72,19 @@ export function settingDefinitions(extensions: readonly SettingDefinition[] = []
   return definitions;
 }
 /** Scope-aware bulk read shared by config and extension snapshots. */
-export async function readScopedSettings(store: Pick<SettingsStore, 'getSettings'>, userId: string | null, definitions: readonly { key: string; scope?: 'user' | 'global' }[]) {
-  const userKeys = definitions.filter(d => (d.scope ?? 'user') === 'user').map(d => d.key);
+export async function readScopedSettings(store: Pick<SettingsStore, 'getSettings'>, userId: string | null, definitions: readonly { key: string; scope?: 'user' | 'global'; userOnly?: boolean }[]) {
+  // daemon·로그인도 manifest 원본 선언으로 이 공통 경로를 호출한다.
+  const exactUser = (d: { key: string; userOnly?: boolean }) => d.userOnly || d.key === GARMIN_PROFILE_KEY;
+  const userKeys = definitions.filter(d => (d.scope ?? 'user') === 'user' && !exactUser(d)).map(d => d.key);
+  const exactKeys = definitions.filter(d => (d.scope ?? 'user') === 'user' && exactUser(d)).map(d => d.key);
   const globalKeys = definitions.filter(d => d.scope === 'global').map(d => d.key);
   const user = userKeys.length ? await store.getSettings({ userId, keys: userKeys }) : { ok: true as const, settings: [] };
   if (!user.ok) return user;
+  const exact = exactKeys.length ? await store.getSettings({ userId, keys: exactKeys, includeGlobal: false }) : { ok: true as const, settings: [] };
+  if (!exact.ok) return exact;
   const global = globalKeys.length ? await store.getSettings({ userId: null, keys: globalKeys }) : { ok: true as const, settings: [] };
   if (!global.ok) return global;
-  return { ok: true as const, settings: [...user.settings, ...global.settings] };
+  return { ok: true as const, settings: [...user.settings, ...exact.settings, ...global.settings] };
 }
 export interface SettingValue { scope: 'user' | 'global'; key: string; value: string; source: 'default' | 'db'; updatedAt: Date | null }
 export type SettingResult = ({ ok: true } & SettingValue) | { ok: false; code: 'CONFIG_INVALID' | 'USER_MISSING' | 'DB_UNAVAILABLE' | 'DB_LOCKED' | 'SCHEMA_MISMATCH'; message: string };
@@ -132,4 +140,30 @@ export async function setSetting(deps: SettingsDependencies, input: { key: strin
   if(!written.ok)return written;
   try {if(input.key==='drive.sync_interval_minutes'||!priorValue.ok||priorValue.value!==parsed.value)await deps.onSettingChanged?.({key:input.key,value:parsed.value});}catch{return {ok:false,code:'DB_UNAVAILABLE',message:'설정 변경 후 Drive 동기화를 갱신하지 못했습니다'};}
   return getSetting(deps,{key:input.key});
+}
+
+/** 조회한 전체 값과 비교하여 항목 수정을 저장한다. 충돌 시 재조회가 필요하다. */
+export async function patchSetting(deps: SettingsDependencies, input: { key: string; patch: import('./garmin-analysis-profile.js').ProfilePatch }): Promise<SettingResult> {
+  const definition = settingDefinitions(deps.settingDefinitions).get(input.key);
+  if (!definition?.patch || (definition.scope ?? 'user') !== 'user') return invalid('항목 수정을 지원하지 않는 설정입니다');
+  const current = await getSetting(deps, { key: input.key });
+  if (!current.ok) return current;
+  const self = await resolveSelfUser(deps.store); if (!self.ok) return self;
+  const prior = await deps.store.getSettings({ userId: self.userId, keys: [input.key], includeGlobal: false });
+  if (!prior.ok) return prior;
+  const raw = prior.settings[0]?.value ?? null;
+  if (input.patch && typeof input.patch === 'object' && Object.hasOwn(input.patch, 'expected_value')) {
+    if (typeof input.patch.expected_value !== 'string') return invalid('수정 기준 값은 조회한 JSON 문자열이어야 합니다');
+    const baseline = definition.normalize(input.patch.expected_value);
+    const latest = definition.normalize(raw ?? definition.defaultValue ?? '');
+    if (!baseline.ok) return invalid(baseline.message);
+    if (!latest.ok) return invalid(latest.message);
+    if (baseline.value !== latest.value) return { ok: false, code: 'DB_LOCKED', message: '설정이 변경되었습니다. 다시 조회한 뒤 수정하세요' };
+  }
+  const parsed = definition.patch(raw ?? definition.defaultValue ?? '', input.patch);
+  if (!parsed.ok) return invalid(parsed.message);
+  const updatedAt = deps.clock.now();
+  const written = await deps.store.setSetting({ userId: self.userId, key: input.key, value: parsed.value, updatedAt, expectedValue: raw });
+  if (!written.ok) return written;
+  return { ok: true, scope: 'user', key: input.key, value: parsed.value, source: 'db', updatedAt };
 }

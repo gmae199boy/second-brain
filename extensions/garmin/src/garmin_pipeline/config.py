@@ -34,6 +34,9 @@ class Config:
     lock_wait_seconds: float
     cffi_api_session: bool
 
+    analysis_profile: str | None = None
+    profile_snapshot_id: str | None = None
+
     @property
     def db_path(self) -> Path:
         """SQLite DB 파일: `<data_dir>/garmin.db`."""

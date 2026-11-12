@@ -1,3 +1,4 @@
+import { GARMIN_PROFILE_KEY, normalizeGarminProfile, patchGarminProfile } from '../settings/garmin-analysis-profile.js';
 import { readScopedSettings } from '../settings/index.js';
 import type { SettingsStore } from '../ports/store.js';
 import { decodeSettingsSnapshot, PROCESS_ABI_SNAPSHOT_MAX_BYTES } from '../process-abi/codec.js';
@@ -28,6 +29,11 @@ export function createExtensionSnapshot(input: {
     types[declaration.key] = declaration.type;
     let raw = declaration.machine ? input.machine?.[declaration.machine] : Object.hasOwn(input.settings, declaration.key) ? input.settings[declaration.key] : declaration.default;
     if (raw === undefined) { if (input.requiredKeys ? input.requiredKeys.includes(declaration.key) : declaration.required.includes(input.stage)) return invalid(); else continue; }
+    if (declaration.key === GARMIN_PROFILE_KEY) {
+      const profile = normalizeGarminProfile(raw);
+      if (!profile.ok) return invalid();
+      raw = profile.value;
+    }
     if (declaration.secret) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw)) return invalid();
       raw = Object.hasOwn(input.secrets, raw) ? input.secrets[raw] : undefined;
@@ -57,7 +63,7 @@ export async function acquireExtensionSnapshot(input: {
   const invalid = () => ({ ok: false as const, kind: 'config' as const, result: { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const, retryable: false as const, message: '확장 설정을 확인하세요' } });
   if (input.declarations.length && (!input.getSettings || !input.readSecrets)) return invalid();
   const read = input.declarations.length
-    ? await readScopedSettings({ getSettings: input.getSettings! }, input.userId, input.declarations)
+    ? await readScopedSettings({ getSettings: input.getSettings! }, input.userId, input.declarations.map(d => ({ ...d, userOnly: d.key === GARMIN_PROFILE_KEY })))
     : { ok: true as const, settings: [] };
   if (!read.ok) return { ok: false as const, kind: 'settings' as const, result: read };
   let secrets: Readonly<Record<string, string>> = {};
@@ -71,9 +77,12 @@ export async function acquireExtensionSnapshot(input: {
 export function extensionSettingDefinitions(declarations: readonly ExtensionSettingDeclaration[]): import('../settings/index.js').SettingDefinition[] {
   return declarations.filter(declaration => !declaration.machine).map(declaration => ({
     key: declaration.key,
+    ...(declaration.key === GARMIN_PROFILE_KEY ? { userOnly: true } : {}),
     scope: declaration.scope ?? 'user',
     ...(declaration.default === undefined ? {} : { defaultValue: declaration.default }),
+    ...(declaration.key === GARMIN_PROFILE_KEY ? { patch: patchGarminProfile } : {}),
     normalize(raw: string) {
+      if (declaration.key === GARMIN_PROFILE_KEY) return normalizeGarminProfile(raw);
       const valid = declaration.secret ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) : declaration.type === 'boolean' ? raw === 'true' || raw === 'false' : declaration.type === 'number' ? /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw) && Number.isFinite(Number(raw)) : true;
       return valid ? { ok: true as const, value: raw } : { ok: false as const, message: '확장 설정 값이 올바르지 않습니다' };
     },

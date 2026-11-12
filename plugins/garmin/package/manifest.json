@@ -315,6 +315,13 @@
   ],
   "settings": [
     {
+      "key": "garmin.analysis_profile",
+      "type": "string",
+      "scope": "user",
+      "required": [],
+      "default": ""
+    },
+    {
       "key": "garmin.capture_manifest",
       "type": "string",
       "required": []
@@ -920,6 +927,7 @@
     "src/collect_runtime.py",
     "src/contract.py",
     "src/garmin_pipeline/__init__.py",
+    "src/garmin_pipeline/analysis_profile.py",
     "src/garmin_pipeline/auth.py",
     "src/garmin_pipeline/body.py",
     "src/garmin_pipeline/charts.py",

@@ -227,6 +227,15 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                 for scope in ('7d','30d','all'):
                     report_input.build_period(cfg,result.path,date.fromisoformat(fixture['date']),scope)
             actual = {str(p.relative_to(result.path)):p.read_text(encoding='utf-8') for p in result.path.rglob('*') if p.is_file()}
+            profile = json.loads(actual['profile.json'])
+            self.assertEqual(profile['source'], 'legacy_file')
+            self.assertEqual(profile['profile_status'], 'absent')
+            self.assertEqual(profile['legacy_markdown'], fixture['profile'])
+            for scope in ('7d', '30d', 'all'):
+                self.assertEqual(actual[f'period/{scope}/profile.json'], actual['profile.json'])
+                self.assertEqual(actual[f'period/{scope}/profile.md'], actual['profile.md'])
+            # 새 계약의 프로필 사본·상태는 위에서 검증하고 기존 측정 oracle은 보존한다.
+            actual = {k: v for k, v in actual.items() if not k.endswith('/profile.json') and not k.endswith('/profile.md') and k != 'profile.json'}
             self.assertEqual(set(actual),set(expected['files']))
             for name, value in actual.items():
                 with self.subTest(path=name):
@@ -234,6 +243,8 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                         actual_json, expected_json = json.loads(value), json.loads(expected['files'][name])
                         # 수집 독립 계약의 운동 창과 안내만 새 수락 시험에서 검증한다.
                         if name == 'manifest.json':
+                            metadata = actual_json.pop('analysis_profile')
+                            self.assertEqual(metadata['sha256'], profile['sha256'])
                             for key in ('workout_window', 'workouts', 'notes'):
                                 actual_json.pop(key, None); expected_json.pop(key, None)
                         if name == 'digest.json':
@@ -241,7 +252,10 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                                 actual_json.pop(key, None); expected_json.pop(key, None)
                         self.assertEqual(actual_json, expected_json)
                     else:
-                        self.assertEqual(value,expected['files'][name])
+                        if name == 'profile.md':
+                            self.assertIn(expected['files'][name], value)
+                        else:
+                            self.assertEqual(value,expected['files'][name])
             schemas = Path(report.__file__).parent / 'schemas'
             contracts = {'prompts':[report.codex_prompt(['report-input/day']), *(report.codex_prompt(['report-input/period','profile.md'],scope=s) for s in ('7d','30d','all')),report.codex_prompt(['body/a.png'],intake=True)], 'schemas':{name:json.loads((schemas / name).read_text()) for name in ('body.schema.json','body_intake_output.schema.json','daily_analysis_output.schema.json','period_review_output.schema.json')}}
             measurement = json.loads((fixture_path.parent / 'report_v8/measurement.json').read_text(encoding='utf-8'))

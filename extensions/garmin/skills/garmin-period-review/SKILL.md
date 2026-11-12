@@ -5,7 +5,7 @@ description: 코드가 준비한 7d·30d·all·custom 기간 입력으로 회복
 
 # garmin-period-review
 
-인자는 `7d`, `30d`, `all`, `custom` 중 하나다. custom은 사용자가 지정한 양끝 포함 기간이며 scope.json의 from·to·timezone·focus를 따른다. focus의 metric·activity_type·exercise 조건을 벗어난 일반론을 만들지 않는다. day_values.json의 focus·values는 기존 조회 계약의 단위·NULL/0·집계 의미 그대로 해석한다. 프롬프트가 준 `profile.md`를 먼저 읽고 사용자의 목표와 선호를 따른다. 다음으로 지정된 범위 폴더의 `scope.json`, `day_values.json`, `evaluations.json`, `previous.json`만 읽는다. 날짜와 창, 월 묶음은 scope.json에서 가져오고 날짜 계산을 하지 않는다. 지정된 입력 폴더 밖을 읽지 않는다.
+인자는 `7d`, `30d`, `all`, `custom` 중 하나다. custom은 사용자가 지정한 양끝 포함 기간이며 scope.json의 from·to·timezone·focus를 따른다. focus의 metric·activity_type·exercise 조건을 벗어난 일반론을 만들지 않는다. day_values.json의 focus·values는 기존 조회 계약의 단위·NULL/0·집계 의미 그대로 해석한다. 범위 폴더의 `profile.json`과 프롬프트가 준 `profile.md`를 먼저 읽고 명시된 목표와 선호를 따른다. 코드가 제공한 `profile_status`·`missing_fields`·`source`로 전체 없음과 일부 미설정을 구분한다. 명시된 목표까지 미상이라고 쓰지 않고 실제 누락 항목만 한계에 적는다. 목표 체중·기구·선호·식사·음주 단위를 추정하지 않는다. 감량이 primary이면 감량을 우선한다. `legacy_file`은 기존 계정 파일의 읽기 전용 자료이고 구조화 필드는 미설정이다. 평소 식사는 당일 섭취 사실이 아니며 음주 환산 근거가 없으면 표준잔·열량을 추정하지 않는다. 옛 입력에 JSON이 없으면 미설정으로 취급한다. 다음으로 지정된 범위 폴더의 `scope.json`, `day_values.json`, `evaluations.json`, `previous.json`만 읽는다. 날짜와 창, 월 묶음은 scope.json에서 가져오고 날짜 계산을 하지 않는다. 지정된 입력 폴더 밖을 읽지 않는다.
 
 실제 하루 값 일수(`actual_days`)를 밝힌다. 기록이 짧거나 일부 빠져도 있는 것으로 판단한다. `partial_date`가 비어 있으면 끝난 날짜다. 값이 있는 `partial_date` 날짜의 활동량은 data_cutoff까지의 부분 값이므로 끝난 날과 같은 기준으로 비교하지 않는다. 수면, HRV, 안정 심박, 기상 Body Battery와 스트레스, 근력·HIIT 기록을 함께 본다. 전체 범위는 월별 SQL 묶음으로 흐름을 판단한다.
 
