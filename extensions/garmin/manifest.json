@@ -311,6 +311,32 @@
         "garmin.timezone",
         "garmin.connection_id"
       ]
+    },
+    {
+      "kind": "garmin.report_resend",
+      "execution": "supervised",
+      "runtime": "python",
+      "entry": "src/report.py",
+      "manual": "report-resend",
+      "required_settings": [
+        "garmin.timezone",
+        "garmin.connection_id"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "send_intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": ".*\\S.*"
+          }
+        },
+        "required": [
+          "send_intent"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
   "settings": [

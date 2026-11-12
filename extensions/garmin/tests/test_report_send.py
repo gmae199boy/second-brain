@@ -88,3 +88,39 @@ class ReportSendTest(unittest.TestCase):
                 else:
                     with self.assertRaises(type(error)): runtime.run(self.env('2026-01-02'))
                     send.assert_not_called()
+
+
+class ReportResendTest(unittest.TestCase):
+    def test_explicit_intent_is_forwarded_without_analysis(self):
+        env = ReportSendTest().env('2026-01-02')
+        env['BRAIN_WORK_KIND'] = 'garmin.report_resend'
+        conn = unittest.mock.MagicMock()
+        conn.execute.return_value.fetchone.return_value = ({'send_intent': 'synthetic-intent'},)
+        with contextlib.ExitStack() as stack:
+            for name in ('supervised_account', 'report_session'):
+                stack.enter_context(patch.object(store, name, return_value=contextlib.nullcontext()))
+            stack.enter_context(patch.object(store, 'write_session', side_effect=lambda cfg: contextlib.nullcontext(conn)))
+            stack.enter_context(patch.object(store, 'transaction', side_effect=lambda c: contextlib.nullcontext()))
+            stack.enter_context(patch.object(runtime, 'validate_account'))
+            stack.enter_context(patch.object(report, '_work_revisions', return_value=dict.fromkeys(('day','7d','30d','all'),1)))
+            stack.enter_context(patch('report_publish.saved_send_attachments', return_value=('document', [], 'published')))
+            send = stack.enter_context(patch('report_channel.success', return_value='event'))
+            analyze = stack.enter_context(patch.object(report, 'run_supervised', side_effect=AssertionError('분석 금지')))
+            result = json.loads(runtime.run(env))
+        self.assertEqual(result['event_id'], 'event')
+        self.assertEqual(send.call_args.kwargs['intent'], 'synthetic-intent')
+        analyze.assert_not_called()
+
+    def test_missing_or_blank_intent_fails_before_saved_result_selection(self):
+        for data in ({}, {'send_intent':''}, {'send_intent':'   '}, {'send_intent':42}, {'send_intent':'x', 'extra':True}):
+            env = ReportSendTest().env('2026-01-02'); env['BRAIN_WORK_KIND'] = 'garmin.report_resend'
+            conn = unittest.mock.MagicMock(); conn.execute.return_value.fetchone.return_value = (data,)
+            with contextlib.ExitStack() as stack:
+                for name in ('supervised_account', 'report_session'):
+                    stack.enter_context(patch.object(store, name, return_value=contextlib.nullcontext()))
+                stack.enter_context(patch.object(store, 'write_session', side_effect=lambda cfg: contextlib.nullcontext(conn)))
+                stack.enter_context(patch.object(store, 'transaction', side_effect=lambda c: contextlib.nullcontext()))
+                stack.enter_context(patch.object(runtime, 'validate_account'))
+                select = stack.enter_context(patch.object(report, '_work_revisions'))
+                with self.assertRaises(runtime.InvalidReportInput): runtime.run(env)
+                select.assert_not_called()

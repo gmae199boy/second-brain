@@ -5,7 +5,34 @@ import { contractCase, withSubject, type ContractCase } from '../contract.js';
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const now = new Date('2026-10-31T00:00:00Z');
 export function channelStoreContract(): ContractCase<ChannelStore & WorkStore>[] {
-  return [contractCase('닫힌 실패의 동시 재개와 공개 상태', async make => withSubject(make, async store => {
+  return [contractCase('v2의 여섯 항목 fence와 두 번째 실패 재개·unknown 성공 회복', async make => withSubject(make, async store => {
+    await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'bot' });
+    await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'chat', threadRef: null });
+    const file = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'locator' }, filename: 'doc' };
+    await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'v2', purpose: 'report', revision: null, text: '보관 요약', createdAt: now,
+      bundle: { version: 2, items: [...['day','7d','30d','all'].map(scope => ({ itemId: 'summary:' + scope, type: 'text' as const, text: scope })),
+        { itemId: 'album:0', type: 'album', photos: [file, file] }, { itemId: 'document', type: 'document', document: file }] } });
+    await store.handoffChannelRequest({ requestId: id(3), workId: id(4), now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(5) });
+    const first = { requestId: id(3), workItemId: id(4), attemptToken: id(5), now };
+    await store.gateChannelAttempt(first);
+    assertEqual(await store.recordChannelItemResult({ ...first, index: 6, result: { outcome: 'sent', externalMessageId: 'outside' } }), { ok: true, outcome: 'lost' }, '범위 밖 index 거부');
+    assertEqual(await store.recordChannelItemResult({ ...first, index: 0, result: { outcome: 'sent', externalMessageId: 'first' } }), { ok: true, outcome: 'done' }, '첫 텍스트 성공');
+    const failure = { outcome: 'definite_failed' as const, code: 'http_429', retryable: true, retryAfterMs: 7000 };
+    await store.recordChannelItemResult({ ...first, index: 1, result: failure });
+    await store.finishChannelAttempt({ ...first, result: failure });
+    await store.finishSupervisedWork({ id: id(4), attemptToken: id(5), now, outcome: 'failed', nextAttemptAt: now });
+    await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: id(6) });
+    const second = { ...first, attemptToken: id(6) };
+    await store.gateChannelAttempt(second);
+    assertEqual(await store.recordChannelItemResult({ ...first, index: 1, result: { outcome: 'sent', externalMessageId: 'stale' } }), { ok: true, outcome: 'lost' }, 'stale token 거부');
+    assertEqual(await store.recordChannelItemResult({ ...second, index: 0, result: { outcome: 'sent', externalMessageId: 'overwrite' } }), { ok: true, outcome: 'lost' }, 'sent 수정 거부');
+    const saved = await store.listChannelItemResults(id(3)); assertOk(saved, '저장 결과'); assertEqual(saved.items[0]?.result, { outcome: 'sent', externalMessageId: 'first' }, '첫 항목 보존');
+    for (let index = 1; index < 6; index++) assertEqual(await store.recordChannelItemResult({ ...second, index, result: { outcome: 'sent', externalMessageId: String(index) } }), { ok: true, outcome: 'done' }, '나머지 항목 성공');
+    await store.settleSupervisedAttempt({ id: id(4), attemptToken: id(6), now, outcome: 'unknown' });
+    assertEqual(await store.recoverChannelAttempt(second), { ok: true, outcome: 'ready', result: { outcome: 'sent', externalMessageId: '5' } }, '마지막 문서 ID로 성공 정산');
+    const read = await store.readChannelRequest(id(3)); assertOk(read, '요청'); assertEqual(read.request?.status, 'sent', '요청 성공');
+  })), contractCase('닫힌 실패의 동시 재개와 공개 상태', async make => withSubject(make, async store => {
     await store.ensureChannel({ id: id(1), kind: 'telegram', botRef: 'secret-bot' });
     await store.ensureChannelConversation({ userId: '01940000-0000-7000-8000-00000000000a', id: id(2), channelId: id(1), externalRef: 'secret-chat', threadRef: 'secret-thread' });
     await store.createChannelRequest({ id: id(3), conversationId: id(2), producer: 'test', producerResultId: 'result', purpose: 'notice', revision: null, text: 'secret-body', createdAt: now });

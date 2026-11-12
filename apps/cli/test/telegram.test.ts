@@ -78,7 +78,7 @@ it('접두어 없는 기존 생산자의 마크업과 HTML 문자는 평문으�
 });
 
 it('HTML 길이 상한·잘못된 강조는 평문으로 내리고 UTF-16 경계를 지킨다', async () => {
-  for (const body of ['# ' + '&'.repeat(1000), '**닫히지 않은 강조', '😀'.repeat(3000)]) {
+  for (const body of ['# ' + '&'.repeat(1000), '**닫히지 않은 강조']) {
     const send = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"ok":true}'));
     await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text: '[brain-markup-v1]\n' + body });
     const payload = JSON.parse(String(send.mock.calls[0]![1]!.body));
@@ -105,4 +105,23 @@ it('HTML 전송 결과가 불명확하거나 일반 400이면 재전송하지 �
     expect(await telegramSender('fake', { fetch: send }).sendMessage({ chatId: 'chat', threadId: null, text: '[brain-markup-v1]\n# 제목' })).toMatchObject({ ok: false });
     expect(send).toHaveBeenCalledTimes(1);
   }
+});
+
+
+it('텍스트와 caption의 UTF-16 경계를 자르지 않고 정확히 적용한다', async () => {
+  const send = vi.fn<typeof fetch>().mockImplementation(async () => new Response('{"ok":true}'));
+  const sender = telegramSender('fake', { fetch: send });
+  const address = { chatId: 'chat', threadId: null };
+  const text = '😀'.repeat(2048);
+  expect(await sender.sendMessage({ ...address, text: '[brain-markup-v1]\n' + text })).toMatchObject({ ok: true });
+  expect(JSON.parse(String(send.mock.calls[0]![1]!.body)).text).toBe(text);
+  expect(await sender.sendMessage({ ...address, text: '[brain-markup-v1]\n' + text + '한' })).toMatchObject({ code: 'too_large' });
+  const photo = { bytes: new Uint8Array([1]), filename: 'synthetic.png' };
+  expect(await sender.sendPhoto!({ ...address, photo, caption: '😀'.repeat(512) })).toMatchObject({ ok: true });
+  expect(await sender.sendPhoto!({ ...address, photo, caption: '😀'.repeat(512) + '한' })).toMatchObject({ code: 'too_large' });
+  expect(await sender.sendMediaGroup!({ ...address, photos: [photo, photo], caption: '가'.repeat(1024) })).toMatchObject({ ok: true });
+  for (const photos of [[photo], Array.from({ length: 11 }, () => photo)])
+    expect(await sender.sendMediaGroup!({ ...address, photos })).toMatchObject({ code: 'too_large' });
+  expect(await sender.sendMediaGroup!({ ...address, photos: [photo, photo], caption: '가'.repeat(1025) })).toMatchObject({ code: 'too_large' });
+  expect(send).toHaveBeenCalledTimes(3);
 });

@@ -25,9 +25,13 @@ class Cursor:
 
 class Conn:
     user_id, connection_id = UUID(int=1), UUID(int=2)
-    def __init__(self): self.calls, self.requests = [], {}
+    def __init__(self): self.calls, self.requests, self.manifests = [], {}, {}
     def execute(self, sql, args):
         self.calls.append((sql,args))
+        if 'select manifest' in sql: return Cursor(None if args not in self.manifests else (self.manifests[args],))
+        if 'to_jsonb' in sql: return Cursor((None,))
+        if 'insert into garmin.report_message_manifests' in sql:
+            self.manifests[args[:4]] = json.loads(args[-1]); return Cursor()
         if 'select summary' in sql: return Cursor(('synthetic '+args[3], '[]', '[]', None))
         if 'select sleep_total_s' in sql: return Cursor((19920,45,27,22))
         if 'select i.name' in sql: return Cursor(rows=[('01.png','graph',UUID(int=8)),('50.png','graph',UUID(int=9)),('report.md','report',UUID(int=10))])
@@ -69,13 +73,26 @@ class ChannelTest(unittest.TestCase):
         self.assertEqual(first, retry)
         with patch.object(report_channel.report_message, 'FORMAT_VERSION', 'report-v2'):
             changed = report_channel.success(None, DAY, REVISIONS, None, ENV)
-        self.assertNotEqual(first, changed)
+        self.assertEqual(first, changed)  # 불변 manifest는 배포 후에도 재사용한다.
         for sql, args in conn.calls:
             if 'extension_event_emit' in sql:
                 self.assertIsNone(args[7]); self.assertIsNone(args[8])
                 self.assertTrue(args[6].startswith('[brain-markup-v1]'))
                 self.assertIn('수면 5:32 · 점수 45', args[6])
         self.assertFalse(any('select i.name' in sql for sql, _ in conn.calls))
+
+    def test_v2_missing_artifacts_notice_is_in_actual_messages(self):
+        conn = Conn(); self.setup_conn(conn)
+        manifest = {'version':2, 'format':'report-messages-v2', 'messages':[{'itemId':'summary:'+scope, 'text':'통합 문서에서 전체 평가를 확인하세요.'} for scope in REVISIONS]}
+        with patch.object(report_channel.report_message, 'load_messages', return_value=manifest):
+            report_channel.success(None, DAY, REVISIONS, None, ENV, missing_reason='artifact_render_unavailable')
+        sql, args = next((sql,args) for sql,args in conn.calls if 'extension_event_emit' in sql)
+        self.assertIn('extension_event_emit_v2', sql)
+        delivered = json.loads(args[9])
+        self.assertEqual(len(delivered),4)
+        self.assertIn('보고서·그래프 없음', delivered[-1]['text'])
+        self.assertFalse(any('통합 문서에서' in item['text'] for item in delivered))
+        self.assertTrue(all('보고서·그래프 없음' not in item['text'] for item in manifest['messages']))
 
     def test_regenerate_new_revision_sends_once_and_same_revision_retry_reuses_id(self):
         conn = Conn(); self.setup_conn(conn)

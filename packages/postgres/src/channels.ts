@@ -183,7 +183,7 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
         const result = await sql`insert into brain.channel_item_results(request_id,item_index,work_item_id,attempt_token,result,updated_at)
           select r.id,${input.index},${input.workItemId},${input.attemptToken},${JSON.stringify(input.result)}::jsonb,${input.now.toISOString()} from brain.channel_requests r
           join brain.channel_attempt_results a on a.request_id=r.id and a.work_item_id=${input.workItemId} and a.attempt_token=${input.attemptToken} and a.outcome is null
-          where r.id=${input.requestId} and r.work_item_id=${input.workItemId} and r.status='pending' and r.bundle is not null and ${input.index} >= 0 and ${input.index} < jsonb_array_length(r.bundle->'albums')+2
+          where r.id=${input.requestId} and r.work_item_id=${input.workItemId} and r.status='pending' and r.bundle is not null and ${input.index} >= 0 and ${input.index} < brain.channel_bundle_size(r.bundle)
           on conflict(request_id,item_index) do update set work_item_id=excluded.work_item_id,attempt_token=excluded.attempt_token,result=excluded.result,updated_at=excluded.updated_at
           where brain.channel_item_results.result->>'outcome' <> 'sent' returning request_id`.execute(held);
         return result.rows.length ? 'done' as const : 'lost' as const;
@@ -247,9 +247,9 @@ export function postgresChannelStore(connect: PgConnect): ChannelStore {
           where w.id=${input.workItemId} and w.kind='channel_send' and w.target_id=${input.requestId} and w.current_attempt_token=${input.attemptToken} and w.completed_at is null and (a.outcome is null or a.outcome='unknown') for share of w,a`.execute(held);
         if (!valid.rows[0]) return { outcome: 'lost' as const };
         const complete = await sql<{ result: import('@second-brain/core').ChannelAttemptResult }>`select last.result from brain.channel_requests r
-          join brain.channel_item_results last on last.request_id=r.id and last.item_index=jsonb_array_length(r.bundle->'albums')+1
+          join brain.channel_item_results last on last.request_id=r.id and last.item_index=brain.channel_bundle_size(r.bundle)-1
           where r.id=${input.requestId} and r.work_item_id=${input.workItemId} and r.bundle is not null and r.status='pending'
-            and (select count(*) from brain.channel_item_results i where i.request_id=r.id and i.result->>'outcome'='sent')=jsonb_array_length(r.bundle->'albums')+2
+            and (select count(*) from brain.channel_item_results i where i.request_id=r.id and i.result->>'outcome'='sent')=brain.channel_bundle_size(r.bundle)
             and last.result->>'outcome'='sent'`.execute(held);
         const final = complete.rows[0]?.result;
         if (final?.outcome === 'sent') {

@@ -1,3 +1,4 @@
+import { channelBundleItems } from './store.js';
 import type { ChannelAttemptResult, ChannelStore } from './store.js';
 import type { FileStore } from '../ports/file-store.js';
 import { maskOutputText } from '../output/mask.js';
@@ -31,7 +32,8 @@ export async function sendChannelRequest(input: {
   const bundle = read.request.bundle;
   const prior = bundle ? await input.store.listChannelItemResults(input.requestId) : null;
   if (prior && !prior.ok) return { ok: false, code: 'CHANNEL_RESULT_UNAVAILABLE' };
-  const total = bundle ? bundle.albums.length + 2 : 1;
+  const items = bundle ? channelBundleItems(bundle) : [{ itemId: 'text', type: 'text' as const, text: read.request.text }];
+  const total = items.length;
   let result: ChannelAttemptResult = { outcome: 'sent', externalMessageId: null };
   for (let index = 0; index < total; index++) {
     const saved = prior?.ok ? prior.items.find(item => item.index === index && item.result.outcome === 'sent') : undefined;
@@ -39,14 +41,16 @@ export async function sendChannelRequest(input: {
     const address = { chatId: read.conversation.externalRef, threadId: read.conversation.threadRef };
     let sent: SendResult;
     const tooLarge = (): SendResult => ({ ok: false, outcome: 'definite_failed', code: 'too_large', retryable: false });
-    if (!bundle || index === 0) {
-      const original = bundle ? bundle.summary : read.request.text;
+    const item = items[index]!;
+    if (item.type === 'text') {
+      const original = item.text;
       const text = encodeChannelText(original);
-      sent = original.length > 4096 ? tooLarge() : await input.sender.sendMessage({ ...address, text });
+      const plain = text.startsWith('[brain-markup-v1]\n') ? text.slice('[brain-markup-v1]\n'.length).split('\n').map(line => line.replace(/^#{1,2} /, '').replace(/^- /, '• ').replaceAll('**', '')).join('\n') : text;
+      sent = plain.length > (bundle?.version === 2 ? 4000 : 4096) ? tooLarge() : await input.sender.sendMessage({ ...address, text });
     } else {
-      const album = bundle.albums[index - 1];
-      const entries = album ? album.photos : [bundle.document];
-      if (album && (entries.length === 0 || entries.length > 10 || (album.caption?.length ?? 0) > 4096)) sent = tooLarge();
+      const album = item.type === 'album' ? item : undefined;
+      const entries = item.type === 'album' ? item.photos : [item.document];
+      if (album && (entries.length === 0 || entries.length > 10 || encodeChannelText(album.caption ?? '').length > 1024)) sent = tooLarge();
       else if (!input.files) sent = { ok: false, outcome: 'definite_failed', code: 'FILES_UNAVAILABLE', retryable: false };
       else {
         const loaded = await Promise.all(entries.map(async file => ({ file, data: await input.files!.get(file.location) })));
@@ -56,8 +60,9 @@ export async function sendChannelRequest(input: {
         else {
           const files = loaded.map(x => ({ filename: x.file.filename, bytes: x.data.ok ? x.data.bytes : new Uint8Array() }));
           const caption = album?.caption === undefined ? undefined : encodeChannelText(album.caption);
-          if (album && files.length === 1 && input.sender.sendPhoto) sent = await input.sender.sendPhoto({ ...address, photo: files[0]!, caption });
-          else if (album && input.sender.sendMediaGroup) sent = await input.sender.sendMediaGroup({ ...address, photos: files, caption });
+          if ((caption?.length ?? 0) > 1024) sent = tooLarge();
+          else if (album && files.length === 1 && input.sender.sendPhoto) sent = await input.sender.sendPhoto({ ...address, photo: files[0]!, caption });
+          else if (album && files.length >= 2 && input.sender.sendMediaGroup) sent = await input.sender.sendMediaGroup({ ...address, photos: files, caption });
           else if (!album && input.sender.sendDocument) sent = await input.sender.sendDocument({ ...address, document: files[0]! });
           else sent = { ok: false, outcome: 'definite_failed', code: 'CHANNEL_CONFIG_INVALID', retryable: false };
         }

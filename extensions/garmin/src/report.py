@@ -20,6 +20,8 @@ def main():
     except report.AnalysisAgentNotFound:
         event = {'abi': 1, 'type': 'error', 'code': 'ANALYSIS_AGENT_NOT_FOUND', 'retryable': False,
                  'message': 'brain config set agent.codex_path <절대경로>로 실행 파일을 설정하세요'}
+    except report.ScopeAnalysisExhausted:
+        event = {'abi': 1, 'type': 'error', 'code': 'REPORT_ANALYSIS_EXHAUSTED', 'retryable': False}
     except report.SupervisedReportFailed:
         event = {'abi': 1, 'type': 'error', 'code': 'REPORT_FAILED', 'retryable': True}
     except Exception:

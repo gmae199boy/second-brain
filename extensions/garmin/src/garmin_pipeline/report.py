@@ -1059,6 +1059,10 @@ def _combined_summary(day, periods):
     return "\n".join(lines)
 
 
+class ScopeAnalysisExhausted(Exception):
+    """실패 기간 안내를 기록한 뒤 같은 일감의 분석을 다시 시작하지 않는다."""
+
+
 class SupervisedReportFailed(Exception):
     """A supervised analysis scope or body intake did not complete."""
 
@@ -1105,6 +1109,30 @@ def _read_work_revisions(cfg, today):
         conn.close()
 
 
+MAX_SCOPE_ATTEMPTS = 6  # 최초 실행 1회 + 실패 기간 재시도 최대 5회.
+
+
+def _reserve_scope_attempt(cfg, day, scope):
+    """호출 전에 횟수를 내구성 있게 예약해 감독자 재실행도 상한을 지킨다."""
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            row = conn.execute("""insert into garmin.report_scope_failures(work_id,report_date,scope,failures)
+                values (%s,%s,%s,1) on conflict(work_id,report_date,scope) do update
+                set failures=garmin.report_scope_failures.failures+1
+                where garmin.report_scope_failures.failures < %s returning failures""",
+                (os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, MAX_SCOPE_ATTEMPTS)).fetchone()
+            return row is not None
+
+
+def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
+    while _reserve_scope_attempt(cfg, day, scope):
+        _assert_attempt_current(cfg)
+        analysis, text, failure, summary = _evaluate(cfg, writer, inputs, scope, usages)
+        if failure is None:
+            return analysis, text, failure, summary
+    return None, None, errors.ReportFailReason.CODEX_FAILED, None
+
+
 def run_supervised(cfg, writer, *, regenerate=False, today=None):
     """Run only analysis, appending each success before starting the next scope.
 
@@ -1123,6 +1151,7 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
         report_channel.success(cfg, today, recorded, document)
         return {'status': 'noop', 'scopes': 0}
     failed = False
+    exhausted = []
     try:
         pending = body.pending(cfg)
     except (store.StoreError, psycopg.Error):
@@ -1171,12 +1200,16 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
                 continue
             inputs = [os.path.relpath(folder, runtime),
                       os.path.relpath(exported.path / 'profile.md', runtime)]
-        _assert_attempt_current(cfg)
-        analysis, _, failure, _ = _evaluate(cfg, writer, inputs, scope, usages)
+        analysis, _, failure, _ = _evaluate_with_retries(cfg, writer, inputs, scope, usages, today)
         if failure is not None:
+            exhausted.append(scope)
             failed = True
             continue
         _save_evaluation(cfg, today, scope, analysis)
+    if exhausted:
+        import report_channel
+        report_channel.failure(cfg, today, exhausted)
+        raise ScopeAnalysisExhausted('scope retry budget exhausted')
     if failed:
         raise SupervisedReportFailed('analysis or body intake failed')
     recorded = _read_work_revisions(cfg, today)

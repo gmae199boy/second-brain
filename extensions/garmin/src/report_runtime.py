@@ -16,7 +16,7 @@ class InvalidReportInput(Exception):
 
 def envelope(env, *, sending=False):
     try:
-        account, values = decode_envelope(env, work_kinds=(('garmin.report_send',) if sending else ('garmin.report', 'garmin.report_regenerate', 'garmin.period_analysis')),
+        account, values = decode_envelope(env, work_kinds=(('garmin.report_send', 'garmin.report_resend') if sending else ('garmin.report', 'garmin.report_regenerate', 'garmin.period_analysis')),
                                           reject_duplicate_keys=True)
         # Collect shares settings validation but does not require an analysis model.
         model = values.get('garmin.analysis_model') if sending else values['garmin.analysis_model']
@@ -66,7 +66,7 @@ def run(env=None, *, writer=None):
     import os
     from garmin_pipeline import report
     actual = os.environ if env is None else env
-    if actual.get('BRAIN_WORK_KIND') == 'garmin.report_send':
+    if actual.get('BRAIN_WORK_KIND') in ('garmin.report_send', 'garmin.report_resend'):
         return send_saved(actual)
     account, cfg = envelope(actual)
     if writer is None:
@@ -107,6 +107,15 @@ def send_saved(env):
     with store.supervised_account(account), store.report_session(cfg, blocking=False):
         with store.write_session(cfg) as conn:
             validate_account(conn, account, cfg)
+        intent = None
+        if env['BRAIN_WORK_KIND'] == 'garmin.report_resend':
+            with store.write_session(cfg) as conn:
+                with store.transaction(conn):
+                    data = conn.execute('select brain.extension_work_input(%s,%s)',
+                                        (env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'])).fetchone()[0]
+                    if not isinstance(data, dict) or set(data) != {'send_intent'} or not isinstance(data['send_intent'], str) or not data['send_intent'].strip() or len(data['send_intent']) > 200:
+                        raise InvalidReportInput('invalid resend intent')
+                    intent = data['send_intent']
         # 각 attempt는 첫 선택 revision을 유지한다. 분석기는 호출하지 않는다.
         revisions = report._work_revisions(cfg, day, False)
         if set(revisions) != {'day', '7d', '30d', 'all'}:
@@ -119,6 +128,6 @@ def send_saved(env):
             # 결정적 렌더링을 사용할 수 없을 때만 문구 전용으로 명시한다.
             document, rows, source, reason = None, [], 'unavailable', 'artifact_render_unavailable'
         event = report_channel.success(cfg, day, revisions, document, env,
-                                         attachment_rows=rows, missing_reason=reason)
+                                         attachment_rows=rows, missing_reason=reason, **({'intent': intent} if intent is not None else {}))
     return json.dumps({'status': 'recorded', 'event_id': str(event),
                        'attachments': source, 'attachment_reason': reason})

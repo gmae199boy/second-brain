@@ -220,6 +220,7 @@ class SchemaVersionSecurityTest(unittest.TestCase):
             self.assertEqual(row[0], 'brain_owner'); self.assertTrue(row[1]); self.assertFalse(row[3]); self.assertTrue(row[4])
             self.assertIn('search_path=""', row[2])
             expected = owner.execute("select max(version) from brain.schema_migrations where owner='garmin'").fetchone()[0]
+        self.assertEqual(expected, store.NATIVE_SCHEMA_VERSION)
         with psycopg.connect(os.environ['GARMIN_TEST_EXTENSION_DSN']) as ext:
             self.assertEqual(ext.execute('select garmin.native_schema_version()').fetchone()[0], expected)
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):

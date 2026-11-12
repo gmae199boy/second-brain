@@ -82,3 +82,30 @@ it('모든 항목 저장 후 finish 전 중단된 요청은 재시도에서 마�
   expect(await sendChannelRequest({ ...args, attemptToken: 'b' })).toEqual({ ok: true });
   expect(calls).toEqual(['summary', 'document']); expect(await store.readChannelRequest('r')).toMatchObject({ request: { status: 'sent', externalMessageId: 'last' } });
 });
+
+
+it('v2는 4개 텍스트 뒤 첨부를 보내고 두 번째 실패에서 재개한다', async () => {
+  const store = memoryStore(), now = new Date();
+  await store.ensureChannel({ id: 'c', kind: 'telegram', botRef: 'bot' });
+  await store.ensureChannelConversation({ id: 'v', userId: '01940000-0000-7000-8000-00000000000a', channelId: 'c', externalRef: 'chat', threadRef: null });
+  const document = { location: { storeKind: 'local' as const, ownership: 'brain' as const, locator: 'file' }, filename: 'report.md' };
+  await store.createChannelRequest({ id: 'r', conversationId: 'v', producer: 'p', producerResultId: 'result', purpose: 'event', revision: null, text: '보관 요약', createdAt: now,
+    bundle: { version: 2, items: [...['day', '7d', '30d', 'all'].map(scope => ({ itemId: `summary:${scope}`, type: 'text' as const, text: scope })),
+      { itemId: 'album:0', type: 'album', photos: [document, document] }, { itemId: 'document', type: 'document', document }] } });
+  await store.handoffChannelRequest({ requestId: 'r', workId: 'w', now });
+  const calls: string[] = []; let fail = true;
+  const sender = {
+    async sendMessage({ text }: { text: string }) { calls.push(text); if (text === '7d' && fail) { fail = false; return { ok: false as const, outcome: 'definite_failed' as const, code: 'http_429', retryable: true, retryAfterMs: 7000 }; } return { ok: true as const, messageId: text }; },
+    async sendMediaGroup() { calls.push('album'); return { ok: true as const, messageId: 'album' }; },
+    async sendDocument() { calls.push('document'); return { ok: true as const, messageId: 'document' }; },
+  };
+  const args = { store, sender, files: { async get() { return { ok: true as const, bytes: new Uint8Array([1]) }; } }, requestId: 'r', workItemId: 'w', now: () => now };
+  await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: 'a' });
+  expect(await sendChannelRequest({ ...args, attemptToken: 'a' })).toMatchObject({ code: 'http_429', retryAfterMs: 7000 });
+  expect(calls).toEqual(['day', '7d']);
+  await store.finishSupervisedWork({ id: 'w', attemptToken: 'a', now, outcome: 'failed', nextAttemptAt: now });
+  await store.claimSupervisedWork({ now, kinds: ['channel_send'], claimedBy: 'worker', attemptToken: 'b' });
+  expect(await sendChannelRequest({ ...args, attemptToken: 'b' })).toEqual({ ok: true });
+  expect(calls).toEqual(['day', '7d', '7d', '30d', 'all', 'album', 'document']);
+  expect(await store.readChannelRequest('r')).toMatchObject({ request: { status: 'sent', externalMessageId: 'document' } });
+});

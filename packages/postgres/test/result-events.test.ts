@@ -174,7 +174,7 @@ it('Garmin 경로 두 개만 immediate 구독으로 이행하고 기존 요청�
     for (const topic of ['garmin.report', 'garmin.period_report', 'human.notes']) await store.channelControl!.route({ action: 'set', topic, messengerId: m, channelId: c });
     const request = randomUUID();
     await store.channelControl!.send({ id: request, topic: 'garmin.report', key: 'existing', text: 'summary', now: clock.now(), sendAt: new Date('2099-01-01T00:00:00Z') });
-    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: 47 });
+    expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, to: 48 });
     expect(await store.channelControl!.subscribe({ action: 'list' })).toMatchObject({ subscriptions: [{ event: 'garmin.period_report.completed', at: 'immediate' }, { event: 'garmin.report.completed', at: 'immediate' }] });
     expect(await store.channelControl!.route({ action: 'list' })).toMatchObject({ routes: [{ topic: 'human.notes' }] });
     expect(await store.readChannelStatus(request)).toMatchObject({ request: { delivery: 'scheduled', nextAttemptAt: new Date('2099-01-01T00:00:00Z') } });
@@ -187,4 +187,38 @@ it('Garmin 경로 두 개만 immediate 구독으로 이행하고 기존 요청�
       expect(await store.channelControl!.sendPending({ topic: item.topic, id: item.id, now: clock.now() })).toEqual({ ok: true, count: 0 });
     }
   } finally { await store?.close(); await admin.end(); await db.drop(); }
+});
+
+it('v2는 보관 요약을 추가 발신하지 않으며 UTF-16·순번·명시적 재발신 키를 검증한다', async () => {
+  const f = await fixture();
+  try {
+    await f.subscribe();
+    const messages = ['day','7d','30d','all'].map(scope => ({ itemId: `summary:${scope}`, text: '😀'.repeat(2000) }));
+    const emit = async (key: string, items = messages, intent: string | null = null, token = f.attempt) => (await f.client.query(
+      'select brain.extension_event_emit_v2($1,$2,$3,$4,$5::date,$6,$7,$8,$9::jsonb,$10::jsonb,$11) as id',
+      [f.work, token, f.event, key, f.today, 'rev', '보관 요약', null, null, JSON.stringify(items), intent])).rows[0].id as string;
+    const id = await emit('v2');
+    expect(await emit('v2')).toBe(id);
+    const bundle = (await f.admin.query('select bundle from brain.result_events where id=$1', [id])).rows[0].bundle;
+    expect(bundle).toEqual({ version: 2, items: messages.map(item => ({ ...item, type: 'text' })) });
+    const dispatch = await f.dispatch(id);
+    expect(dispatch).toHaveLength(1);
+    expect(await f.store.readChannelRequest(dispatch[0].id)).toMatchObject({ request: { bundle } });
+    expect((await f.admin.query('select brain.channel_bundle_size($1::jsonb) as n', [JSON.stringify(bundle)])).rows[0].n).toBe(4);
+    await expect(emit('overflow', [{ itemId: 'summary:day', text: '😀'.repeat(2000) + '한' }])).rejects.toThrow();
+    await expect(emit('empty', [])).rejects.toThrow();
+    await expect(emit('duplicate', [messages[0]!, messages[0]!])).rejects.toThrow();
+    await expect(emit('reserved', [{ itemId: 'document', text: '문서 충돌' }])).rejects.toThrow();
+    await expect(emit('invalid-attempt', messages, null, randomUUID())).rejects.toThrow();
+    await expect(emit('manual-only', messages, 'intent-a')).rejects.toThrow();
+    await f.admin.query('insert into brain.work_manual_requests(work_id) values($1)', [f.work]);
+    const resend = await emit('v2', messages, 'intent-a');
+    expect(resend).not.toBe(id);
+    expect(await emit('v2', messages, 'intent-a')).toBe(resend);
+    const again = await emit('v2', messages, 'intent-b');
+    expect(again).not.toBe(resend);
+    expect(await f.dispatch(resend)).toHaveLength(1);
+    expect(await f.dispatch(again)).toHaveLength(1);
+    await provisionExtension(f.db.url, f.name, f.password);
+  } finally { await f.close(); }
 });
