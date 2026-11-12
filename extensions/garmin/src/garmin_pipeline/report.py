@@ -140,6 +140,10 @@ class WriterFailed(Exception):
         diagnostic = analysis_diagnostics.current.get()
         if diagnostic is not None:
             diagnostic.code = self.diagnostic_code
+            if (self.diagnostic_code in analysis_diagnostics.DETERMINISTIC
+                    and diagnostic.notify_terminal is not None and not diagnostic.notified):
+                diagnostic.notify_terminal(self.diagnostic_code)
+                diagnostic.notified = True
         super().__init__(f"{self.reason}: {detail}" if detail else str(self.reason))
 
 
@@ -556,7 +560,7 @@ class AnalysisWriter:
                         self._run(cfg, argv, remaining, stdout=stream, progress=self.progress,
                                   body_handler=self.body_handler if intake else None, workdir=workdir, **options)
                     if events.stat().st_size > MAX_OUTPUT_BYTES:
-                        raise ValueError("agent output too large")
+                        raise WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, "agent output too large")
                     usage = adapter.decode(request, events)
                 except PreparationError as error:
                     raise WriterFailed(error.code) from None
@@ -642,7 +646,7 @@ class AnalysisWriter:
                     if remaining <= 0:
                         break
                 try:
-                    returncode = proc.wait(min(remaining, .1 if ipc else PROGRESS_INTERVAL_SECONDS))
+                    returncode = proc.wait(min(remaining, .1 if ipc else 1 if batch is not None else PROGRESS_INTERVAL_SECONDS))
                     break
                 except subprocess.TimeoutExpired:
                     now = time.monotonic()
@@ -1399,7 +1403,8 @@ def _scope_retry_state(cfg, day, scope):
             # A new valid report owner reconciles abandoned reservations. Interrupted
             # calls consume budget but do not erase the prior actionable failure.
             conn.execute("""update garmin.analysis_attempt_diagnostics
-                set ended_at=clock_timestamp(), error_code='INTERRUPTED',
+                set ended_at=clock_timestamp(),
+                    error_code=case when error_code='IN_PROGRESS' then 'INTERRUPTED' else error_code end,
                     elapsed_ms=greatest(0,floor(extract(epoch from (clock_timestamp()-started_at))*1000)::bigint)
                 where work_id=%s and report_date=%s and scope=%s and ended_at is null""", key)
             row = conn.execute("""select error_code, terminal from garmin.analysis_attempt_diagnostics
@@ -1421,6 +1426,18 @@ def _record_scope_diagnostic(cfg, day, scope, attempt, diagnostic=None, *, elaps
                  diagnostic.output_bytes, diagnostic.event_bytes, *key))
 
 
+def _notify_terminal_scope(cfg, day, scope, attempt, code):
+    # A known terminal classification can be public before slow sibling cleanup.
+    # Keep ended_at NULL until the child trees have actually been quiesced.
+    with store.write_session(cfg) as conn:
+        with store.transaction(conn):
+            conn.execute("""update garmin.analysis_attempt_diagnostics set error_code=%s,terminal=true
+                where work_id=%s and report_date=%s and scope=%s and attempt=%s""",
+                (code, os.environ['BRAIN_WORK_ID'], day.isoformat(), scope, attempt))
+    import report_channel
+    report_channel.failure(cfg, day, [scope])
+
+
 def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
     feedback, terminal = _scope_retry_state(cfg, day, scope)
     if terminal:
@@ -1433,7 +1450,8 @@ def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
         if attempt is None:
             break
         _assert_attempt_current(cfg)
-        diagnostic = analysis_diagnostics.Attempt(feedback=feedback)
+        diagnostic = analysis_diagnostics.Attempt(feedback=feedback,
+            notify_terminal=lambda code: _notify_terminal_scope(cfg, day, scope, attempt, code))
         token = analysis_diagnostics.current.set(diagnostic)
         started = time.monotonic()
         terminal = False
@@ -1449,7 +1467,10 @@ def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
             terminal = terminal or attempt >= MAX_SCOPE_ATTEMPTS
             feedback = diagnostic.code
         except BaseException:
-            diagnostic.code = 'INTERRUPTED'
+            if diagnostic.notified:
+                terminal = True
+            else:
+                diagnostic.code = 'INTERRUPTED'
             raise
         finally:
             analysis_diagnostics.current.reset(token)

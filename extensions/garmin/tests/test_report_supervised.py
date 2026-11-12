@@ -55,6 +55,7 @@ class SupervisedReportTest(unittest.TestCase):
         self.event = self.stack.enter_context(patch('report_channel.success'))
         self.stack.enter_context(patch('garmin_pipeline.training_measurements.resolve_snapshot_root'))
         self.failure_event = self.stack.enter_context(patch('report_channel.failure'))
+        self.stack.enter_context(patch.object(report, '_notify_terminal_scope', side_effect=lambda cfg, day, scope, attempt, code: self.failure_event(cfg,day,[scope])))
         self.attempts = {}
         def reserve(cfg, day, scope):
             count = self.attempts.get(scope, 0)

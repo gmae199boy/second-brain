@@ -31,6 +31,8 @@ class Attempt:
     input_bytes: int = 0
     output_bytes: int = 0
     event_bytes: int = 0
+    notify_terminal: object = None
+    notified: bool = False
 
 current = ContextVar('garmin_analysis_attempt', default=None)
 

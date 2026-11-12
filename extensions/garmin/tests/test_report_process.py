@@ -84,6 +84,42 @@ with tempfile.TemporaryDirectory() as tmp:
             capture_output=True, text=True, timeout=25)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_terminal_output_limit_notifies_before_slow_batch_sibling_finishes(self):
+        code = r"""
+import concurrent.futures, contextvars, pathlib, subprocess, sys, tempfile, threading
+from types import SimpleNamespace
+from garmin_pipeline import report, analysis_diagnostics
+with tempfile.TemporaryDirectory() as tmp:
+ cfg=SimpleNamespace(path=pathlib.Path(tmp)/'runtime-config')
+ group=report._owned_process_group(); cancelled=threading.Event()
+ batch=report.ModelBatch(group,cancelled); token=report._model_batch.set(batch)
+ notified=threading.Event(); slow_done=threading.Event(); launched=threading.Barrier(2)
+ def run(failing):
+  diagnostic=analysis_diagnostics.Attempt(notify_terminal=lambda code: notified.set())
+  dt=analysis_diagnostics.current.set(diagnostic)
+  try:
+   launched.wait(2)
+   script='import sys,time; print("x"*200,flush=True); time.sleep(10)' if failing else 'import time; time.sleep(4)'
+   with open(pathlib.Path(tmp)/('bad' if failing else 'slow'),'wb') as stream:
+    try: report.AnalysisWriter._run(cfg,[sys.executable,'-c',script],15,stdout=stream)
+    except report.WriterFailed as error: assert failing and error.diagnostic_code=='OUTPUT_LIMIT'
+   if not failing: slow_done.set()
+  finally: analysis_diagnostics.current.reset(dt)
+ report.MAX_OUTPUT_BYTES=100
+ try:
+  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+   tasks=[pool.submit(contextvars.copy_context().run,run,flag) for flag in (True,False)]
+   assert notified.wait(3), 'terminal notice waited for sibling'
+   assert not slow_done.is_set(), 'notice came only after sibling ended'
+   for task in tasks: task.result()
+  assert not report._group_members(group)
+ finally:
+  report._model_batch.reset(token); report._cleanup_owned_group(group)
+"""
+        result = subprocess.run([sys.executable,'-c',code], start_new_session=True,
+            capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,0,result.stderr)
+
     def test_missing_configured_agent_has_actionable_error_without_spawn(self):
         with patch.dict(os.environ, {'PATH': '/usr/bin:/bin'}, clear=True), patch.object(report.subprocess, 'Popen') as spawn:
             with self.assertRaisesRegex(report.AnalysisAgentNotFound, 'ANALYSIS_AGENT_NOT_FOUND.*brain config set agent.codex_path'):
