@@ -271,7 +271,7 @@ def build_training_measurements(manifest: dict, days: dict, activities: dict, la
         'timezone':manifest['timezone'],'snapshot_id':manifest['snapshot_id'],'as_of':manifest['data_cutoff'],
         'data_cutoff':manifest['data_cutoff'],'partial_date':manifest['report_date'],'attribution':'completed_at',
         'current':current,'comparison':comparison,'recovery_context':recovery,
-        'profile':{'status':'configured' if profile and profile.get('status')!='unset' else 'unset','snapshot_id':manifest.get('profile_snapshot_id'),
+        'profile':{'status':'configured' if profile and (profile.get('profile_status') in ('partial', 'complete') or profile.get('status') == 'configured') else 'unset','snapshot_id':manifest.get('profile_snapshot_id'),
                    'source_ref':'profile.json' if profile else None},
         'limitations':['equipment_or_load_convention_unverified','missing_sets_do_not_imply_no_training']})
 

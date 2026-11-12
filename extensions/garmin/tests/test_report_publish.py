@@ -99,7 +99,7 @@ class ReportPublishTest(unittest.TestCase):
     def test_completed_regeneration_retry_only_republishes_recorded_revisions(self):
         from garmin_pipeline import report
         revisions = {'day': 2, '7d': 3, '30d': 4, 'all': 5}
-        with patch.object(report, '_work_revisions', return_value=revisions), patch.object(report_publish, 'publish_and_wait', side_effect=report_publish.FilesPending) as publish, patch.object(report.body, 'pending') as intake:
+        with patch.dict('os.environ', {'BRAIN_WORK_ID': str(UUID(int=5))}), patch('garmin_pipeline.training_measurements.resolve_snapshot_root'), patch.object(report, '_work_revisions', return_value=revisions), patch.object(report_publish, 'publish_and_wait', side_effect=report_publish.FilesPending) as publish, patch.object(report.body, 'pending') as intake:
             with self.assertRaises(report_publish.FilesPending):
                 report.run_supervised(None, object(), regenerate=True, today=DAY)
             publish.assert_called_once_with(None, DAY, revisions)

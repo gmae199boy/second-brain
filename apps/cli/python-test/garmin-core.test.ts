@@ -95,7 +95,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     await writeFile(join(tokenstore,'block.json'),JSON.stringify({schema_version:1,local_date:day,reason:'rate_limited'}),{mode:0o600});
     await appendFile(join(ext,'src/garmin_pipeline/report.py'), '\n' + await readFile(join(repo,'extensions/garmin/tests/model_environment.py'),'utf8'));
     const bin=join(home,'fake-bin'), control=join(ext,'report-fixture'); await mkdir(bin,{recursive:true}); await mkdir(control,{recursive:true});
-    await copyFile(join(repo,'extensions/garmin/tests/report-fixture/codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
+    await copyFile(join(repo,'extensions/garmin/tests/report-fixture/scope_output.py'),join(bin,'scope_output.py')); await copyFile(join(repo,'extensions/garmin/tests/report-fixture/codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
     await store.setSetting({userId:null,key:'agent.codex_path',value:join(bin,'codex'),updatedAt:clock.now()});
     const profile=join(ext,'reports/accounts',self,account); await mkdir(profile,{recursive:true}); await writeFile(join(profile,'profile.md'),'synthetic profile');
     const deps={store,clock,idGen:ids,cron:cronCalculator,readTimeZone:async()=>({ok:true as const,value:'Asia/Seoul'})};
@@ -107,6 +107,19 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     expect(await calls()).toEqual([]);
     expect((await world.db.rows(`select status from brain.schedule_occurrences where work_id='${collectWork}'`))[0]?.status).not.toBe('done');
     expect((await world.db.rows(`select status from garmin.run where user_id='${self}' and connection_id='${account}' and local_date='${day}' order by id desc limit 1`))[0]?.status).toBe('skipped_blocked');
+    // C1 fixture: one completed strength session with bodyweight reps and explicit HR samples.
+    const activityStart=new Date(`${prior1}T01:00:00.000Z`).getTime();
+    const activityRaw={activityTypeDTO:{typeKey:'strength_training'},summaryDTO:{startTimeGMT:`${prior1} 01:00:00.000`,duration:1800,averageHR:110,maxHR:130}};
+    const setsRaw={exerciseSets:[{setType:'ACTIVE',startTime:`${prior1}T01:00:00.000Z`,duration:60,weight:-1,repetitionCount:12,exercises:[{category:'PUSH_UP',name:null,probability:1}]}]};
+    const hrRaw={metricDescriptors:[{key:'directTimestamp',metricsIndex:0},{key:'directHeartRate',metricsIndex:1}],activityDetailMetrics:[{metrics:[activityStart,110]},{metrics:[activityStart+30000,130]}]};
+    // Earlier raw day establishes the all-history bound while preserving the recovery fixture.
+    const sleepRaw={dailySleepDTO:{sleepTimeSeconds:24000,deepSleepSeconds:0,lightSleepSeconds:24000,remSleepSeconds:0,awakeSleepSeconds:0,sleepStartTimestampGMT:activityStart-36000000,sleepEndTimestampGMT:activityStart-12000000}};
+    await world.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${account}','day','${prior1}','sleep_data','${JSON.stringify(sleepRaw)}',${reportAt.getTime()},${reportAt.getTime()},'fixture')`);
+    const activityList=[{activityId:42,startTimeLocal:`${prior1} 10:00:00`,totalSets:1}];
+    await world.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${account}','day','${prior1}','activities_by_date','${JSON.stringify(activityList)}',${reportAt.getTime()},${reportAt.getTime()},'fixture')`);
+    for(const [endpoint,raw] of Object.entries({activity:activityRaw,activity_exercise_sets:setsRaw,activity_details:hrRaw}))
+      await world.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${account}','activity','42','${endpoint}','${JSON.stringify(raw)}',${reportAt.getTime()},${reportAt.getTime()},'fixture')`);
+    await world.db.query(`insert into garmin.activity(user_id,connection_id,activity_id,day_key,type_key,start_ms,duration_s) values ('${self}','${account}',42,'${prior1}','strength_training',${activityStart},1800)`);
     await writeFile(join(ext,'synthetic-normalize-fail'),'fail');
     await writeFile(join(ext,'synthetic-normalize-interrupt'),interruption);
     await unlink(join(tokenstore,'block.json'));
@@ -161,13 +174,16 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     const links=await world.db.rows(`select ef.kind,ef.file_id,fr.metadata from garmin.evaluation_files ef join brain.file_requests fr on fr.id=ef.request_id where ef.connection_id='${account}'`);
     expect(links.some(link=>link.kind==='report')).toBe(true);
     expect(links.some(link=>link.kind==='graph')).toBe(true);
-    const expectedGraphs=day === '2026-11-09' ? ['50-sleep-30d.png','57-workouts-all.png','58-strength-all.png'] : day === '2026-11-10' ? ['50-sleep-30d.png','54-sleep-all.png','57-workouts-all.png','58-strength-all.png'] : ['50-sleep-30d.png'];
     const artifacts=await world.db.rows(`select i.name,encode(i.content,'hex') content,fr.sha256,fr.size_bytes,fl.locator
       from garmin.report_publication_items i join brain.file_requests fr on fr.id=i.request_id
       join garmin.evaluation_files ef on ef.request_id=i.request_id and ef.scope=i.scope
       join brain.file_locations fl on fl.file_id=ef.file_id and fl.store_kind='local' and fl.ownership='brain'
-      where i.user_id='${self}' and i.connection_id='${account}' and i.report_date='${day}' and i.scope='day' and i.kind='graph' order by i.name`);
+      where i.user_id='${self}' and i.connection_id='${account}' and i.report_date='${day}' and i.kind='graph' order by i.name`);
+    const graphGroups=[['01-day-heart.png','01-day-strength-1.png'],['02-7d-overview.png','02-7d-strength-1.png'],['03-30d-overview.png','03-30d-strength-1.png'],['04-all-overview.png','04-all-strength-1.png']];
+    const expectedGraphs=graphGroups.flat();
     expect(artifacts.map(row=>row.name)).toEqual(expectedGraphs);
+    for(const name of expectedGraphs) expect(name).toMatch(/^(01-day|02-7d|03-30d|04-all)-(strength-[1-3]|overview|heart)\.png$/);
+    for(const group of graphGroups) expect(group.length).toBeLessThanOrEqual(group[0]!.startsWith('01-day-')?4:3);
     const reports=await world.db.rows(`select i.scope,i.name,encode(i.content,'hex') content,fr.sha256,fr.size_bytes,fl.locator,e.report_md
       from garmin.report_publication_items i join brain.file_requests fr on fr.id=i.request_id
       join garmin.evaluation_files ef on ef.request_id=i.request_id and ef.scope=i.scope
@@ -215,13 +231,16 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     expect(await world.db.rows(`select outcome,error_code,retryable from brain.channel_attempt_results where work_item_id='${channelWork}' order by sequence`)).toEqual([
       {outcome:'definite_failed',error_code:'http_5xx',retryable:true}, {outcome:'sent',error_code:null,retryable:null},
     ]);
-    const photoMethod=expectedGraphs.length === 1 ? 'sendPhoto' : 'sendMediaGroup';
-    expect(messages).toEqual(['sendMessage',photoMethod,'sendDocument','sendDocument']);
-    const summary=JSON.parse(requests[0]!.bytes.toString('utf8'));
-    expect(summary).toEqual({chat_id:'synthetic-chat',parse_mode:'HTML',text:
-      `<b>🩺 Garmin 일일 리포트 · ${day.slice(5).replace('-', '/')} (${{'2026-11-09':'월','2026-11-10':'화','2026-11-11':'수'}[day]})</b>\n\n` +
-      '<b>오늘 회복: synthetic day</b>\n• 수면 측정 없음 · 점수 측정 없음\n• HRV 측정 없음\n• 기상 Body Battery 측정 없음\n\n\n' +
-      '<b>📈 추세</b>\n• 7일: synthetic 7d\n• 30일: synthetic 30d\n• 전체: synthetic all'});
+    const photoMethods=graphGroups.map(group=>group.length===1?'sendPhoto':'sendMediaGroup');
+    const expectedMethods=['sendMessage','sendMessage','sendMessage','sendMessage',...photoMethods,'sendDocument','sendDocument'];
+    expect(messages).toEqual(expectedMethods);
+    const texts=requests.filter(request=>request.method==='sendMessage').map(request=>JSON.parse(request.bytes.toString('utf8')));
+    expect(texts).toHaveLength(4);
+    for(const [index,scope] of ['day','7d','30d','all'].entries()) {
+      expect(texts[index]).toMatchObject({chat_id:'synthetic-chat',text:expect.stringContaining('synthetic '+scope)});
+      expect(texts[index]).not.toHaveProperty('parse_mode');
+      expect(texts[index].text.length).toBeLessThanOrEqual(4000);
+    }
     // Keep field names and values as well as file bytes to validate media references.
 
     const parts=(request: typeof requests[number]) => {
@@ -243,32 +262,32 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       }
       return result;
     };
-    const forms=requests.slice(1).map(parts);
-    for (const form of forms) {
+    const mediaRequests=requests.filter(request=>request.method!=='sendMessage');
+    const forms=mediaRequests.map(parts);
+    for(const form of forms) {
       const chat=form.filter(part=>part.field==='chat_id');
-      expect(chat).toHaveLength(1);
-      expect(chat[0]!.bytes.toString('utf8')).toBe('synthetic-chat');
+      expect(chat).toHaveLength(1);expect(chat[0]!.bytes.toString('utf8')).toBe('synthetic-chat');
     }
-    const photoForm=forms[0]!;
-    const photoParts=photoForm.filter(part=>part.filename !== undefined);
+    const photoForms=forms.slice(0,graphGroups.length);
+    const photoParts=photoForms.flatMap(form=>form.filter(part=>part.filename!==undefined));
     expect(photoParts.map(part=>part.filename)).toEqual(expectedGraphs);
-    if (photoMethod === 'sendMediaGroup') {
-      const media=photoForm.filter(part=>part.field==='media');
-      expect(media).toHaveLength(1);
-      expect(responses.filter(response=>response.method==='sendMediaGroup').map(response=>response.mediaCount)).toEqual([expectedGraphs.length]);
-      expect(photoParts.map(part=>part.field)).toEqual(expectedGraphs.map((_,index)=>`photo${index}`));
-      expect(JSON.parse(media[0]!.bytes.toString('utf8'))).toEqual(photoParts.map(part=>({type:'photo',media:`attach://${part.field}`})));
-    } else expect(photoParts.map(part=>part.field)).toEqual(['photo']);
     expect(photoParts.map(part=>part.bytes)).toEqual(artifacts.map(row=>Buffer.from(String(row.content),'hex')));
-    for (const form of forms.slice(1)) {
-      const documentParts=form.filter(part=>part.filename !== undefined);
-      expect(documentParts.map(part=>part.field)).toEqual(['document']);
-      expect(documentParts).toHaveLength(1);
-      expect(documentParts[0]!.bytes).toEqual(Buffer.from(String(bundle[0]!.content),'hex'));
+    for(const [index,form] of photoForms.entries()) {
+      const photos=form.filter(part=>part.filename!==undefined);
+      expect(photos.map(part=>part.filename)).toEqual(graphGroups[index]);
+      if(photoMethods[index]==='sendMediaGroup') {
+        const media=form.filter(part=>part.field==='media');expect(media).toHaveLength(1);
+        expect(JSON.parse(media[0]!.bytes.toString('utf8'))).toEqual(photos.map(part=>({type:'photo',media:`attach://${part.field}`})));
+      } else expect(photos.map(part=>part.field)).toEqual(['photo']);
+    }
+    for(const form of forms.slice(graphGroups.length)) {
+      const documents=form.filter(part=>part.filename!==undefined);
+      expect(documents.map(part=>part.field)).toEqual(['document']);
+      expect(documents[0]!.bytes).toEqual(Buffer.from(String(bundle[0]!.content),'hex'));
     }
     expect(await tickSchedules(deps)).toMatchObject({ok:true,enqueued:0});
     expect((await world.db.rows("select count(*)::int n from brain.channel_requests where producer='garmin' and purpose='event'"))[0]?.n).toBe(1);
-    expect(messages).toEqual(['sendMessage',photoMethod,'sendDocument','sendDocument']);
+    expect(messages).toEqual(expectedMethods);
 
     await world.db.query(`insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${account}','2026-01-01',10),('${self}','${account}','2026-01-02',null),('${self}','${account}','2026-01-03',30);
       insert into garmin.workout(user_id,connection_id,activity_id,date,type,duration_s) values ('${self}','${account}',1,'2026-01-01','strength',60);
@@ -302,14 +321,20 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
       expect(JSON.parse(mcpFiltered.result.content[0].text).data.value).toBe(10);
     }
     finally {child.stdin.end();await new Promise(resolve=>child.once('close',resolve));}
-    // 실패한 재생성은 완료 이벤트·발송을 추가하지 않고 성공한 평가 행을 보존한다.
+    // 실패한 재생성은 실패 안내만 기록하고 성공한 평가 행을 보존한다.
     const eventsBeforeFailure=await world.db.rows("select id from brain.result_events order by id");
     await writeFile(join(control,'status-failed-7d'),'yes');
     const failed=await world.run(['ext','run','garmin','report-regenerate','--target',account,'--json']);
     expect(failed.body.ok).toBe(true); const failedWork=String(failed.body.data.work_id);
     await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where id='${failedWork}' and completed_at is null and current_attempt_token is null`);
     await expect.poll(async()=> (await world.db.rows(`select count(*)::int n from brain.work_attempts where work_item_id='${failedWork}' and outcome='failed'`))[0]?.n,{timeout:120000}).toBeGreaterThan(0);
-    expect(await world.db.rows("select id from brain.result_events order by id")).toEqual(eventsBeforeFailure);
+    const failureNotice=await world.db.rows(`select id,event,revision,bundle from brain.result_events where source_work_item_id='${failedWork}'`);
+    expect(failureNotice).toHaveLength(1);
+    expect(failureNotice[0]).toMatchObject({event:'garmin.report.completed',revision:null,bundle:{version:2,items:[{itemId:'failure',type:'text',text:expect.stringContaining('7일')}]}});
+    expect((failureNotice[0]!.bundle as {items:unknown[]}).items).toHaveLength(1);
+    const eventsAfterFailure=await world.db.rows("select id from brain.result_events order by id");
+    expect(eventsAfterFailure).toHaveLength(eventsBeforeFailure.length+1);
+    for(const previous of eventsBeforeFailure) expect(eventsAfterFailure).toContainEqual(previous);
     expect(await world.db.rows("select id from brain.channel_requests where producer='garmin' and purpose='report_failed'")).toEqual([]);
     const afterFailure=await world.db.rows(`select scope,revision,summary from garmin.evaluation_revisions where connection_id='${account}' and report_date='${day}' order by scope,revision`);
     for (const row of revisions) expect(afterFailure).toContainEqual(row);

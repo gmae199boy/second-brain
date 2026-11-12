@@ -72,7 +72,7 @@ class SendAttachmentsTest(unittest.TestCase):
                 return Cursor((events.setdefault((args[2], args[3]), UUID(int=100 + len(events))),))
             return original_execute(sql, args)
         server.execute = execute
-        with patch.object(report_channel.report_message, 'load', return_value='[brain-markup-v1]summary'):
+        with patch.object(report_channel.report_message, 'load_messages', return_value={'format': 'legacy', 'summary': '[brain-markup-v1]summary', 'messages': None}):
             for target in ('default', DAY.isoformat()):
                 env = dict(ENV, BRAIN_TARGET_ID=target)
                 document, rows, _ = publication.saved_send_attachments(None, DAY, REVISIONS, env)

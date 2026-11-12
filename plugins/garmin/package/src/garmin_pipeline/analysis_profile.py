@@ -89,7 +89,7 @@ def _canonical(value):
 
 
 def _snapshot(cfg):
-    profile = parse(cfg.analysis_profile)
+    profile = parse(getattr(cfg, 'analysis_profile', None))
     source, legacy = ('db' if profile is not None else 'none'), None
     if profile is None:
         try:
@@ -119,7 +119,7 @@ def _snapshot(cfg):
 
 
 def snapshot(cfg):
-    if cfg.profile_snapshot_id is None:
+    if getattr(cfg, 'profile_snapshot_id', None) is None:
         return _snapshot(cfg)
     # 작업 ID별 pin은 재시도에서도 이미 완료한 기간과 같은 프로필을 유지한다.
     root = cfg.data_dir / 'profile-snapshots'

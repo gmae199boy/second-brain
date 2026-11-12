@@ -49,8 +49,9 @@ def success(cfg, day, revisions, document, env=None, *, attachment_rows=None, mi
             summary = manifest.get('summary') or f'Garmin 운동 리포트 · {day.isoformat()} · 4개 기간'
             rows = attachment_rows if attachment_rows is not None else [] if document is None else conn.execute('''select i.name,i.kind,i.request_id from garmin.report_publication_items i
                 join garmin.evaluation_files f on (f.user_id,f.connection_id,f.report_date,f.scope,f.revision,f.request_id)=(i.user_id,i.connection_id,i.report_date,i.scope,i.revision,i.request_id)
-                where (i.user_id,i.connection_id,i.report_date,i.scope,i.revision)=(%s,%s,%s,%s,%s) and f.file_id is not null order by i.name''',
-                (conn.user_id, conn.connection_id, day.isoformat(), 'day', revisions['day'])).fetchall()
+                join jsonb_each_text(%s::jsonb) selected on selected.key=i.scope and selected.value::bigint=i.revision
+                where (i.user_id,i.connection_id,i.report_date)=(%s,%s,%s) and f.file_id is not null order by i.name''',
+                (json.dumps(revisions), conn.user_id, conn.connection_id, day.isoformat())).fetchall()
             if missing_reason: summary += '\n\n보고서·그래프 없음 (' + missing_reason + ')'
             # 신규 scope 접두어는 scope 순서를 보존한다. 과거 이름은 그대로 정렬한다.
             graphs = sorted((row for row in rows if row[1] == 'graph'), key=lambda row: row[0])

@@ -94,7 +94,8 @@ class RealStoreContractTest(unittest.TestCase):
                 self.assertEqual(json.loads(collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port()))['status'],'success')
                 self.assertTrue(all(call.args[5] is False for call in enter.call_args_list))
                 with psycopg.connect(self.owner_dsn) as owner:
-                    self.assertEqual(owner.execute('select count(*) from garmin.run where user_id=%s and connection_id=%s',(user,account)).fetchone()[0],1)
+                    self.assertEqual(owner.execute('select count(*) from garmin.run where user_id=%s and connection_id=%s',(user,account)).fetchone()[0],2)
+                # Backlog collection may append a fresh empty run on this work's retry.
                 # Model core settling the successful attempt before creating the next work.
                 other_work, other_token = uuid4(), uuid4()
                 with psycopg.connect(self.owner_dsn) as owner:
@@ -106,8 +107,11 @@ class RealStoreContractTest(unittest.TestCase):
                     owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(other_token,other_work))
                 env.update(BRAIN_WORK_ID=str(other_work),BRAIN_ATTEMPT_TOKEN=str(other_token))
                 with patch.dict(os.environ,env), patch.object(normalize,'run'):
-                    with self.assertRaises(collect_runtime.ScheduledCollectIncomplete):
-                        collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port())
+                    self.assertEqual(json.loads(collect_runtime.run(env,port_factory=lambda *args, **kwargs:Port()))['status'], 'success')
+                    with psycopg.connect(self.owner_dsn) as owner:
+                        other_run = owner.execute('select run_id from garmin.collect_work_runs where work_id=%s', (other_work,)).fetchone()[0]
+                        original_run = owner.execute('select run_id from garmin.collect_work_runs where work_id=%s', (work,)).fetchone()[0]
+                    self.assertNotEqual(other_run, original_run)  # A new work records its own run; it cannot adopt provenance.
 
     def test_body_publication_holds_real_attempt_fence_cancel_and_retry(self):
         user, account, _ = self.accounts[0]
@@ -382,7 +386,11 @@ class RealStoreContractTest(unittest.TestCase):
                     (folder/'manifest.json').write_text(json.dumps({'period_windows':{'all':{'from':'2025-12-01','to':'2026-01-02'}},'months':['2025-12','2026-01'],'data_cutoff':'2026-01-02T00:00:00+00:00'}))
                     result=report_input.build_period(CFG,folder,REPORT_DAY,'all')
                     evaluations=json.loads((result/'evaluations.json').read_text())
-                    self.assertEqual([e['summary'] for e in evaluations],['month-2-later' if index==2 else f'month-{index}'])
+                    self.assertEqual(evaluations, [])  # Other periods' evaluations are excluded.
+                    previous = json.loads((result/'previous.json').read_text())
+                    if previous is not None:
+                        self.assertEqual(previous['scope'], 'all')
+                        self.assertNotIn('summary', previous)
                     values=json.loads((result/'day_values.json').read_text())
                     self.assertEqual(values['months'][0]['steps'],index*100)
                     self.assertEqual(values['exercises'][0]['volume_kg'],index*100)

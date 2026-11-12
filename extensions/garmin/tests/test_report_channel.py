@@ -43,6 +43,8 @@ class Conn:
 class ChannelTest(unittest.TestCase):
     def setup_conn(self, conn):
         stack=contextlib.ExitStack(); self.addCleanup(stack.close)
+        stack.enter_context(patch.dict(os.environ, ENV))
+        stack.enter_context(patch('garmin_pipeline.training_measurements.resolve_snapshot_root'))
         stack.enter_context(patch('report_publish.saved_bundle', return_value=((None, b'document', None),
             [(f'{i:02}.png', None, f'graph:{i}'.encode(), None, None) for i in range(1, 100)])))
         stack.enter_context(patch.object(report_channel.store,'write_session',return_value=contextlib.nullcontext(conn)))
@@ -178,7 +180,7 @@ class ChannelTest(unittest.TestCase):
         self.assertFalse(any('extension_channel_publish' in q for q in queries if 'select exists(select 1 from pg_proc' not in q))
 
     def test_channel_handoff_retry_does_not_regenerate(self):
-        with patch.object(report, '_work_revisions', return_value=REVISIONS), patch('report_publish.publish_and_wait'), patch.object(report_channel, 'success', side_effect=RuntimeError('synthetic delivery failure')), patch.object(report.body, 'pending') as intake:
+        with patch.dict(os.environ, ENV), patch('garmin_pipeline.training_measurements.resolve_snapshot_root'), patch.object(report, '_work_revisions', return_value=REVISIONS), patch('report_publish.publish_and_wait'), patch.object(report_channel, 'success', side_effect=RuntimeError('synthetic delivery failure')), patch.object(report.body, 'pending') as intake:
             with self.assertRaises(RuntimeError): report.run_supervised(None, object(), today=DAY)
             intake.assert_not_called()
 

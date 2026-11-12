@@ -76,7 +76,6 @@ def run(env=None, *, writer=None):
     account, cfg = envelope(actual)
     if writer is None:
         report.analysis_executable(cfg.analysis_agent, actual)
-        report.codex_executable(actual)
     try:
         day = scheduled_date(actual, cfg.timezone)
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
@@ -123,7 +122,7 @@ def send_saved(env):
                         raise InvalidReportInput('invalid resend intent')
                     intent = data['send_intent']
         # 각 attempt는 첫 선택 revision을 유지한다. 분석기는 호출하지 않는다.
-        revisions = report._work_revisions(cfg, day, False)
+        revisions = report._work_revisions(cfg, day, False, saved_only=True)
         if set(revisions) != {'day', '7d', '30d', 'all'}:
             raise InvalidReportInput('missing saved evaluation')
         import report_publish

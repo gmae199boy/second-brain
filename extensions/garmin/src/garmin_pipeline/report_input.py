@@ -366,6 +366,8 @@ def build(
         write_json(temporary / "labels" / "exercise_types_ko.json", labels)
         from . import analysis_profile
         manifest['analysis_profile'] = analysis_profile.write(cfg, temporary)
+        manifest['profile_snapshot_id'] = (manifest['analysis_profile']['sha256']
+            if manifest['analysis_profile']['profile_status'] != 'absent' else None)
         _previous_evaluations(cfg, temporary, yesterday, notes, connection=connection)
         write_json(temporary / "manifest.json", manifest)
         if target.exists():
@@ -623,11 +625,14 @@ def prepare_snapshot(cfg, report_date: date, work_id: str, *, started_at=None) -
         history_from=min((report_date-timedelta(days=HISTORY_DAYS)).isoformat(),scope_measurements['day']['comparison']['from'])
         for path in (day_folder/'days').iterdir():
             if path.name < history_from: shutil.rmtree(path)
+        day_measurements = scope_measurements['day']
+        day_sessions = day_measurements['current']['sessions'] + day_measurements['comparison']['sessions']
+        referenced_day_ids = {session['session_id'] for session in day_sessions}
         for path in (day_folder/'activities').iterdir():
             raw=exported.activities.get(path.name,{}).get('activity') or {}
             start=(raw.get('summaryDTO') or {}).get('startTimeGMT')
             parsed=digest._Digest(exported.manifest,{}, {}, {}, []).to_utc(start)
-            if parsed and parsed.astimezone(ZoneInfo(cfg.timezone)).date().isoformat() < history_from:
+            if path.name not in referenced_day_ids and parsed and parsed.astimezone(ZoneInfo(cfg.timezone)).date().isoformat() < history_from:
                 shutil.rmtree(path)
         for name in ('profile.md', 'profile.json'):
             # 생산은 프로필 워커 소유이며 여기서는 이미 생성된 사본만 같은 snapshot에 포함한다.

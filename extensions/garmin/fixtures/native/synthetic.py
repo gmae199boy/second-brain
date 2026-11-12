@@ -83,7 +83,7 @@ def make_capture(root):
                 (19,42,'bench',2,0,0,0),(20,42,'squat',3,5,30,450),
                 (21,43,'bench',1,5,10,50),(22,44,'row',0,None,None,None)])
             db.executemany('insert into evaluation values (?,?,?,?,?,?,?,?,?)',[
-                (day,scope,'synthetic '+scope,'[]','[]','[]','# synthetic '+day+' '+scope,'fake',index)
+                (day,scope,'synthetic '+scope,'[]','[]',json.dumps(['check-'+scope]),'# synthetic '+day+' '+scope,'fake',index)
                 for index,(day,scope) in enumerate([
                     ('2025-11-30','30d'),('2025-12-20','7d'),('2025-12-30','30d'),
                     ('2025-12-31','day'),('2025-12-31','7d'),('2026-01-01','day'),

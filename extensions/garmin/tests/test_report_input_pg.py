@@ -248,6 +248,7 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
                         actual_json, expected_json = json.loads(value), json.loads(expected['files'][name])
                         # 수집 독립 계약의 운동 창과 안내만 새 수락 시험에서 검증한다.
                         if name == 'manifest.json':
+                            actual_json.pop('profile_snapshot_id')
                             metadata = actual_json.pop('analysis_profile')
                             self.assertEqual(metadata['sha256'], profile['sha256'])
                             for key in ('workout_window', 'workouts', 'notes', 'previous_report'):

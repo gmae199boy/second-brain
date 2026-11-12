@@ -182,7 +182,22 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
     execFileSync(python,[script,sqliteRoot,join(capture,'D2.db')],{env:{...env,PYTHONPATH:[join(root,'tests/oracle/src'),synthetic].join(delimiter)}});
     execFileSync(python,[script,pgRoot,join(capture,'D2.db')],{env});
     const sqliteFolder=join(sqliteRoot,'report-input/2026-01-02'), pgFolder=join(pgRoot,'report-input/2026-01-02');
-    const expected=await files(sqliteFolder); expect(await files(pgFolder)).toEqual(expected);
+    const expected=await files(sqliteFolder), actualFiles=await files(pgFolder);
+    const changed=(name:string)=>name.startsWith('previous_evaluations/') || (name.startsWith('period/') && /\/(evaluations|previous)\.json$/.test(name));
+    const profile=(name:string)=>/(^|\/)profile\.(json|md)$/.test(name);
+    expect(actualFiles.filter(name=>!changed(name) && !profile(name))).toEqual(expected.filter(name=>!changed(name) && !profile(name)));
+    expect(actualFiles.filter(name=>name.startsWith('previous_evaluations/'))).toEqual(['previous_evaluations/day.json']);
+    const profileJson=await readFile(join(pgFolder,'profile.json'),'utf8');
+    expect(JSON.parse(profileJson)).toMatchObject({schema_version:1,profile_status:'absent'});
+    const previousExpected=(scope:string,created_at:number)=>({report_date:'2026-01-01',scope,next_checks:['check-'+scope],revision:1,model:'fake',created_at,elapsed_days:1});
+    expect(JSON.parse(await readFile(join(pgFolder,'previous_evaluations/day.json'),'utf8'))).toEqual(previousExpected('day',6));
+    for(const [scope,createdAt] of [['7d',7],['30d',8],['all',9]] as const) {
+      expect(await readFile(join(pgFolder,'period',scope,'profile.json'),'utf8')).toBe(profileJson);
+      expect(await readFile(join(pgFolder,'period',scope,'profile.md'),'utf8')).toBe(await readFile(join(pgFolder,'profile.md'),'utf8'));
+      expect(JSON.parse(await readFile(join(pgFolder,'period',scope,'evaluations.json'),'utf8'))).toEqual([]);
+      const previous=JSON.parse(await readFile(join(pgFolder,'period',scope,'previous.json'),'utf8'));
+      expect(previous).toEqual(previousExpected(scope,createdAt));
+    }
     for (const required of ['manifest.json','days/2026-01-02/heart_rates.json','days/2026-01-02/stress_data.json','activities/42/activity.json','activities/45/activity.json','activities/46/activity.json','activities/49/activity.json','activities/50/activity.json','previous_evaluations/day.json','previous_evaluations/7d.json','period/7d/day_values.json','period/30d/evaluations.json','period/all/day_values.json']) expect(expected).toContain(required);
     expect(expected).not.toContain('activities/43/activity.json');
     expect(expected).not.toContain('activities/44/activity.json');
@@ -197,7 +212,7 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
       const evaluations=JSON.parse(await readFile(join(sqliteFolder,'period',scope,'evaluations.json'),'utf8')) as unknown[];
       expect(evaluations.length).toBeGreaterThan(1);
     }
-    for (const name of expected) {
+    for (const name of expected.filter(name=>!changed(name) && !profile(name))) {
       const a=await readFile(join(sqliteFolder,name)),b=await readFile(join(pgFolder,name));
       if (name.endsWith('.json')) {
         const actualJson=JSON.parse(b.toString('utf8')),expectedJson=JSON.parse(a.toString('utf8'));
@@ -205,7 +220,7 @@ it('copies schema 16 under supervision, resumes after a crash and matches the pi
           // 새 수집 독립 계약은 직전 현지 날짜의 완료 시각 창이다.
           expect(actualJson.workouts).toEqual(['49']);
           expect(actualJson.workout_window).toEqual({from:'2026-01-01T00:00:00.000+09:00',to:'2026-01-02T00:00:00.000+09:00',basis:'completed_at'});
-          for(const key of ['workouts','workout_window','notes']) { delete actualJson[key];delete expectedJson[key]; }
+          for(const key of ['workouts','workout_window','notes','previous_report','analysis_profile','profile_snapshot_id']) { delete actualJson[key];delete expectedJson[key]; }
         }
         expect(actualJson,name).toEqual(expectedJson);
       }

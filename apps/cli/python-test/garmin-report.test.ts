@@ -32,7 +32,7 @@ async function setup(startDaemon=true) {
   await appendFile(join(extension,'src/garmin_pipeline/report.py'), '\n' + await readFile(join(root,'../model_environment.py'),'utf8'));
   const bin=join(home,'fake-bin'), control=join(extension,'report-fixture');
   await mkdir(bin,{recursive:true}); await mkdir(control,{recursive:true});
-  await copyFile(join(root,'codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
+  await copyFile(join(root,'scope_output.py'),join(bin,'scope_output.py')); await copyFile(join(root,'codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
   await store.setSetting({userId:null,key:'agent.codex_path',value:join(bin,'codex'),updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.timezone',value:'UTC',updatedAt:new Date()});
   await store.setSetting({userId:self,key:'garmin.analysis_model',value:'synthetic',updatedAt:new Date()});
@@ -133,7 +133,7 @@ it('observes account-specific raw, body, projection, evaluation and period profi
     await t.store.setSetting({userId:null,key:'garmin.analysis_profile',value:'{"schema_version":1,"goals":{"primary":"global-profile-must-not-leak"}}',updatedAt:new Date()});
     const yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
     for(const [target,tag,steps] of [[t.account,'alpha',1231],[t.other,'bravo',4562]] as const) {
-      await t.fixture.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${target}','day','${yesterday}','user_summary','{"marker":"raw-${tag}","totalSteps":${steps}}',1,1,'fixture'); insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${target}','${yesterday}',${steps}); insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values ('${self}','${target}','${yesterday}','day','eval-${tag}','[]','[]','[]','prior-${tag}','fixture',1,1)`);
+      await t.fixture.db.query(`insert into garmin.raw_response(user_id,connection_id,scope,key,endpoint,raw,fetched_at,checked_at,library_version) values ('${self}','${target}','day','${yesterday}','user_summary','{"marker":"raw-${tag}","totalSteps":${steps}}',1,1,'fixture'); insert into garmin.day_summary(user_id,connection_id,date,steps) values ('${self}','${target}','${yesterday}',${steps}); insert into garmin.evaluation_revisions(user_id,connection_id,report_date,scope,summary,judgments,evidence,next_checks,report_md,model,created_at,revision) values ('${self}','${target}','${yesterday}','day','eval-${tag}','[]','[]','["check-${tag}"]','prior-${tag}','fixture',1,1)`);
       const runtime=join(t.extension,'reports/accounts',self,target), bodyDir=join(runtime,'data/body');
       await mkdir(bodyDir,{recursive:true});
       await writeFile(join(bodyDir,`${yesterday}.json`),JSON.stringify({schema_version:1,measured_on:yesterday,values:{weight_kg:steps===1231?71:82},value_mtime_ns:{weight_kg:1},source_files:[`body-${tag}`]}));
@@ -156,7 +156,7 @@ it('observes account-specific raw, body, projection, evaluation and period profi
       }
       const day=JSON.stringify(calls[0]!.observed);
       expect(calls[0]!.observed.digest).toMatchObject({day:{yesterday:{steps}}});
-      expect(day).toContain(`raw-${own}`); expect(day).toContain(`eval-${own}`); expect(day).toContain(`body-${own}`); expect(day).toContain(`"weight_kg":${weight}`);
+      expect(day).toContain(`raw-${own}`); expect(day).toContain(`check-${own}`); expect(day).not.toContain(`eval-${own}`); expect(day).toContain(`body-${own}`); expect(day).toContain(`"weight_kg":${weight}`);
       for(const call of calls.slice(1)) {
         expect(call.observed.profile).toContain(`profile-${target}`);
         expect(JSON.stringify(call.observed.day_values)).toContain(String(steps));

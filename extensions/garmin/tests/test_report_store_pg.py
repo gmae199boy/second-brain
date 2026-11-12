@@ -50,7 +50,7 @@ class ReportStoreTest(unittest.TestCase):
         conn = Conn()
         @contextlib.contextmanager
         def session(_cfg): yield conn
-        cfg = SimpleNamespace(report_model='synthetic')
+        cfg = SimpleNamespace(report_model='synthetic', analysis_agent='codex')
         def analysis(text):
             return SimpleNamespace(summary='summary ' + text, judgments=[], evidence=[], next_checks=[], report_md=text,
                 message={'headline': text, 'recommendations': [], 'trend_line': '', 'limitations': []})
@@ -80,7 +80,7 @@ class ReportStoreTest(unittest.TestCase):
                 return SimpleNamespace(status='ok', report_md='synthetic', summary='summary', usage=None,
                                        judgments=[], evidence=[], next_checks=[])
             def assert_outside(self): assert conn.depth == 0
-        cfg = SimpleNamespace(report_model='synthetic')
+        cfg = SimpleNamespace(report_model='synthetic', analysis_agent='codex')
         with patch.dict(os.environ, {'BRAIN_WORK_ID':str(USER)}), patch.object(store, 'transaction', transaction), patch.object(store, 'write_session', session):
             result, _, failure, _ = report._evaluate(cfg, Writer(), [], 'day', [])
             self.assertIsNone(failure)

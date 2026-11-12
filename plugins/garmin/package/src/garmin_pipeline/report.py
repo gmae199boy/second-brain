@@ -1159,32 +1159,108 @@ def _assert_attempt_current(cfg):
             pass
 
 
-def _work_revisions(cfg, today, regenerate):
+class WorkRevisions(dict):
+    """고정 revision 벡터와 그 입력 snapshot을 함께 전달한다."""
+
+    def __init__(self, values, snapshot_id):
+        super().__init__(values)
+        self.snapshot_id = snapshot_id
+
+
+def _validate_completed_snapshot(cfg, today, results):
+    from garmin_pipeline import training_measurements as training
+    if set(results) != set(training.SCOPES):
+        raise ValueError('incomplete scope vector')
+    snapshot_id = results['day']['structured']['snapshot_id']
+    root = training.resolve_snapshot_root(cfg, snapshot_id)
+    metadata = training.validate_snapshot(root, snapshot_id)
+    if metadata['report_date'] != today.isoformat():
+        raise ValueError('report date mismatch')
+    for scope, result in results.items():
+        value = result['structured']
+        measurements = training.load_training_measurements(root, scope)
+        expected = {
+            'schema_version': 'garmin.scope_analysis.v2', 'status': 'ok',
+            'scope': scope, 'snapshot_id': snapshot_id,
+            'range': {'start': measurements['current']['from'],
+                      'end': measurements['current']['to'], 'timezone': cfg.timezone},
+            'data_cutoff': metadata['data_cutoff'],
+            'measurements_version': training.SCHEMA_VERSION,
+            'profile_snapshot_id': metadata.get('profile_snapshot_id'),
+        }
+        if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+            raise ValueError('incompatible scope provenance')
+    return snapshot_id
+
+
+def _work_revisions(cfg, today, regenerate, *, saved_only=False):
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
             from garmin_pipeline.training_measurements import snapshot_id_for
-            snapshot_id = snapshot_id_for(os.environ['BRAIN_WORK_ID'],today)
+            own_snapshot = snapshot_id_for(os.environ['BRAIN_WORK_ID'], today)
             mappings = conn.execute('''select w.scope,w.revision,e.structured
                 from garmin.report_work_revisions w join garmin.evaluation_revisions e
                   on e.user_id=w.user_id and e.connection_id=w.connection_id
                   and e.report_date=w.report_date and e.scope=w.scope and e.revision=w.revision
                 where w.work_id=%s and w.user_id=%s and w.connection_id=%s and w.report_date=%s''',
                 (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat())).fetchall()
-            recorded={}
-            for scope,revision,structured in mappings:
-                if (not isinstance(structured,dict) or structured.get('snapshot_id')!=snapshot_id
-                        or structured.get('schema_version')!='garmin.scope_analysis.v2' or structured.get('status')!='ok'):
-                    # 구 revision은 보존하되 새 입력과 섞어 재분석·게시하지 않는 명시적 호환 오류다.
-                    raise store.StoreError('report work revision belongs to an incompatible snapshot')
-                recorded[scope]=revision
-            # 새 work도 동일 snapshot의 성공만 채택한다. 다른 입력 revision과 섞지 않는다.
+            if saved_only:
+                # 구 NULL 구조체도 저장 리포트의 재발신에서는 원본 revision을 보존한다.
+                if mappings:
+                    return {scope: revision for scope, revision, _ in mappings}
+                rows = conn.execute('''select distinct on (scope) scope,revision,structured
+                    from garmin.evaluation_revisions
+                    where user_id=%s and connection_id=%s and report_date=%s
+                    order by scope,revision desc''',
+                    (conn.user_id,conn.connection_id,today.isoformat())).fetchall()
+                if {scope for scope, _, _ in rows} != {'day', '7d', '30d', 'all'}:
+                    return {}
+                for scope, revision, _ in rows:
+                    conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
+                                 (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat(),scope,revision))
+                return {scope: revision for scope, revision, _ in rows}
+            snapshot_id = own_snapshot
+            recorded = {}
+            if mappings:
+                results = {scope: {'revision': revision, 'structured': value}
+                           for scope, revision, value in mappings}
+                for scope, result in results.items():
+                    value = result['structured']
+                    if (not isinstance(value, dict) or value.get('schema_version') != 'garmin.scope_analysis.v2'
+                            or value.get('status') != 'ok'):
+                        raise store.StoreError('report work revision belongs to an incompatible snapshot')
+                    recorded[scope] = result['revision']
+                ids = {result['structured'].get('snapshot_id') for result in results.values()}
+                if ids != {own_snapshot}:
+                    try:
+                        snapshot_id = _validate_completed_snapshot(cfg, today, results)
+                    except (OSError, ValueError, KeyError, TypeError) as error:
+                        raise store.StoreError('report work snapshot is incompatible') from error
+            elif not regenerate:
+                # 최신 네 결과가 같은 봉인된 v2 입력에 속할 때만 새 일반 일감에 채택한다.
+                rows = conn.execute('''select distinct on (scope) scope,revision,structured
+                    from garmin.evaluation_revisions
+                    where user_id=%s and connection_id=%s and report_date=%s
+                    order by scope,revision desc''',
+                    (conn.user_id,conn.connection_id,today.isoformat())).fetchall()
+                results = {scope: {'revision': revision, 'structured': value}
+                           for scope, revision, value in rows}
+                try:
+                    snapshot_id = _validate_completed_snapshot(cfg, today, results)
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass  # legacy·부분 결과·서로 다른 snapshot은 새 입력으로 분석한다.
+                else:
+                    for scope, result in results.items():
+                        conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
+                                     (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat(),scope,result['revision']))
+                        recorded[scope] = result['revision']
             successful = store.successful_scope_results(conn, report_date=today.isoformat(), snapshot_id=snapshot_id)
             for scope, result in successful.items():
                 if scope not in recorded:
                     conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
                                  (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat(),scope,result['revision']))
                     recorded[scope] = result['revision']
-    return recorded
+    return WorkRevisions(recorded, snapshot_id)
 
 
 def _read_work_revisions(cfg, today):
@@ -1233,7 +1309,7 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     remaining = [scope for scope in ('day', '7d', '30d', 'all') if scope not in completed]
     if not remaining:
         from garmin_pipeline.training_measurements import resolve_snapshot_root, snapshot_id_for
-        resolve_snapshot_root(cfg,snapshot_id_for(os.environ['BRAIN_WORK_ID'],today))
+        resolve_snapshot_root(cfg, getattr(recorded, 'snapshot_id', snapshot_id_for(os.environ['BRAIN_WORK_ID'],today)))
         import report_publish
         document = report_publish.publish_and_wait(cfg, today, recorded)
         import report_channel

@@ -23,7 +23,7 @@ from psycopg.pq import TransactionStatus
 
 NORMALIZE_VERSION = 8
 NORMALIZE_VERSION_KEY = "normalize_version"
-NATIVE_SCHEMA_VERSION = 19
+NATIVE_SCHEMA_VERSION = 20
 _write_held = contextvars.ContextVar("garmin_write_held", default=False)
 _report_held = contextvars.ContextVar("garmin_report_held", default=False)
 _account_context = contextvars.ContextVar("garmin_account_context", default=None)

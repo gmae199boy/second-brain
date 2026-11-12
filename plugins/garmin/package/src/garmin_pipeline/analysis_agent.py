@@ -94,7 +94,7 @@ class CodexAdapter:
     def prepare(self, request):
         from garmin_pipeline.report import codex_argv
         return codex_argv(request.cfg, request.schema, request.output, [], request.executable,
-                          inputs=request.inputs, scope=request.scope), None
+                          inputs=request.inputs, scope=request.scope, output_contract=request.schema.name), None
 
     def decode(self, request, events):
         from garmin_pipeline.report import _usage

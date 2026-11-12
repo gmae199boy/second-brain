@@ -69,6 +69,27 @@ class ReportEnvelopeTest(unittest.TestCase):
             self.assertEqual(len(valid.call_args.args), 3)
             self.assertFalse(runner.call_args.kwargs['regenerate'])
 
+    def test_claude_entry_without_codex_allows_fresh_and_noop_reports(self):
+        from garmin_pipeline import report
+        env = report_env()
+        setting(env, 'garmin.analysis_agent', 'claude')
+        setting(env, 'garmin.analysis_model', 'sonnet')
+        env.pop('BRAIN_CODEX_PATH', None)
+        for outcome in ({'status': 'success', 'scopes': 4}, {'status': 'noop', 'scopes': 0}):
+            with self.subTest(outcome=outcome), contextlib.ExitStack() as stack:
+                stack.enter_context(patch.object(store, 'supervised_account', return_value=contextlib.nullcontext()))
+                stack.enter_context(patch.object(store, 'report_session', return_value=contextlib.nullcontext()))
+                stack.enter_context(patch.object(store, 'write_session', return_value=contextlib.nullcontext(object())))
+                stack.enter_context(patch.object(runtime, 'validate_account'))
+                stack.enter_context(patch.object(runtime, 'install_skills'))
+                stack.enter_context(patch.object(report, 'analysis_executable', return_value='/synthetic/claude'))
+                stack.enter_context(patch.object(report, 'codex_executable', side_effect=AssertionError('no intake needs no Codex')))
+                runner = stack.enter_context(patch.object(report, 'run_supervised', return_value=outcome))
+                self.assertEqual(json.loads(runtime.run(env)), outcome)
+                writer = runner.call_args.args[1]
+                self.assertEqual(writer.provider, 'claude')
+                self.assertIsNone(writer.intake_executable)
+
     def test_manifest_requires_model_for_both_report_kinds(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'manifest.json').read_text())
         for kind in ('garmin.report', 'garmin.report_regenerate'):
