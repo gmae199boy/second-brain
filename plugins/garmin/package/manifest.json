@@ -944,6 +944,7 @@
     "src/garmin_pipeline/schemas/body_intake_output.schema.json",
     "src/garmin_pipeline/schemas/daily_analysis_output.schema.json",
     "src/garmin_pipeline/schemas/period_review_output.schema.json",
+    "src/garmin_pipeline/schemas/training_analysis_output_v2.schema.json",
     "src/garmin_pipeline/store/__init__.py",
     "src/import.py",
     "src/import_preflight.py",

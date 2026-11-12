@@ -1,0 +1,103 @@
+{
+  "status": "ok",
+  "summary": "운동 기록을 기준으로 다음 수행을 유지한다.",
+  "report_md": "**운동 평가**\n합성 걷기 기록의 심박 반응을 평가한다. 경사 미기록으로 효율 비교는 보류한다.",
+  "judgments": [
+    "걷기는 심박 기준으로 평가한다."
+  ],
+  "evidence": [
+    "training_measurements.json#/sessions/0"
+  ],
+  "next_checks": [
+    "다음 같은 조건의 심박 반응을 확인한다."
+  ],
+  "message": {
+    "schema_version": 2,
+    "headline": "걷기 수행 확인 · 같은 조건 유지",
+    "recommendations": [
+      "다음 운동은 기록된 조건을 유지한다."
+    ],
+    "trend_line": "반복 가능한 진행은 아직 비교 근거가 부족하다.",
+    "limitations": [
+      "경사 미기록으로 평지와 효율 비교를 보류한다."
+    ],
+    "evidence_refs": [
+      "walk-duration",
+      "walk-hr"
+    ]
+  },
+  "schema_version": 2,
+  "scope": "30d",
+  "training_summary": {
+    "headline": "걷기 수행 확인",
+    "assessment": "운동 시간과 심박 반응을 확인한다.",
+    "state": "performed"
+  },
+  "strength_findings": [],
+  "aerobic_findings": [
+    {
+      "activity_type": "walking",
+      "activity_refs": [
+        "synthetic-walk"
+      ],
+      "observed_change": "운동 시간과 심박 반응이 기록됐다.",
+      "interpretation": "심박 기준 평가이며 경사·체력 변화는 추정하지 않는다.",
+      "comparison_status": "insufficient_history",
+      "comparison_conditions": "경사와 기구 조건 미확인",
+      "intensity_basis": "hr_summary",
+      "grade_status": "unrecorded",
+      "evidence_refs": [
+        "walk-duration",
+        "walk-hr"
+      ]
+    }
+  ],
+  "progression": {
+    "observed_progress": "not_comparable",
+    "observation_reason": "비교 가능한 이력이 없다.",
+    "overload_decision": "maintain",
+    "decision_reason": "기록에 근거해 같은 조건을 유지한다.",
+    "missing_evidence": [
+      "비교 이력",
+      "진행 계획"
+    ],
+    "evidence_refs": [
+      "walk-duration"
+    ]
+  },
+  "next_workout_actions": [
+    {
+      "exercise_key": null,
+      "action": "다음 걷기는 기록된 조건을 유지한다.",
+      "reason": "조건이 같은 비교 기록을 확보한다.",
+      "condition": "사용자 프로필의 운동 선호가 허용할 때",
+      "required_input": [
+        "경사·기구 조건"
+      ],
+      "evidence_refs": [
+        "walk-duration"
+      ]
+    }
+  ],
+  "recovery_context": [],
+  "evidence_refs": [
+    {
+      "ref": "walk-duration",
+      "source_ref": "training_measurements.json#/sessions/0/duration_s",
+      "comparison_window": null
+    },
+    {
+      "ref": "walk-hr",
+      "source_ref": "training_measurements.json#/sessions/0/avg_hr",
+      "comparison_window": null
+    }
+  ],
+  "limitations": [
+    {
+      "reason_code": "incline_unrecorded",
+      "scope": "30d",
+      "affected_judgment": "aerobic_findings[0]",
+      "detail": "경사 미기록으로 평지 페이스 효율 비교를 보류한다."
+    }
+  ]
+}
