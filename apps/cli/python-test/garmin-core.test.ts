@@ -160,7 +160,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     expect(await readFile(join(ext,'synthetic-requests.jsonl'),'utf8')).toBe(ledgerBefore);
     expect(await world.db.rows(`select date,sleep_total_s from garmin.day_summary where user_id='${self}' and connection_id='${account}' and date in ('${prior1}','${prior2}') order by date`)).toEqual([{date:prior2,sleep_total_s:25000},{date:prior1,sleep_total_s:24000}]);
     await expect.poll(async()=> (await world.db.rows(`select count(*)::int n from garmin.evaluation_revisions where connection_id='${account}'`))[0]?.n,{timeout:120000}).toBe(4);
-    expect((await calls()).map(c=>c.scope)).toEqual(['day','7d','30d','all']);
+    expect((await calls()).map(c=>c.scope).sort()).toEqual(['day','7d','30d','all'].sort());
     // File handoff and retry are asynchronous; accelerate only this owned test queue.
     await expect.poll(async()=>{ await world.db.query(`update brain.work_items set next_attempt_at='${new Date(time-1000).toISOString()}' where kind='garmin.report' and completed_at is null and current_attempt_token is null`); if (failDocument) time+=1000; return (await world.db.rows("select count(*)::int n from brain.result_events where event='garmin.report.completed'"))[0]?.n; },{timeout:120000,interval:500}).toBe(1);
     const event=(await world.db.rows("select id,requested,subject_date::text,created_at from brain.result_events where event='garmin.report.completed'"))[0]!;

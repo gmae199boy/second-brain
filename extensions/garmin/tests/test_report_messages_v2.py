@@ -101,18 +101,25 @@ class MessageV2Test(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'snapshot mismatch'):
             messages.load_messages(Conn(), DAY, dict.fromkeys(messages.SCOPES, 1))
 
-    def test_failed_scope_has_initial_plus_five_attempts_and_terminal_result(self):
-        reservations = iter([True] * 6 + [False])
-        with patch.object(report, '_reserve_scope_attempt', side_effect=lambda *a: next(reservations)), \
+    def test_repeated_failure_class_stops_after_one_repair_and_records_terminal_result(self):
+        with patch.object(report, '_scope_retry_state', return_value=(None, False)), \
+             patch.object(report, '_reserve_scope_attempt', side_effect=[1, 2, 3, None]), \
+             patch.object(report, '_record_scope_diagnostic') as record, \
              patch.object(report, '_assert_attempt_current'), \
              patch.object(report, '_evaluate', return_value=(None, None, errors.ReportFailReason.CODEX_FAILED, None)) as evaluate:
             result = report._evaluate_with_retries(None, None, [], '7d', [], DAY)
-        self.assertIsNotNone(result[2]); self.assertEqual(evaluate.call_count, 6)
+        self.assertIsNotNone(result[2]); self.assertEqual(evaluate.call_count, 2)
+        self.assertEqual(record.call_count, 2)
+        self.assertEqual([call.args[4].feedback for call in record.call_args_list], [None, 'AGENT_EXIT'])
+        self.assertTrue(record.call_args.kwargs['terminal'])
 
     def test_success_stops_retrying_immediately_and_reuses_same_inputs(self):
-        with patch.object(report, '_reserve_scope_attempt', return_value=True), \
+        with patch.object(report, '_scope_retry_state', return_value=(None, False)), \
+             patch.object(report, '_reserve_scope_attempt', side_effect=[1, 2]), \
+             patch.object(report, '_record_scope_diagnostic') as record, \
              patch.object(report, '_assert_attempt_current'), \
              patch.object(report, '_evaluate', side_effect=[(None, None, 'failed', None), ('saved', None, None, None)]) as evaluate:
             self.assertEqual(report._evaluate_with_retries(None, None, ['fixed-snapshot'], 'day', [], DAY)[0], 'saved')
         self.assertEqual(evaluate.call_count, 2)
         self.assertTrue(all(call.args[2] == ['fixed-snapshot'] for call in evaluate.call_args_list))
+        self.assertEqual(record.call_args.args[4].code, 'SUCCESS')

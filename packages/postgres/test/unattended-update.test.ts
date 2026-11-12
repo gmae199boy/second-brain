@@ -154,7 +154,7 @@ it('core48 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하�
     const exit = await dispatch(commands, ['ext','install','--package',fileURLToPath(new URL('../../../plugins/garmin/package', import.meta.url)),'--json'], { env: k.env, clock, stdout: text => { output += text; }, stderr: () => {} });
     expect(exit, output).not.toBe(0);
     expect(['EXTENSION_LOGIN_REQUIRED', 'EXTENSION_SCHEDULER_UNAVAILABLE']).toContain(JSON.parse(output).error.code);
-    expect(await store.getExtension('garmin'), output).toMatchObject({ extension: { version: '1.2.9' } });
+    expect(await store.getExtension('garmin'), output).toMatchObject({ extension: { version: '1.2.10' } });
     expect(await store.readExtensionQuiesce('garmin'), output).toMatchObject({ owner: null });
     expect(await store.getExtensionInstallProgress('garmin')).toMatchObject({ journal: { progress: { name: 'garmin' } } });
     const progress = await store.getExtensionInstallProgress('garmin');

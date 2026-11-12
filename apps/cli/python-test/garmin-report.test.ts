@@ -85,12 +85,12 @@ it('resumes 30d/all after 7d commit, skips complete day even with pending photo,
     const sid=t.ids.next(),mid=t.ids.next(),fid=t.ids.next();
     await t.fixture.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${sid}','synthetic','report-memory','${self}','fixture',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${mid}','${sid}','report-memory','user','synthetic memory',now()); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${fid}','sha256:${'c'.repeat(64)}',0,now())`);
     const memory=()=>t.fixture.db.rows(`select s.id,m.body,f.content_hash from brain.sessions s join brain.messages m on m.session_id=s.id cross join brain.files f where s.id='${sid}' and f.id='${fid}'`);
-    const before=await memory(); await writeFile(join(t.control,'hold-30d'),'hold');
+    const before=await memory(); await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'hold-all'),'hold');
     const first=await t.enqueue(); const firstCall=await t.waitCall(first,'30d');
     await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const processRow=(await t.fixture.db.rows(`select pgid from brain.work_attempts where work_item_id='${first}'`))[0];
     killGroup(Number(processRow?.pgid)); await t.failedAttempt(first,firstCall.attempt,'died');
-    await unlink(join(t.control,'hold-30d')); await t.retryNow(first);
+    await unlink(join(t.control,'hold-30d')); await unlink(join(t.control,'hold-all')); await t.retryNow(first);
     const resumed=await t.waitCall(first,'30d',{except:firstCall.attempt}); await t.outcome(first,'succeeded');
     expect((await t.calls()).filter(c=>c.work===first && c.attempt===resumed.attempt).map(c=>c.scope).sort()).toEqual(['30d','all'].sort());
     const originals=await t.revisions(); expect(originals).toHaveLength(4);
@@ -317,35 +317,57 @@ it('model timeout quiesces descendants and stops repair while other scopes succe
 it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and all',async()=>{
   const t=await setup(false); const daemonBin=fileURLToPath(new URL('../dist/bin.js',import.meta.url));
   const daemon=spawn(process.execPath,[daemonBin,'daemon','run'],{env:{...t.env,BRAIN_TELEGRAM_BOT_TOKEN:'',BRAIN_TELEGRAM_CHAT_ID:''},stdio:'ignore'});
-  let recovery:ReturnType<typeof runDaemon>|undefined, modelPid=0, grandchild=0;
+  let recovery:ReturnType<typeof runDaemon>|undefined, grandchild=0, work='';
+  const ownedGroups=new Set<number>(), ownedModels=new Map<number,number>();
+  const capture=(call:Call)=>{ownedGroups.add(call.pgid);ownedModels.set(call.pid,call.pgid);return call;};
   const recoveryController=new AbortController();
   try {
-    await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'grandchild-30d'),'yes');
-    const work=await t.enqueue(); const call=await t.waitCall(work,'30d');
+    await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'hold-all'),'hold'); await writeFile(join(t.control,'grandchild-30d'),'yes');
+    work=await t.enqueue(); const [call,allCall]=await Promise.all([t.waitCall(work,'30d').then(capture),t.waitCall(work,'all').then(capture)]);
+    expect(allCall.pgid).toBe(call.pgid);
     await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const before=await t.revisions();
-    modelPid=call.pid;
     await expect.poll(()=>readFile(join(t.control,`child-${t.account}-30d`),'utf8').then(Number).catch(()=>0),{timeout:15000}).toBeGreaterThan(0);
     grandchild=Number(await readFile(join(t.control,`child-${t.account}-30d`),'utf8'));
     const exited=new Promise<void>(resolve=>daemon.once('exit',()=>resolve())); daemon.kill('SIGKILL'); await exited;
     recovery=runDaemon({home:t.home,env:t.env,clock:systemClock,idGen:t.ids,signal:recoveryController.signal,drainPauseMs:25,heartbeatMs:100,supervisor:{pollMs:25,cancelPollMs:25,cancelGraceMs:200,channelTestEndpoint:t.channelTestEndpoint}});
-    await expect.poll(()=>[pidAlive(modelPid),pidAlive(grandchild)],{timeout:45000}).toEqual([false,false]);
+    await expect.poll(()=>[pidAlive(call.pid),pidAlive(allCall.pid),pidAlive(grandchild)],{timeout:45000}).toEqual([false,false,false]);
     await expect.poll(async()=> (await t.fixture.db.rows(`select outcome from brain.work_attempts where token='${call.attempt}'`))[0]?.outcome,{timeout:45000}).toBe('died');
     expect((await t.fixture.db.rows(`select finished_at from brain.work_attempts where token='${call.attempt}'`))[0]?.finished_at).toBeTruthy();
     expect(await t.revisions()).toEqual(before);
-    const resumed=await t.waitCall(work,'30d',{except:call.attempt});
+    const resumed=await t.waitCall(work,'30d',{except:call.attempt}).then(capture);
     expect((await t.calls()).filter(row=>row.work===work && row.attempt===call.attempt).map(row=>row.scope).sort()).toEqual(['day','7d','30d','all'].sort());
-    await unlink(join(t.control,'hold-30d')); await unlink(join(t.control,'grandchild-30d'));
+    await unlink(join(t.control,'hold-30d')); await unlink(join(t.control,'hold-all')); await unlink(join(t.control,'grandchild-30d'));
     await t.outcome(work,'succeeded');
     expect((await t.calls()).filter(row=>row.work===work && row.attempt===resumed.attempt).map(row=>row.scope).sort()).toEqual(['30d','all'].sort());
     const after=await t.revisions(); expect(after).toHaveLength(4);
     for(const row of before) expect(after).toContainEqual(row);
   } finally {
-    recoveryController.abort(); if(recovery) await recovery;
-    if(daemon.exitCode===null && daemon.signalCode===null) daemon.kill('SIGKILL');
-    if(modelPid && pidAlive(modelPid)) process.kill(modelPid,'SIGKILL');
-    if(grandchild && pidAlive(grandchild)) process.kill(grandchild,'SIGKILL');
-    await t.close();
+    recoveryController.abort();
+    try {
+      if(recovery) await recovery;
+    } finally {
+      try {
+        if(daemon.exitCode===null && daemon.signalCode===null) {
+          const stopped=new Promise<void>(resolve=>daemon.once('exit',()=>resolve()));
+          daemon.kill('SIGKILL'); await stopped;
+        }
+      } finally {
+        try {
+          for(const call of (await t.calls()).filter(call=>call.work===work)) capture(call);
+          if(work) for(const row of await t.fixture.db.rows(`select pgid from brain.work_attempts where work_item_id='${work}' and pgid is not null`))
+            ownedGroups.add(Number(row.pgid));
+        } finally {
+          try {
+            for(const group of ownedGroups) {
+              if(group>0 && (pidAlive(group) || [...ownedModels].some(([pid,pgid])=>pgid===group && pidAlive(pid)))) killGroup(group);
+            }
+            if(grandchild && pidAlive(grandchild)) process.kill(grandchild,'SIGKILL');
+            await expect.poll(()=>[...ownedGroups,...ownedModels.keys(),...(grandchild?[grandchild]:[])].filter(pid=>pidAlive(pid)),{timeout:15000}).toEqual([]);
+          } finally { await t.close(); }
+        }
+      }
+    }
   }
 },240000);
 
