@@ -476,7 +476,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   else expect(result.code,result.stdout+result.stderr).toBe(0);
   const after = await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`);
   expect(after.slice(0,8)).toEqual(history);
-  expect(after.map(row=>row.version)).toEqual(Array.from({length:name==='garmin'?20:9},(_,i)=>i+1));
+  expect(after.map(row=>row.version)).toEqual(Array.from({length:name==='garmin'?21:9},(_,i)=>i+1));
   expect(await k.db.rows('select * from brain.extension_quiesce')).toEqual([]);
   const progress = await k.db.rows(`select progress from brain.extension_install_progress where name='${name}'`);
   expect(progress[0]?.progress).not.toHaveProperty('replacement'); expect(progress[0]?.progress).not.toHaveProperty('transition');
