@@ -54,7 +54,8 @@ import time
 from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -283,6 +284,30 @@ class _Session:
         iso_day = day.isoformat()
         return self._fetch(endpoint, lambda: call(self._client, iso_day))
 
+    def fetch_range(self, endpoint: str, start: date, end: date) -> RawResponse:
+        """설치 라이브러리 0.3.20의 기간 API. 각 HTTP 페이지도 호출 보호를 거친다."""
+        first, last = start.isoformat(), end.isoformat()
+        if start > end or (end - start).days >= 7:
+            raise ValueError('invalid range')
+        if endpoint == 'daily_weigh_ins':
+            return self._fetch(endpoint, lambda: self._client.get_weigh_ins(first, last))
+        if endpoint == 'body_battery':
+            return self._fetch(endpoint, lambda: self._client.get_body_battery(first, last))
+        if endpoint != 'activities_by_date':
+            raise ValueError('unsupported range endpoint')
+        activities = []
+        # 라이브러리 get_activities_by_date와 같은 20행 페이지를 사용하되 각 페이지를 보호한다.
+        for offset in range(0, 20000, 20):
+            try:
+                page = self._fetch(endpoint, lambda: self._client.connectapi(self._client.garmin_connect_activities,
+                    params={'startDate': first, 'endDate': last, 'start': str(offset), 'limit': '20'}))
+            except errors.NoData:
+                return RawResponse(endpoint, activities, LIBRARY_VERSION)
+            if not isinstance(page.payload, list):
+                raise errors.Transient('invalid activity range')
+            activities.extend(page.payload)
+        raise errors.Transient('activity range pagination limit')
+
     def fetch_activity(self, endpoint: str, activity_id: int) -> RawResponse:
         call = _ACTIVITY_CALLS.get(endpoint)
         if call is None:
@@ -346,6 +371,53 @@ class _Session:
             self._blocked = reason
             _record_block(self._tokenstore, self._cfg, reason)
         raise domain_error from None
+
+
+def split_range(endpoint, payload, days, zone):
+    """기간 응답을 일별 기존 원문 모양으로 분할한다. 날짜 불명 행을 버리지 않는다."""
+    result = {day: [] for day in days}
+    if endpoint == 'daily_weigh_ins':
+        if not isinstance(payload, dict) or not isinstance(payload.get('dateWeightList'), list):
+            raise errors.Transient('invalid weight range')
+        rows = payload['dateWeightList']
+    elif endpoint in ('activities_by_date', 'body_battery') and isinstance(payload, list):
+        rows = payload
+    else:
+        raise errors.Transient('invalid range shape')
+    for row in rows:
+        if not isinstance(row, dict):
+            raise errors.Transient('invalid range row')
+        if endpoint == 'activities_by_date':
+            stamp = row.get('startTimeLocal')
+        elif endpoint == 'body_battery':
+            stamp = row.get('date')
+        else:
+            stamp = row.get('calendarDate')
+            if stamp is None:
+                moment = row.get('timestampGMT', row.get('date'))
+                try:
+                    if isinstance(moment, (int, float)) and not isinstance(moment, bool):
+                        stamp = datetime.fromtimestamp(moment / 1000, timezone.utc).astimezone(ZoneInfo(zone)).date().isoformat()
+                    elif isinstance(moment, str):
+                        parsed = datetime.fromisoformat(moment.replace('Z', '+00:00'))
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        stamp = parsed.astimezone(ZoneInfo(zone)).date().isoformat()
+                except (ValueError, TypeError, OverflowError, OSError):
+                    raise errors.Transient('invalid weight date') from None
+        try:
+            key = stamp[:10]
+            if date.fromisoformat(key).isoformat() != key:
+                raise ValueError('invalid date')
+        except (ValueError, TypeError):
+            raise errors.Transient('invalid range date') from None
+        # 범위 밖 응답은 정상 완료로 확정하지 않고 재시도할 수 있게 둔다.
+        if key not in result:
+            raise errors.Transient('range row outside requested days')
+        result[key].append(row)
+    if endpoint == 'daily_weigh_ins':
+        return {day: {**payload, 'dateWeightList': rows} if rows else None for day, rows in result.items()}
+    return {day: rows or None for day, rows in result.items()}
 
 
 def _check_payload(endpoint: str, payload: object) -> errors.DomainError | None:

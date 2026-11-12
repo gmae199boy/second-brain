@@ -94,6 +94,7 @@ describe('runtimeChecks', () => {
       'last-hook',
       'spool',
       'drive-refresh-lock',
+      'garmin-backlog',
       'daemon',
     ]);
   });
@@ -103,7 +104,7 @@ describe('runtimeChecks', () => {
 
     const checks = await report({ home, runNode: nodeSaying(NODE_FLOOR) });
 
-    const failed = [...checks.values()].filter((check) => check.status !== 'ok' && check.id !== 'daemon');
+    const failed = [...checks.values()].filter((check) => check.status !== 'ok' && check.id !== 'daemon' && check.id !== 'garmin-backlog');
     expect(failed, JSON.stringify(failed)).toEqual([]);
     expect(checks.get('daemon')).toMatchObject({ status: 'warn' });
     expect(checks.get('config')?.detail).toBe(configFilePath(home));
@@ -995,4 +996,14 @@ it('warns only when a PG home still has timezone in its file', async () => {
   expect(await check()).toMatchObject({ status: 'ok' });
   await writeConfig(home, { timezone: 'Europe/Paris' });
   expect(await check()).toMatchObject({ status: 'ok' });
+});
+
+it('Garmin 미수집 진단은 미설치 시 skip하고 집계 확인 실패를 warn으로 표시한다', async () => {
+  const {garminBacklogCheck}=await import('../src/doctor/checks.js');
+  const {readConfig}=await import('../src/config/codec.js');
+  const home=await installedHome();
+  expect(await garminBacklogCheck(home,await readConfig(home))).toMatchObject({id:'garmin-backlog',status:'skip'});
+  await mkdir(join(home,'extensions/garmin/src'),{recursive:true});
+  await writeFile(join(home,'extensions/garmin/src/doctor_backlog.py'),'# synthetic');
+  expect(await garminBacklogCheck(home,await readConfig(home))).toEqual({id:'garmin-backlog',status:'warn',detail:'Garmin 미수집 상태를 확인하지 못했습니다'});
 });

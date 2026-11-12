@@ -1,5 +1,6 @@
 """Supervised input and fail-closed boundary; execution deferred to 21.8."""
 import contextlib
+from datetime import date
 import json
 import sys
 import unittest
@@ -51,6 +52,8 @@ class EnvelopeTest(unittest.TestCase):
             def fetchone(self): return ('UTC',)
         class Conn:
             def execute(self, sql, args):
+                if "key='collect_backlog'" in sql:
+                    return type('R', (), {'fetchone':lambda self:None})()
                 if 'timezone' in sql: self.args = args; return Result()
                 if 'max(id)' in sql: return type('R', (), {'fetchone': lambda self: (0,)})()
                 return type('R', (), {'fetchone': lambda self: None})()
@@ -86,6 +89,18 @@ class EnvelopeTest(unittest.TestCase):
 
 
 class EntryTest(unittest.TestCase):
+    def setUp(self):
+        for patcher in (patch('garmin_pipeline.backlog.snapshot', return_value={
+                'remaining_endpoints':2,'remaining_activities':1,'remaining_dates':1,'unplannable':0}),
+                patch.object(runtime.collect, '_history_start', return_value=date(2026,1,1))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def summary(self, status, errors):
+        return {'status':status,'runs':1,'errors':errors,'execution_status':status,'backlog_status':'partial',
+            'remaining_endpoints':2,'remaining_activities':1,'remaining_dates':1,'unplannable':0,
+            'deferred_dates':0,'deferred_endpoints':0,'deferred_first_call':0}
+
     def test_entry_classifies_without_exposing_exception_text(self):
         import collect as entry
         import io
@@ -119,6 +134,8 @@ class EntryTest(unittest.TestCase):
     def test_final_status_and_failure_count_are_returned(self):
         class Conn:
             def execute(self, sql, args):
+                if "key='collect_backlog'" in sql:
+                    return type('R', (), {'fetchone':lambda self:None})()
                 value = ('UTC',) if 'timezone' in sql else ((4,) if 'max(id)' in sql else ((5, 'partial') if 'select id, status' in sql else (2,)))
                 return type('R', (), {'fetchone': lambda self: value})()
         @contextlib.contextmanager
@@ -126,13 +143,15 @@ class EntryTest(unittest.TestCase):
         @contextlib.contextmanager
         def transaction(conn): yield conn
         with patch.object(store, 'write_session', session), patch.object(store, 'transaction', transaction), patch.object(runtime.collect, 'run'):
-            self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), {'status': 'partial', 'runs': 1, 'errors': 2})
+            self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), self.summary('partial',2))
 
     def test_all_queries_are_fenced_and_collect_is_outside_transaction(self):
         class Conn:
             depth = 0
             def execute(self, sql, args):
                 if self.depth != 1: raise AssertionError('query outside transaction')
+                if "key='collect_backlog'" in sql:
+                    return type('R', (), {'fetchone':lambda self:None})()
                 value = ('UTC',) if 'timezone' in sql else ((4,) if 'max(id)' in sql else ((5, 'success') if 'select id, status' in sql else (0,)))
                 return type('R', (), {'fetchone': lambda self: value})()
         conn = Conn()
@@ -145,13 +164,15 @@ class EntryTest(unittest.TestCase):
             finally: value.depth -= 1
         def collect_run(*args, **kwargs): self.assertEqual(conn.depth, 0)
         with patch.object(store, 'write_session', session), patch.object(store, 'transaction', transaction), patch.object(runtime.collect, 'run', side_effect=collect_run):
-            self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), {'status': 'success', 'runs': 1, 'errors': 0})
+            self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), self.summary('success',0))
 
     def test_domain_statuses_map_to_fixed_public_vocabulary(self):
         for status, public in [('success', 'success'), ('partial', 'partial'), ('auth_failed', 'auth_required'),
                                ('rate_limited', 'blocked'), ('blocked_403', 'blocked'), ('skipped_blocked', 'blocked'), ('error', 'error')]:
             class Conn:
                 def execute(self, sql, args):
+                    if "key='collect_backlog'" in sql:
+                        return type('R', (), {'fetchone':lambda self:None})()
                     value = ('UTC',) if 'timezone' in sql else ((4,) if 'max(id)' in sql else ((5, status) if 'select id, status' in sql else (2,)))
                     return type('R', (), {'fetchone': lambda self: value})()
             @contextlib.contextmanager
@@ -159,9 +180,16 @@ class EntryTest(unittest.TestCase):
             @contextlib.contextmanager
             def transaction(conn): yield conn
             with self.subTest(status=status), patch.object(store, 'write_session', session), patch.object(store, 'transaction', transaction), patch.object(runtime.collect, 'run'):
-                self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), {'status': public, 'runs': 1, 'errors': 2})
+                self.assertEqual(json.loads(runtime.run(environment(), port_factory=lambda *args, **kwargs: None)), self.summary(public,2))
 
 class ScheduledRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        for patcher in (patch('garmin_pipeline.backlog.snapshot', return_value={
+                'remaining_endpoints':0,'remaining_activities':0,'remaining_dates':0,'unplannable':0}),
+                patch.object(runtime.collect, '_history_start', return_value=date(2026,1,1))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def scheduled(self):
         env = environment()
         env.update(BRAIN_OCCURRENCES='["2026-01-02T02:00:00.000+00:00"]', BRAIN_RANGE_FROM='2026-01-02', BRAIN_RANGE_TO='2026-01-02')
@@ -172,6 +200,8 @@ class ScheduledRuntimeTest(unittest.TestCase):
         for status in ('success', 'partial', 'rate_limited', 'blocked_403', 'auth_failed', 'skipped_blocked', 'error', None):
             class Conn:
                 def execute(self, sql, args):
+                    if "key='collect_backlog'" in sql:
+                        return type('R', (), {'fetchone':lambda self:None})()
                     value = ('UTC',) if 'timezone' in sql else ((4,) if 'max(id)' in sql else ((5, status) if status is not None else None) if 'select id, status' in sql else ((5, 'success') if status == 'success' else None) if 'collect_work_runs w join' in sql else (0,))
                     return type('R', (), {'fetchone': lambda self: value})()
             @contextlib.contextmanager
@@ -190,6 +220,8 @@ class ScheduledRuntimeTest(unittest.TestCase):
         for failure, pending, unprocessed in ((True, False, []), (False, True, []), (False, False, ['item'])):
             class Conn:
                 def execute(self, sql, args):
+                    if "key='collect_backlog'" in sql:
+                        return type('R', (), {'fetchone':lambda self:None})()
                     value = ('UTC',) if 'timezone' in sql else ((4,) if 'max(id)' in sql else ((5, 'success') if 'select id, status' in sql or 'collect_work_runs w join' in sql else ((failure,) if 'normalize_result' in sql else ((pending,) if 'day_values_pending' in sql else (0,)))))
                     return type('R', (), {'fetchone': lambda self: value})()
             @contextlib.contextmanager
@@ -207,6 +239,8 @@ class ScheduledRuntimeTest(unittest.TestCase):
         class Conn:
             prior = (5, 'success')
             def execute(self, sql, args):
+                if "key='collect_backlog'" in sql:
+                    return type('R', (), {'fetchone':lambda self:None})()
                 if 'collect_work_runs w join' in sql:
                     self.args = args
                     value = self.prior
