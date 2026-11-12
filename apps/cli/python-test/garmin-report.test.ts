@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { copyFile, chmod, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, chmod, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
@@ -29,6 +29,7 @@ async function setup(startDaemon=true) {
   const manifest=JSON.parse(await readFile(join(extension,'manifest.json'),'utf8'));
   expect(manifest.work).toContainEqual(expect.objectContaining({kind:'garmin.report',entry:'src/report.py',execution:'supervised'}));
   expect(manifest.work).toContainEqual(expect.objectContaining({kind:'garmin.report_regenerate',entry:'src/report.py',execution:'supervised'}));
+  await appendFile(join(extension,'src/garmin_pipeline/report.py'), '\n' + await readFile(join(root,'../model_environment.py'),'utf8'));
   const bin=join(home,'fake-bin'), control=join(extension,'report-fixture');
   await mkdir(bin,{recursive:true}); await mkdir(control,{recursive:true});
   await copyFile(join(root,'codex'),join(bin,'codex')); await chmod(join(bin,'codex'),0o700);
@@ -458,3 +459,31 @@ it('저장된 과거 평가를 분석 없이 그래프·문서와 발신하고 �
     expect(await t.fixture.db.rows(`select count(*)::int n from brain.file_requests where source='garmin'`)).toEqual([{ n: 2 }]);
   } finally { await t.close(); }
 }, 180000);
+
+it('감독자의 Claude 선택·로그인 위치·네 기간과 custom 분석을 가짜 CLI로 연결한다', async()=>{
+  const t=await setup(false);
+  let daemon: Promise<unknown> | undefined;
+  try {
+    const executable=join(t.home,'fake-bin','claude'), login=join(t.home,'claude-login');
+    await mkdir(login);
+    await copyFile(join(root,'claude'),executable); await chmod(executable,0o700);
+    for (const [key,value,userId] of [
+      ['agent.claude_path',executable,null], ['garmin.analysis_agent','claude',self],
+      ['garmin.analysis_model','sonnet',self], ['garmin.analysis_reasoning_effort','high',self],
+    ] as const) await t.store.setSetting({userId,key,value,updatedAt:new Date()});
+    daemon=runDaemon({home:t.home,env:{...t.env,CLAUDE_CONFIG_DIR:login,ANTHROPIC_API_KEY:'synthetic-private'},
+      clock:systemClock,idGen:t.ids,signal:t.controller.signal,drainPauseMs:25,heartbeatMs:100,
+      supervisor:{pollMs:25,channelTestEndpoint:t.channelTestEndpoint}});
+    const work=await t.enqueue(); await t.outcome(work,'succeeded');
+    const custom=await t.fixture.run(['ext','run','garmin','period-analysis','--target',t.account,
+      '--input',JSON.stringify({start_date:'2026-01-01',end_date:'2026-01-03'}),'--json']);
+    expect(custom.code,custom.stdout+custom.stderr).toBe(0);
+    await t.outcome(String(custom.body.data.work_id),'succeeded');
+    const calls=(await readFile(join(t.control,'claude-calls.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+    expect(calls.map(call=>call.scope)).toEqual(['day','7d','30d','all','custom']);
+    for (const call of calls) expect(call).toMatchObject({config_dir:login,model:'sonnet',effort:'high'});
+    expect(new Set(calls.map(call=>call.cwd)).size).toBe(5);
+    expect(await t.fixture.db.rows('select distinct model from garmin.evaluation_revisions')).toEqual([{model:'claude:sonnet'}]);
+    expect(await t.fixture.db.rows('select distinct model from garmin.period_evaluations')).toEqual([{model:'claude:sonnet'}]);
+  } finally {t.controller.abort(); if(daemon) await daemon; await t.close();}
+},180000);

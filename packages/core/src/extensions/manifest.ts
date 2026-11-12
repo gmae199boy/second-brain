@@ -78,10 +78,11 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
     if (!Array.isArray(v['settings'])) return invalid;
     const seen = new Set<string>();
     for (const setting of v['settings']) {
-      if (!object(setting) || !Object.keys(setting).every(k => ['key', 'type', 'required', 'secret', 'default', 'machine', 'scope'].includes(k)) ||
+      if (!object(setting) || !Object.keys(setting).every(k => ['key', 'type', 'required', 'secret', 'default', 'machine', 'scope', 'enum'].includes(k)) ||
           typeof setting['key'] !== 'string' || !setting['key'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/.test(setting['key']) || seen.has(setting['key']) ||
           !['string', 'number', 'boolean'].includes(setting['type'] as string) || !Array.isArray(setting['required']) ||
           setting['required'].some((stage: unknown) => !['connect', 'auth', 'work'].includes(stage as string)) || new Set(setting['required']).size !== setting['required'].length ||
+          (setting['enum'] !== undefined && (setting['type'] !== 'string' || setting['secret'] === true || !Array.isArray(setting['enum']) || !setting['enum'].length || setting['enum'].some((value: unknown) => typeof value !== 'string') || new Set(setting['enum']).size !== setting['enum'].length)) ||
           (setting['scope'] !== undefined && !['user', 'global'].includes(setting['scope'] as string)) ||
           (setting['secret'] !== undefined && typeof setting['secret'] !== 'boolean') || (setting['secret'] === true && setting['type'] !== 'string') ||
           (setting['default'] !== undefined && typeof setting['default'] !== 'string') ||

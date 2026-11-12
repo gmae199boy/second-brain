@@ -1,4 +1,4 @@
-import { detectCodexPath } from './executable.js';
+import { detectAnalysisPaths } from './executable.js';
 import { extensionTransitions } from './extension-transition.js';
 import { randomUUID } from 'node:crypto';
 import { prepareExtensionPackage, checkPackageCore, checkInstalledCore, digestPackageFiles, needsPython, observePackage, readPackageObservation } from './extension-package.js';
@@ -126,7 +126,7 @@ export function extensionRuntime({ home, env, config, clock, settingsStore }: { 
     finally { await file.close(); }
   }
   return {
-    prepareAnalysisAgent: async name => name === 'garmin' && settingsStore ? detectCodexPath(settingsStore, env) : undefined,
+    prepareAnalysisAgent: async name => name === 'garmin' && settingsStore ? detectAnalysisPaths(settingsStore, env) : undefined,
     validateSchema, validateValue, installedDirectory: name => join(home, 'extensions', name),
     async installedManifest(name) { if (!isExtensionName(name)) throw new Error('invalid extension'); return safeFile(['extensions', name, 'manifest.json']); },
     // [ASSUMPTION] 공개 보고 파일의 고정 이름은 public.json이다.

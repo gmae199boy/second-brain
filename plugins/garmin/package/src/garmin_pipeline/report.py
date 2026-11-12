@@ -22,6 +22,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Protocol
 
+from garmin_pipeline.analysis_agent import (AnalysisRequest, CodexAdapter, ClaudeAdapter,
+    analysis_environment, bounded_json, validate_selection, MAX_OUTPUT_BYTES, PreparationError)
+
 from garmin_pipeline import (
     body,
     analysis_output,
@@ -59,6 +62,16 @@ def codex_executable(env=None) -> str:
             "ANALYSIS_AGENT_NOT_FOUND: brain config set agent.codex_path <절대경로>로 실행 파일을 설정하세요"
         )
     return value
+def analysis_executable(provider, env=None):
+    actual = os.environ if env is None else env
+    if provider == 'codex':
+        return codex_executable(actual)
+    value = actual.get('BRAIN_ANALYSIS_EXECUTABLE', '') if actual.get('BRAIN_ANALYSIS_AGENT') == provider else ''
+    if provider != 'claude' or not value or not Path(value).is_absolute() or not Path(value).is_file() or not os.access(value, os.X_OK):
+        raise AnalysisAgentNotFound('ANALYSIS_AGENT_NOT_FOUND: brain config set agent.claude_path <절대경로>로 실행 파일을 설정하세요')
+    return value
+
+
 CODEX_SKILL_PROMPT = "$garmin-daily-analysis"
 """프롬프트 첫 줄(skill 호출). 셸을 거치지 않으므로 그대로 넘어간다."""
 CODEX_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
@@ -74,6 +87,10 @@ _STRIPPED_ENV = ("OPENAI_API_KEY", "CODEX_API_KEY")
 """codex 하위 프로세스 env에서 빼는 키(API 키 금지, ChatGPT 로그인만 쓴다)."""
 
 FALLBACK_TEXT: dict[errors.ReportFailReason, str] = {
+    errors.ReportFailReason.AGENT_CAPABILITY_UNSUPPORTED: "분석 실행기의 지원 기능을 확인할 수 없다",
+    errors.ReportFailReason.AGENT_LOGIN_REQUIRED: "분석 실행기에 구독 로그인이 필요하다",
+    errors.ReportFailReason.AGENT_TIMEOUT: "분석 시간이 제한을 넘었다",
+    errors.ReportFailReason.AGENT_FAILED: "분석 실행기가 실패했다",
     errors.ReportFailReason.CODEX_TIMEOUT: "분석 시간이 제한을 넘었다",
     errors.ReportFailReason.CODEX_FAILED: "분석 실행기가 실패했다",
     errors.ReportFailReason.OUTPUT_INVALID: "분석 결과가 정해진 형식이 아니다",
@@ -199,6 +216,9 @@ def codex_argv(
         codex_prompt(images if inputs is None else inputs, intake=intake, scope=scope)
         + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else ""),
     ]
+    if intake and cfg.report_model is None:
+        index = argv.index("-m")
+        del argv[index:index + 2]
     if images:
         argv += ["-i", *images]
     return argv
@@ -220,7 +240,7 @@ def _trap_sigterm() -> tuple[bool, Any]:
 
 
 def _codex_env() -> dict[str, str]:
-    return {key: value for key, value in os.environ.items() if key not in _STRIPPED_ENV}
+    return analysis_environment("codex")
 
 
 def _end_child(proc: subprocess.Popen[bytes]) -> None:
@@ -311,16 +331,14 @@ def _read_output(output: Path, schema_path: Path, *, measurements=None) -> Daily
     """`-o` 파일을 스키마로 검증해 `DailyAnalysis`. 맞지 않으면 `WriterFailed(output_invalid)`."""
     invalid = errors.ReportFailReason.OUTPUT_INVALID
     try:
-        raw = output.read_bytes()
+        data = bounded_json(output)
     except FileNotFoundError:
         raise WriterFailed(invalid, "출력 파일 없음") from None
     except OSError as error:
         raise WriterFailed(
             invalid, f"출력 파일을 읽지 못함: {type(error).__name__}"
         ) from None
-    try:
-        data = json.loads(raw.decode("utf-8"))
-    except ValueError:
+    except (ValueError, RecursionError, UnicodeError):
         raise WriterFailed(invalid, "출력이 JSON이 아님") from None
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     problem = _schema_error(schema, data)
@@ -348,7 +366,7 @@ def _read_output(output: Path, schema_path: Path, *, measurements=None) -> Daily
     )
 
 
-class CodexWriter:
+class AnalysisWriter:
     """`codex exec`로 skill `garmin-daily-analysis`를 실행해 하루 분석을 쓰는 작성기(FR34·AD-16).
 
     `executable`은 기본 `BRAIN_CODEX_PATH`(쓸 때 읽는다), `timeout_seconds`는 기본
@@ -359,7 +377,10 @@ class CodexWriter:
         self, executable: str | None = None, timeout_seconds: float | None = None,
         progress: Callable[[], None] | None = None,
         body_handler: Callable[..., Any] | None = None,
+        provider: str = "codex", intake_executable: str | None = None,
     ) -> None:
+        self.provider = provider
+        self.intake_executable = intake_executable
         self.body_handler = body_handler
         self.executable = executable
         self.timeout_seconds = timeout_seconds
@@ -370,6 +391,10 @@ class CodexWriter:
 
     def intake(self, cfg: config.Config, inputs: list[str]) -> dict:
         """Execute body intake before exporting raw report input."""
+        if self.provider != "codex":
+            # [ASSUMPTION] Claude 분석을 선택하면 intake는 Codex 로그인 기본 모델을 쓴다.
+            return CodexWriter(executable=self.intake_executable, timeout_seconds=self.timeout_seconds,
+                progress=self.progress, body_handler=self.body_handler).intake(replace(cfg, report_model=None, report_reasoning_effort="high"), inputs)
         return self._execute(cfg, inputs, intake=True)
 
     def period(
@@ -386,16 +411,20 @@ class CodexWriter:
         intake: bool,
         scope: str | None = None,
     ):
-        failed = errors.ReportFailReason.CODEX_FAILED
-        if cfg.report_model is None or not cfg.report_model.strip():
-            raise WriterFailed(failed, "report_model 미설정")
+        failed = errors.ReportFailReason.CODEX_FAILED if self.provider == 'codex' else errors.ReportFailReason.AGENT_FAILED
+        if not intake:
+            try:
+                validate_selection(self.provider, cfg.report_model, cfg.report_reasoning_effort)
+            except ValueError:
+                raise WriterFailed(failed, 'provider model effort mismatch') from None
         timeout = (
             cfg.report_codex_timeout_minutes * 60
             if self.timeout_seconds is None
             else self.timeout_seconds
         )
-        executable = codex_executable() if self.executable is None else self.executable
+        executable = analysis_executable(self.provider) if self.executable is None else self.executable
         images = codex_images(inputs) if intake else []
+        prepared_at = time.monotonic() if self.provider == "claude" else None
         try:
             cfg.data_dir.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
             workdir = Path(tempfile.mkdtemp(prefix=".codex-", dir=cfg.data_dir))
@@ -421,24 +450,33 @@ class CodexWriter:
             )
             with importlib.resources.as_file(resource) as schema_path:
                 output = workdir / CODEX_OUTPUT_FILENAME
-                argv = codex_argv(
-                    cfg,
-                    schema_path,
-                    output,
-                    images,
-                    executable,
-                    inputs=images if intake else inputs,
-                    intake=intake,
-                    scope=scope,
-                    output_contract=None if intake else schema_path.name,
-                )
-                events = workdir / "events.jsonl"
-                with events.open("wb") as stream:
-                    self._run(cfg, argv, timeout, stdout=stream, progress=self.progress,
-                              body_handler=self.body_handler if intake else None, workdir=workdir)
+                output.touch(mode=0o600)
+                request = AnalysisRequest(cfg, inputs, scope, schema_path, output, workdir, executable)
+                adapter = CodexAdapter() if self.provider == 'codex' else ClaudeAdapter()
+                try:
+                    if intake:
+                        argv, prompt = codex_argv(cfg, schema_path, output, images, executable,
+                            inputs=images, intake=True), None
+                    else:
+                        argv, prompt = adapter.prepare(request)
+                    events = workdir / "events.jsonl"
+                    with open(events, "wb", opener=lambda name, flags: os.open(name, flags, 0o600)) as stream:
+                        options = {} if self.provider == 'codex' else {'provider': self.provider, 'cwd': workdir, 'stdin_path': prompt}
+                        remaining = timeout if prepared_at is None else timeout - (time.monotonic() - prepared_at)
+                        if remaining <= 0:
+                            raise WriterFailed(errors.ReportFailReason.AGENT_TIMEOUT)
+                        self._run(cfg, argv, remaining, stdout=stream, progress=self.progress,
+                                  body_handler=self.body_handler if intake else None, workdir=workdir, **options)
+                    if events.stat().st_size > MAX_OUTPUT_BYTES:
+                        raise ValueError("agent output too large")
+                    usage = adapter.decode(request, events)
+                except PreparationError as error:
+                    raise WriterFailed(error.code) from None
+                except (ValueError, OSError, subprocess.TimeoutExpired, RecursionError):
+                    raise WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, 'agent result or capability invalid') from None
                 result = _read_output(output, schema_path, measurements=measurements)
                 if isinstance(result, DailyAnalysis):
-                    result = replace(result, usage=_usage(events))
+                    result = replace(result, usage=usage)
                 return result
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -453,11 +491,14 @@ class CodexWriter:
         progress: Callable[[], None] | None = None,
         body_handler: Callable[..., Any] | None = None,
         workdir: Path | None = None,
+        provider: str = "codex", cwd: Path | None = None, stdin_path: Path | None = None,
     ) -> None:
         """Wait for Codex and serve its scoped body requests on the host."""
         group = _owned_process_group()
         ipc = None
-        env = _codex_env()
+        env = _codex_env() if provider == "codex" else analysis_environment(provider)
+        if body_handler is not None and "BRAIN_EXTENSION_HOME" in os.environ:
+            env["BRAIN_EXTENSION_HOME"] = os.environ["BRAIN_EXTENSION_HOME"]
         if body_handler is not None:
             if workdir is None: raise ProcessCleanupError("missing model scope")
             ipc = workdir / "body-ipc"
@@ -465,14 +506,15 @@ class CodexWriter:
             env["BRAIN_BODY_IPC_DIR"] = str(ipc)
         else:
             env.pop("BRAIN_BODY_IPC_DIR", None)
-        failed = errors.ReportFailReason.CODEX_FAILED
+        failed = errors.ReportFailReason.CODEX_FAILED if provider == "codex" else errors.ReportFailReason.AGENT_FAILED
         started = time.monotonic()
         try:
-            proc = subprocess.Popen(
+            with (stdin_path.open("rb") if stdin_path else contextlib.nullcontext(subprocess.DEVNULL)) as input_stream:
+                proc = subprocess.Popen(
                 argv,
-                cwd=body.runtime_root(cfg),
+                cwd=cwd or body.runtime_root(cfg),
                 env=env,
-                stdin=subprocess.DEVNULL,
+                stdin=input_stream,
                 stdout=stdout,
                 stderr=subprocess.DEVNULL,
                 start_new_session=False,
@@ -491,6 +533,8 @@ class CodexWriter:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
+                if hasattr(stdout, "tell") and stdout.tell() > MAX_OUTPUT_BYTES:
+                    raise WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, "agent output too large")
                 if ipc is not None:
                     if proc.poll() is not None:
                         returncode = proc.returncode
@@ -520,16 +564,32 @@ class CodexWriter:
         if returncode is None:
             logger.warning("codex 시간 초과: %.0f초 제한, %.1f초", timeout, elapsed)
             raise WriterFailed(
-                errors.ReportFailReason.CODEX_TIMEOUT, f"{timeout:.0f}초 제한"
+                errors.ReportFailReason.CODEX_TIMEOUT if provider == "codex" else errors.ReportFailReason.AGENT_TIMEOUT, f"{timeout:.0f}초 제한"
             )
         logger.info("codex 끝: exit=%d elapsed=%.1fs", returncode, elapsed)
         if returncode != 0:
             raise WriterFailed(failed, f"exit={returncode}")
 
 
+class CodexWriter(AnalysisWriter):
+    """기존 Codex 작성기 공개 이름을 보존한다."""
+
+
+def analysis_writer(cfg, env=None, *, body_handler=None):
+    actual = os.environ if env is None else env
+    if cfg.analysis_agent == 'codex':
+        return CodexWriter(executable=codex_executable(actual), **({"body_handler": body_handler} if body_handler is not None else {}))
+    return AnalysisWriter(provider=cfg.analysis_agent, executable=analysis_executable(cfg.analysis_agent, actual),
+                          intake_executable=actual.get('BRAIN_CODEX_PATH'), body_handler=body_handler)
+
+
+def stored_model(cfg):
+    """평가별 provider 식별을 기존 model 문자열에 보존한다(스키마 변경 없음)."""
+    return (f"claude:{cfg.report_model}" if cfg.analysis_agent == 'claude' else cfg.report_model) or ""
+
+
 def default_writer(cfg: config.Config) -> DailyWriter:
-    """CLI가 쓰는 작성기: `CodexWriter()`."""
-    return CodexWriter()
+    return analysis_writer(cfg)
 
 
 # --- 하루 분석 ----------------------------------------------------------------------------------
@@ -919,7 +979,7 @@ def run(
             **{scope: value.split(': ', 1)[-1] for scope, value in zip(('7d', '30d', 'all'), period_summaries)},
         })
         totals = [u for u in session_usage if u is not None]
-        if len(totals) == 4:
+        if len(totals) == 4 and all("cached_input_tokens" in u for u in totals):
             logger.info(
                 "report total seconds=%.3f input_tokens=%d cached_input_tokens=%d output_tokens=%d",
                 time.monotonic() - session_started,
@@ -1032,11 +1092,11 @@ def _evaluate(cfg, writer, inputs, scope, usages):
             )
         else:
             logger.info(
-                "report session scope=%s seconds=%.3f input_tokens=%d cached_input_tokens=%d output_tokens=%d",
+                "report session scope=%s seconds=%.3f input_tokens=%d cached_input_tokens=%s output_tokens=%d",
                 scope,
                 time.monotonic() - started,
                 usage["input_tokens"],
-                usage["cached_input_tokens"],
+                usage.get("cached_input_tokens", "unknown"),
                 usage["output_tokens"],
             )
 
@@ -1053,7 +1113,7 @@ def _save_evaluation(cfg, day, scope, analysis):
                 evidence=json.dumps(analysis.evidence, ensure_ascii=False),
                 next_checks=json.dumps(analysis.next_checks, ensure_ascii=False),
                 report_md=analysis.report_md,
-                model=cfg.report_model or "",
+                model=stored_model(cfg),
                 created_at=dates.now_ms(),
                 message=getattr(analysis, "message", None),
                 structured=getattr(analysis, "structured", None),

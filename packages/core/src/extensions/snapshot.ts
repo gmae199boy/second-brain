@@ -13,6 +13,7 @@ export interface ExtensionSettingDeclaration {
   secret?: boolean;
   machine?: 'tokenstore';
   default?: string;
+  enum?: readonly string[];
 }
 export type SnapshotResult = { ok: true; serialized: string } | { ok: false; code: 'EXTENSION_CONFIG_INVALID'; retryable: false; message: string };
 /** 일관된 설정 조회와 한 번 읽은 환경 값으로 snapshot을 만든다. */
@@ -39,6 +40,7 @@ export function createExtensionSnapshot(input: {
       raw = Object.hasOwn(input.secrets, raw) ? input.secrets[raw] : undefined;
       if (raw === undefined || raw === '') return invalid();
     }
+    if (declaration.enum && !declaration.enum.includes(raw)) return invalid();
     if (declaration.type === 'number') {
       if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw)) return invalid();
       const number = Number(raw); if (!Number.isFinite(number)) return invalid();
@@ -83,6 +85,7 @@ export function extensionSettingDefinitions(declarations: readonly ExtensionSett
     ...(declaration.key === GARMIN_PROFILE_KEY ? { patch: patchGarminProfile } : {}),
     normalize(raw: string) {
       if (declaration.key === GARMIN_PROFILE_KEY) return normalizeGarminProfile(raw);
+      if (declaration.enum && !declaration.enum.includes(raw)) return { ok: false as const, message: '확장 설정의 허용 값이 아닙니다' };
       const valid = declaration.secret ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) : declaration.type === 'boolean' ? raw === 'true' || raw === 'false' : declaration.type === 'number' ? /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(raw) && Number.isFinite(Number(raw)) : true;
       return valid ? { ok: true as const, value: raw } : { ok: false as const, message: '확장 설정 값이 올바르지 않습니다' };
     },

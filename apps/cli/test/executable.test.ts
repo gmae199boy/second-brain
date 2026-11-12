@@ -6,7 +6,7 @@ import { memorySettingsStore } from 'second_brain/testing';
 import { codexPathCheck, codexRuntimeEnvironment, detectCodexPath, executableEnvironment, executableSettingValidator, systemExecutablePort } from '../src/runtime/executable.js';
 import { tempHomes } from './temp-home.js';
 const homes = tempHomes(); afterEach(() => homes.cleanup());
-async function fake(home: string, name = 'codex', body = 'printf "synthetic 1.0\\n"') {
+async function fake(home: string, name = 'codex', body = 'printf "codex-cli 1.0.0\\n"') {
   const file = join(home,name); await writeFile(file, `#!/bin/sh\n${body}\n`); await chmod(file,0o700); return file;
 }
 it('최소 PATH에서 로그인 셸로 얻은 절대 경로를 검증한다', async () => {
@@ -73,4 +73,47 @@ it('symlink 뒤의 ..가 가리키는 실제 파일을 검증하고 저장한다
 it.each(['DB_LOCKED','DB_UNAVAILABLE'] as const)('감독자 설정 조회 %s를 미설정으로 바꾸지 않는다', async code => {
   const result = await codexRuntimeEnvironment({async getSettings() { return {ok:false,code,message:'synthetic'}; }},{});
   expect(result).toMatchObject({ok:false,code});
+});
+
+it('Claude launcher를 유지하고 symlink 업데이트와 provider 식별을 검증한다', async () => {
+  const home = await homes.create('brain-claude-');
+  const first = await fake(home, 'claude-v1', 'printf "2.1.290 (Claude Code)\\n"');
+  const launcher = join(home, 'claude'); await symlink(first, launcher);
+  const validate = executableSettingValidator({PATH:'/usr/bin:/bin'});
+  expect(await validate(launcher, 'agent.claude_path')).toEqual({ok:true,value:launcher});
+  const second = await fake(home, 'claude-v2', 'printf "2.1.291 (Claude Code)\\n"');
+  const { unlink } = await import('node:fs/promises');
+  await unlink(launcher); await symlink(second, launcher); await unlink(first);
+  expect(await validate(launcher, 'agent.claude_path')).toEqual({ok:true,value:launcher});
+  await writeFile(second, '#!/bin/sh\nprintf "codex 1.0\\n"\n');
+  expect(await validate(launcher, 'agent.claude_path')).toMatchObject({ok:false,message:expect.stringContaining('agent.claude_path')});
+});
+
+it('빈 명시 경로는 자동 탐지로 fallback하지 않는다', async () => {
+  const loginPaths = vi.fn(async () => ['/synthetic/claude']);
+  const port: ExecutablePort = {loginPaths,candidatePaths:async()=>[],inspect:async()=> 'ok'};
+  expect(await resolveExecutable(port,'claude','')).toMatchObject({ok:false,reason:'invalid-path',message:expect.stringContaining('agent.claude_path')});
+  expect(loginPaths).not.toHaveBeenCalled();
+});
+
+it('선택된 provider 경로와 intake Codex 경로를 snapshot과 분리한다', async () => {
+  const { analysisRuntimeEnvironment, agentPathCheck, detectAgentPath } = await import('../src/runtime/executable.js');
+  const home = await homes.create('brain-provider-'), path = await fake(home, 'claude', 'printf "2.1.290 (Claude Code)\\n"');
+  const store = memorySettingsStore();
+  const port: ExecutablePort = {...systemExecutablePort({PATH:'/usr/bin:/bin'}),loginPaths:async()=>[path],candidatePaths:async()=>[]};
+  expect(await detectAgentPath(store, {}, 'claude', port)).toContain('agent.claude_path');
+  expect(await agentPathCheck(store,port,'claude').run()).toMatchObject({status:'ok'});
+  await store.setSetting({userId:null,key:'agent.codex_path',value:'/synthetic/missing',updatedAt:new Date()});
+  expect(await analysisRuntimeEnvironment(store,{},'claude',port)).toEqual({ok:true,env:{BRAIN_ANALYSIS_AGENT:'claude',BRAIN_ANALYSIS_EXECUTABLE:path}});
+  await store.setSetting({userId:null,key:'agent.claude_path',value:'',updatedAt:new Date()});
+  expect(await analysisRuntimeEnvironment(store,{},'claude',port)).toEqual({ok:true,env:{BRAIN_ANALYSIS_AGENT:'claude'}});
+});
+
+it('Codex 경로도 Claude 또는 모호한 wrapper의 버전 응답을 거부한다', async () => {
+  const home = await homes.create('brain-codex-identity-');
+  const path = await fake(home,'wrong-provider','printf "2.1.290 (Claude Code)\\n"');
+  const validate = executableSettingValidator({PATH:'/usr/bin:/bin'});
+  expect(await validate(path,'agent.codex_path')).toMatchObject({ok:false});
+  await writeFile(path, '#!/bin/sh\nprintf "arbitrary-wrapper 1.0\\n"\n');
+  expect(await validate(path,'agent.codex_path')).toMatchObject({ok:false});
 });

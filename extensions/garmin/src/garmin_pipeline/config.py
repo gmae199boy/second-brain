@@ -36,6 +36,7 @@ class Config:
 
     analysis_profile: str | None = None
     profile_snapshot_id: str | None = None
+    analysis_agent: str = "codex"
 
     @property
     def db_path(self) -> Path:

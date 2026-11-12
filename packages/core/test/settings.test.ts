@@ -182,3 +182,24 @@ it('Codex 경로는 global로 저장하며 절대 경로와 실행 검증을 요
   expect(await brain.config.set({key:'agent.codex_path',value:'/synthetic/codex'})).toMatchObject({ok:true,scope:'global',source:'db',value:'/synthetic/codex'});
   expect(await store.getSetting({userId:null,key:'agent.codex_path'})).toMatchObject({setting:{value:'/synthetic/codex'}});
 });
+
+it('Claude 실행 파일도 global 검증기를 거쳐 저장한다', async () => {
+  const store = {...memorySettingsStore(), ...memorySchemaStore({version:1}), ...self};
+  const validateExecutablePath = vi.fn(async (value:string, key?:string) => ({ok:true as const,value}));
+  const brain = createSettingsBrain({store,clock:{now:()=>at},schemaVersions:{core:1},validateExecutablePath});
+  expect(await brain.config.set({key:'agent.claude_path',value:''})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+  expect(await brain.config.set({key:'agent.claude_path',value:'/synthetic/claude'})).toMatchObject({ok:true,scope:'global',value:'/synthetic/claude'});
+  expect(validateExecutablePath).toHaveBeenCalledWith('/synthetic/claude','agent.claude_path');
+  expect(await brain.config.set({key:'agent.unknown_path',value:'/synthetic/other'})).toMatchObject({ok:false,code:'CONFIG_INVALID'});
+});
+
+it('확장 enum은 개별 설정과 실행 snapshot 모두에서 검증한다', async () => {
+  const { extensionSettingDefinitions, createExtensionSnapshot } = await import('../src/extensions/snapshot.js');
+  const declarations = [{key:'garmin.analysis_agent',type:'string' as const,required:[],default:'codex',enum:['codex','claude']}];
+  const definition = extensionSettingDefinitions(declarations)[0]!;
+  expect(definition.normalize('claude')).toEqual({ok:true,value:'claude'});
+  expect(definition.normalize('other')).toMatchObject({ok:false});
+  for (const value of ['codex','claude','other']) {
+    expect(createExtensionSnapshot({extension:'garmin',userId,stage:'work',declarations,settings:{'garmin.analysis_agent':value},secrets:{}}).ok).toBe(value !== 'other');
+  }
+});

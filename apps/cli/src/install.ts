@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { withInstallerHomeLock } from './runtime/install-lock.js';
 import { readFile } from 'node:fs/promises';
-import { detectCodexPath, executableSettingValidator } from './runtime/executable.js';
+import { detectAnalysisPaths, executableSettingValidator } from './runtime/executable.js';
 import type { CommandRunner } from './runtime/command-runner.js';
 import { probeOrbStack } from './runtime/orbstack.js';
 import { brainDependencies } from './assembly.js';
@@ -167,7 +167,7 @@ export function systemInstallDeps(options: { runner?: CommandRunner; secrets?: {
     detectCodex: async (home, env) => {
       const config = await readConfig(home);
       const opened = await openBrainStore({ home, env, config, path: 'command' });
-      try { return await detectCodexPath(opened.store, env); } finally { await opened.store.close(); }
+      try { return await detectAnalysisPaths(opened.store, env); } finally { await opened.store.close(); }
     },
     postgresDoctor: (home, env) => withBrain(home, env, brain => brain.doctor.run()),
     importTranscripts: (home, env) => withBrain(home, env, brain => brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })),

@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""감독자 연결을 확인하는 합성 Claude CLI. 모델·계정은 호출하지 않는다."""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if args == ['--version']:
+    print('2.1.290 (Claude Code)')
+    sys.exit(0)
+login = Path(os.environ['CLAUDE_CONFIG_DIR'])
+assert login.name == 'claude-login' and login.is_dir()
+if args == ['auth', 'status']:
+    print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai'}))
+    sys.exit(0)
+assert '--safe-mode' in args and '--bare' not in args
+assert args[args.index('--tools') + 1] == ''
+assert args[args.index('--permission-prompts') + 1] == 'none'
+for key in ('BRAIN_DATABASE_URL', 'BRAIN_ATTEMPT_TOKEN', 'BRAIN_SETTINGS_SNAPSHOT', 'ANTHROPIC_API_KEY'):
+    assert key not in os.environ
+prompt = json.load(sys.stdin)
+scope = prompt['scope']
+assert prompt['files']
+instructions = Path(args[args.index('--append-system-prompt-file') + 1]).read_text()
+assert 'garmin-daily-analysis' in instructions if scope == 'day' else 'garmin-period-review' in instructions
+root = Path(os.environ['HOME']) / 'extensions/garmin/report-fixture'
+with (root / 'claude-calls.jsonl').open('a') as stream:
+    stream.write(json.dumps({'scope':scope,'config_dir':str(login),'cwd':str(Path.cwd()),
+        'model':args[args.index('--model') + 1], 'effort':args[args.index('--effort') + 1]}) + '\n')
+result = {'status':'ok','summary':'synthetic ' + scope,'report_md':'synthetic ' + scope,
+          'judgments':[], 'evidence':[], 'next_checks':[], 'message':None}
+print(json.dumps({'type':'result','subtype':'success','is_error':False,'structured_output':result}))

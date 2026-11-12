@@ -6,6 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from garmin_pipeline import config, store
+from garmin_pipeline.analysis_agent import validate_selection
 from scheduled_date import scheduled_date
 from supervised_input import decode_envelope
 
@@ -22,6 +23,9 @@ def envelope(env, *, sending=False):
         model = values.get('garmin.analysis_model') if sending else values['garmin.analysis_model']
         if not sending and not model.strip():
             raise ValueError('missing analysis model')
+        provider = values.get('garmin.analysis_agent', 'codex')
+        if not sending:
+            validate_selection(provider, model, values.get('garmin.analysis_reasoning_effort', 'high'))
         timezone = values['garmin.timezone']
         ZoneInfo(timezone)
         home = Path(env['BRAIN_EXTENSION_HOME'])
@@ -33,7 +37,7 @@ def envelope(env, *, sending=False):
             # 기존 Config 생성자 호환용 중립값이며 분석 실행·자료 창에는 사용하지 않는다.
             collect_time=time.min, retry_time=time.min, report_time=time.min, report_wait_minutes=0,
             report_codex_timeout_minutes=int(values.get('garmin.analysis_timeout_minutes', 20)),
-            report_model=model, report_reasoning_effort=values.get('garmin.analysis_reasoning_effort', 'high'),
+            analysis_agent=provider, report_model=model, report_reasoning_effort=values.get('garmin.analysis_reasoning_effort', 'high'),
             profile_path=root / 'profile.md', date_pause_seconds=5, call_pause_min_seconds=1,
             call_pause_max_seconds=2, max_dates_per_run=10, max_rejected_attempts=3,
             max_consecutive_403=3, lock_wait_seconds=60, cffi_api_session=False,
@@ -71,6 +75,7 @@ def run(env=None, *, writer=None):
         return send_saved(actual)
     account, cfg = envelope(actual)
     if writer is None:
+        report.analysis_executable(cfg.analysis_agent, actual)
         report.codex_executable(actual)
     try:
         day = scheduled_date(actual, cfg.timezone)
@@ -85,7 +90,7 @@ def run(env=None, *, writer=None):
             import body_runtime
             def body_handler(action, **kwargs):
                 return body_runtime.execute(actual, action, **kwargs)
-            writer = report.CodexWriter(executable=report.codex_executable(actual), body_handler=body_handler)
+            writer = report.analysis_writer(cfg, actual, body_handler=body_handler)
         return json.dumps(report.run_supervised(cfg, writer, regenerate=regenerate, **({'today': day} if day is not None else {})))
 
 

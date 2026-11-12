@@ -19,7 +19,7 @@ def main():
         event = {'abi': 1, 'type': 'error', 'code': 'REPORT_LOCKED', 'retryable': True}
     except report.AnalysisAgentNotFound:
         event = {'abi': 1, 'type': 'error', 'code': 'ANALYSIS_AGENT_NOT_FOUND', 'retryable': False,
-                 'message': 'brain config set agent.codex_path <절대경로>로 실행 파일을 설정하세요'}
+                 'message': 'brain doctor run으로 선택 provider 경로를 확인하고 agent.codex_path 또는 agent.claude_path를 설정하세요'}
     except report.SupervisedReportFailed:
         event = {'abi': 1, 'type': 'error', 'code': 'REPORT_FAILED', 'retryable': True}
     except Exception:

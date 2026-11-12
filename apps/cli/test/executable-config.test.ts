@@ -8,7 +8,7 @@ it('config CLI는 가짜 실행 파일을 검증해 global로 저장하고 깨�
   const homes = tempHomes(), home = await homes.create('brain-exec-config-'), db = await pgHome(home, false);
   const env = {...withoutHarnessFolders(process.env),...db.env,SECOND_BRAIN_HOME:home};
   try {
-    const path = join(home,'synthetic codex'); await writeFile(path,'#!/bin/sh\nprintf "synthetic 1.0\\n"\n'); await chmod(path,0o700);
+    const path = join(home,'synthetic codex'); await writeFile(path,'#!/bin/sh\nprintf "codex-cli 1.0.0\\n"\n'); await chmod(path,0o700);
     const canonical = await realpath(path);
     const set = await runPgCommand(['config','set','agent.codex_path',path,'--json'],env);
     expect(set.code,set.stdout+set.stderr).toBe(0); expect(JSON.parse(set.stdout).data).toMatchObject({scope:'global',value:canonical});

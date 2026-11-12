@@ -43,3 +43,4 @@ description: Garmin 누락 항목 백필·밀린 수집 확인, 수동 수집, �
 ## 분석 프로필
 
 현재 사용자 분석 프로필은 `brain config get garmin.analysis_profile --json`으로 조회한다. 목표 체중·목표·기구·선호·음주 단위를 바꾸라는 요청은 brain-config의 `brain config patch garmin.analysis_profile <patch> --json` 절차로 명시 항목만 바꾸고 재조회한다. 예를 들어 목표 체중 75kg는 `brain config patch garmin.analysis_profile '{"set":{"goals.target_weight_kg":75}}' --json`이다. 프로필을 바꿔도 기존 평가는 자동 갱신되지 않으며 재생성을 요청했을 때만 `report-regenerate`로 반영한다. 단순 재발신은 저장된 평가를 사용한다. 계정 profile.md나 옛 분석 입력을 편집·복원하여 설정을 우회하지 않는다.
+분석 에이전트는 사용자 공통 `garmin.analysis_agent`(codex/claude), `garmin.analysis_model`, `garmin.analysis_reasoning_effort`, `garmin.analysis_timeout_minutes`로 선택한다. 설정 변경은 brain-config 절차로 진행한다. 네 기간과 custom은 같은 선택을 사용하며 체성분 intake는 Codex를 유지한다. Claude 선택 시 intake 모델은 Codex 로그인 기본값이다. Claude Code는 구독 로그인과 2.1.290 이상이 필요하며 가용하지 않으면 다른 provider로 자동 전환하지 않는다.
