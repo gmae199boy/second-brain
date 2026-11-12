@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5, uuid7
 
 from artifacts import MAX_BYTES, locator_for, stage
-from garmin_pipeline import charts, report, store
+from garmin_pipeline import charts, report, store, training_charts
 
 
 class RenderUnavailable(Exception):
@@ -35,23 +35,51 @@ def _identity(conn, day, scope, revision):
     return (conn.user_id, conn.connection_id, day.isoformat(), scope, revision)
 
 
+def _load_scope_measurements(cfg, structured):
+    from garmin_pipeline.training_measurements import resolve_snapshot_root, load_training_measurements
+    root = resolve_snapshot_root(cfg, structured['snapshot_id'])
+    measurements = load_training_measurements(root, structured['scope'])
+    expected = structured['range']
+    actual = {'start': measurements['current']['from'], 'end': measurements['current']['to'],
+              'timezone': measurements['timezone']}
+    if (measurements['snapshot_id'] != structured['snapshot_id'] or actual != expected or
+            measurements['scope'] != structured['scope'] or
+            measurements['data_cutoff'] != structured['data_cutoff'] or
+            measurements['schema_version'] != structured['measurements_version'] or
+            measurements['profile']['snapshot_id'] != structured['profile_snapshot_id']):
+        raise ValueError('graph snapshot identity mismatch')
+    return measurements
+
+
 def _prepare(cfg, day, scope, revision, revisions=None, *, render_unavailable=False):
-    """Freeze one report and the day's graph set, rendering without a write lock."""
+    """기간 revision과 같은 C1 snapshot의 그림을 쓰기 잠금 밖에서 고정한다."""
     with store.write_session(cfg) as conn:
         key = _identity(conn, day, scope, revision)
         with store.transaction(conn):
             exists = conn.execute('select 1 from garmin.report_publications where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,%s,%s)', key).fetchone()
             if exists:
                 return
-            row = conn.execute('select report_md from garmin.evaluation_revisions where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,%s,%s)', key).fetchone()
+            row = conn.execute("select report_md,to_jsonb(r)->'structured' from garmin.evaluation_revisions r where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,%s,%s)", key).fetchone()
             if row is None:
                 raise ValueError('missing evaluation revision')
-            names = [] if scope == 'day' else conn.execute("select name from garmin.report_publication_items where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,'day',%s) and kind='graph' order by name", (key[0],key[1],key[2],revisions['day'])).fetchall()
-    if scope == 'day':
+            structured = row[1] if len(row) > 1 else None
+            scoped = isinstance(structured, dict) and structured.get('schema_version') == 'garmin.scope_analysis.v2'
+            if scoped and structured['scope'] != scope:
+                raise ValueError('graph revision scope mismatch')
+            names = [] if scope == 'day' or scoped else conn.execute("select name from garmin.report_publication_items where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,'day',%s) and kind='graph' order by name", (key[0],key[1],key[2],revisions['day'])).fetchall()
+    if scope == 'day' or scoped:
         try:
             with tempfile.TemporaryDirectory(prefix='garmin-report-') as folder:
-                graphs = charts.render(cfg, day, Path(folder), strict=True)
-                items = [('report.md', 'report', 'text/markdown', report._assemble(row[0], day, graphs))]
+                if scoped:
+                    measurements = _load_scope_measurements(cfg, structured)
+                    graphs = training_charts.render(measurements, Path(folder), cache_dir=cfg.data_dir / '.matplotlib')
+                else:
+                    graphs = charts.render(cfg, day, Path(folder), strict=True)
+                document = report._assemble(row[0], day, graphs)
+                if scoped:
+                    manifest = next(Path(folder).glob('*-manifest.json')).read_bytes()
+                    document += b'\n\n<!-- training-graph-manifest\n' + manifest + b'\n-->\n'
+                items = [('report.md', 'report', 'text/markdown', document)]
                 for graph in graphs:
                     if Path(graph.name).name != graph.name:
                         raise ValueError('invalid graph name')
@@ -94,7 +122,8 @@ def publish(cfg, day, revisions, env=None):
                 dataset = 'report:' + _hash(_json([str(key[0]), str(key[1])]).encode())
                 batch = _hash(_json([dataset, key[2], scope, revision]).encode())
                 path_hash = _hash(_json(['generated', key[2], scope, revision, name]).encode())
-                metadata = _json({'kind': kind, 'report_date': key[2], 'scope': scope, 'original_path_hash': path_hash})
+                metadata = _json({'kind': kind, 'report_date': key[2], 'scope': scope, 'original_path_hash': path_hash,
+                                  **(training_charts.png_metadata(data) if kind == 'graph' else {})})
                 locator = locator_for(dataset, 'report', identity, _hash(data))
                 with store.transaction(conn):
                     result = conn.execute('select status,file_id from brain.file_request_results_public_v1 where request_id=%s', (request,)).fetchone()
@@ -106,7 +135,7 @@ def publish(cfg, day, revisions, env=None):
                         (request, identity, dataset, batch, locator, _hash(data), len(data), media, created, env['BRAIN_WORK_ID'], env['BRAIN_ATTEMPT_TOKEN'], metadata))
                     conn.execute('''insert into garmin.evaluation_files(user_id,connection_id,report_date,scope,revision,request_id,kind,original_path_hash)
                         values (%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing''', (*key, request, kind, path_hash))
-                    if kind == 'graph':
+                    if kind == 'graph' and training_charts.scope_from_name(name) is None:
                         for other_scope, other_revision in revisions.items():
                             if other_scope == scope:
                                 continue
@@ -119,7 +148,7 @@ def publish(cfg, day, revisions, env=None):
                         link = conn.execute('''select kind,original_path_hash,file_id from garmin.evaluation_files where (user_id,connection_id,report_date,scope,revision,request_id)=(%s,%s,%s,%s,%s,%s)''', (*key, request)).fetchone()
                         if link != (kind, path_hash, result[1]):
                             raise ValueError('file relation conflict')
-                        if kind == 'graph':
+                        if kind == 'graph' and training_charts.scope_from_name(name) is None:
                             for other_scope, other_revision in revisions.items():
                                 if other_scope == scope:
                                     continue
@@ -155,7 +184,10 @@ def publish_bundle_document(cfg, day, revisions, env=None, *, prepare_only=False
                     row = conn.execute('select report_md from garmin.evaluation_revisions where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,%s,%s)', (conn.user_id,conn.connection_id,day.isoformat(),scope,revisions[scope])).fetchone()
                     if row is None: raise ValueError('missing evaluation')
                     texts[scope] = row[0]
-                graph_names = conn.execute("select name from garmin.report_publication_items where (user_id,connection_id,report_date,scope,revision)=(%s,%s,%s,'day',%s) and kind='graph' order by name", (conn.user_id,conn.connection_id,day.isoformat(),revisions['day'])).fetchall()
+                graph_names = conn.execute("""select name from garmin.report_publication_items
+                    join jsonb_each_text(%s::jsonb) selected on selected.key=scope and selected.value::bigint=revision
+                    where (user_id,connection_id,report_date)=(%s,%s,%s) and kind='graph' order by name""",
+                    (_json(revisions),conn.user_id,conn.connection_id,day.isoformat())).fetchall()
                 text = texts['day'] + '\n\n## 기간 평가\n' + ''.join(f"\n\n### {label}\n\n{texts[scope].rstrip()}" for scope,label in (('7d','7일'),('30d','30일'),('all','전체')))
                 graphs = [charts.Graph(name, name) for (name,) in graph_names]
                 data = report._assemble(text, day, graphs)
@@ -231,9 +263,10 @@ def saved_bundle(cfg, day, revisions, *, completed=True):
                 (*key, revision_key(revisions), not completed)).fetchone()
             rows = conn.execute('''select i.name,i.request_id,i.content,p.created_at,f.file_id from garmin.report_publication_items i
                 join garmin.report_publications p using(user_id,connection_id,report_date,scope,revision)
+                join jsonb_each_text(%s::jsonb) selected on selected.key=i.scope and selected.value::bigint=i.revision
                 left join garmin.evaluation_files f using(user_id,connection_id,report_date,scope,revision,request_id)
-                where (i.user_id,i.connection_id,i.report_date,i.scope,i.revision)=(%s,%s,%s,'day',%s)
-                  and i.kind='graph' order by i.name''', (*key, revisions['day'])).fetchall()
+                where (i.user_id,i.connection_id,i.report_date)=(%s,%s,%s)
+                  and i.kind='graph' order by i.name''', (_json(revisions), *key)).fetchall()
             if document is None or (completed and any(row[4] is None for row in rows)):
                 return None
             return document, rows

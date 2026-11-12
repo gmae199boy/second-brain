@@ -945,6 +945,7 @@
     "src/garmin_pipeline/schemas/daily_analysis_output.schema.json",
     "src/garmin_pipeline/schemas/period_review_output.schema.json",
     "src/garmin_pipeline/store/__init__.py",
+    "src/garmin_pipeline/training_charts.py",
     "src/import.py",
     "src/import_preflight.py",
     "src/import_scope.py",

@@ -134,7 +134,12 @@ class SendAttachmentsTest(unittest.TestCase):
                 if 'insert into garmin.report_publication_items' in sql:
                     self.publications[args[:5]].append((args[5], args[6], args[7], args[8], args[9], CREATED)); return Cursor()
                 if 'select name from garmin.report_publication_items' in sql:
-                    return Cursor(rows=[(r[0],) for r in self.publications.get((*args[:3], 'day', args[3]), []) if r[1]=='graph'])
+                    if 'jsonb_each_text' in sql:
+                        selected = [r for scope, revision in json.loads(args[0]).items()
+                                    for r in self.publications.get((*args[1:], scope, revision), [])]
+                    else:
+                        selected = self.publications.get((*args[:3], 'day', args[3]), [])
+                    return Cursor(rows=[(r[0],) for r in sorted(selected) if r[1]=='graph'])
                 if 'select content,request_id,created_at from garmin.report_bundle_files' in sql:
                     return Cursor(None if self.bundle is None else (self.bundle[1], self.bundle[0], self.bundle[2]))
                 if 'insert into garmin.report_bundle_files' in sql:
@@ -143,8 +148,10 @@ class SendAttachmentsTest(unittest.TestCase):
                     return Cursor(self.bundle if self.bundle and (args[-1] or self.bundle[0] in self.links) else None)
                 if 'select i.name' in sql:
                     if 'i.kind=\'graph\'' in sql:
+                        selected = [r for scope, revision in json.loads(args[0]).items()
+                                    for r in self.publications.get((*args[1:], scope, revision), [])]
                         return Cursor(rows=[(r[0],r[4],r[3],r[5],self.links.get(r[4], (None,))[0])
-                            for r in self.publications.get((*args[:3], 'day', args[3]), []) if r[1]=='graph'])
+                            for r in sorted(selected) if r[1]=='graph'])
                     return Cursor(rows=self.publications.get(args, []))
                 if 'insert into brain.file_requests' in sql:
                     # bundle INSERT의 고정 text/markdown 인자 자리를 정규화한다.

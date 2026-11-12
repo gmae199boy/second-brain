@@ -1,0 +1,271 @@
+{
+  "schema_version": "training_measurements_v1",
+  "scope": "day",
+  "report_date": "2026-01-03",
+  "timezone": "Asia/Seoul",
+  "snapshot_id": "synthetic-snapshot",
+  "as_of": "2026-01-03T08:00:00+09:00",
+  "data_cutoff": "2026-01-03T08:00:00+09:00",
+  "partial_date": "2026-01-03",
+  "attribution": "completed_at",
+  "current": {
+    "from": "2026-01-02",
+    "to": "2026-01-02",
+    "actual_days": 1,
+    "coverage": {
+      "sessions": 4,
+      "sessions_with_sets": 1,
+      "active_sets": 5,
+      "weighted_sets": 1,
+      "bodyweight_sets": 1,
+      "missing_load_sets": 3,
+      "volume_sets": 1
+    },
+    "sessions": [
+      {
+        "session_id": "synthetic-0",
+        "source_refs": [
+          "activities/synthetic-0/activity.json"
+        ],
+        "type": "strength_training",
+        "start_at": "2026-01-02T10:00:00+09:00",
+        "end_at": "2026-01-02T10:30:00+09:00",
+        "completed_date": "2026-01-02",
+        "status": "completed",
+        "updated_at": null,
+        "duration_s": 1800,
+        "moving_duration_s": null,
+        "rest_s": null,
+        "distance_m": null,
+        "speed_m_s": null,
+        "pace_s_km": null,
+        "pace_basis": null,
+        "hr_avg": null,
+        "hr_max": null,
+        "zones": [],
+        "heart_rate": [
+          {
+            "at": "2026-01-02T10:05:00+09:00",
+            "bpm": 110
+          }
+        ],
+        "heart_rate_source_ref": "activities/synthetic-0/activity_details.json",
+        "incline": null,
+        "limitations": [],
+        "sets": [
+          {
+            "exercise_key": "PUSH_UP",
+            "display_name": "푸시업",
+            "equipment": null,
+            "variant": null,
+            "order": 1,
+            "set_no": 1,
+            "set_type": "ACTIVE",
+            "start_at": "2026-01-02T10:01:00+09:00",
+            "end_at": "2026-01-02T10:02:00+09:00",
+            "reps": 10,
+            "load_kg": 5,
+            "load_kind": "weighted",
+            "duration_s": 60,
+            "rest_s": 90,
+            "rpe": null,
+            "rir": null,
+            "role": "unknown",
+            "source_ref": "activities/synthetic-0/activity_exercise_sets.json#/exerciseSets/0"
+          },
+          {
+            "exercise_key": "PUSH_UP",
+            "display_name": "푸시업",
+            "equipment": null,
+            "variant": null,
+            "order": 2,
+            "set_no": 2,
+            "set_type": "ACTIVE",
+            "start_at": "2026-01-02T10:01:00+09:00",
+            "end_at": "2026-01-02T10:02:00+09:00",
+            "reps": 10,
+            "load_kg": null,
+            "load_kind": "bodyweight",
+            "duration_s": 60,
+            "rest_s": 90,
+            "rpe": null,
+            "rir": null,
+            "role": "unknown",
+            "source_ref": "activities/synthetic-0/activity_exercise_sets.json#/exerciseSets/1"
+          },
+          {
+            "exercise_key": "PUSH_UP",
+            "display_name": "푸시업",
+            "equipment": null,
+            "variant": null,
+            "order": 3,
+            "set_no": 3,
+            "set_type": "ACTIVE",
+            "start_at": "2026-01-02T10:01:00+09:00",
+            "end_at": "2026-01-02T10:02:00+09:00",
+            "reps": 10,
+            "load_kg": null,
+            "load_kind": "missing",
+            "duration_s": 60,
+            "rest_s": 90,
+            "rpe": null,
+            "rir": null,
+            "role": "unknown",
+            "source_ref": "activities/synthetic-0/activity_exercise_sets.json#/exerciseSets/2"
+          },
+          {
+            "exercise_key": "PUSH_UP",
+            "display_name": "푸시업",
+            "equipment": null,
+            "variant": null,
+            "order": 4,
+            "set_no": 4,
+            "set_type": "ACTIVE",
+            "start_at": "2026-01-02T10:01:00+09:00",
+            "end_at": "2026-01-02T10:02:00+09:00",
+            "reps": 10,
+            "load_kg": null,
+            "load_kind": "assisted",
+            "duration_s": 60,
+            "rest_s": 90,
+            "rpe": null,
+            "rir": null,
+            "role": "unknown",
+            "source_ref": "activities/synthetic-0/activity_exercise_sets.json#/exerciseSets/3"
+          },
+          {
+            "exercise_key": "PUSH_UP",
+            "display_name": "푸시업",
+            "equipment": null,
+            "variant": null,
+            "order": 5,
+            "set_no": 5,
+            "set_type": "ACTIVE",
+            "start_at": "2026-01-02T10:01:00+09:00",
+            "end_at": "2026-01-02T10:02:00+09:00",
+            "reps": 10,
+            "load_kg": null,
+            "load_kind": "unknown",
+            "duration_s": 60,
+            "rest_s": 90,
+            "rpe": null,
+            "rir": null,
+            "role": "unknown",
+            "source_ref": "activities/synthetic-0/activity_exercise_sets.json#/exerciseSets/4"
+          }
+        ]
+      },
+      {
+        "session_id": "synthetic-1",
+        "source_refs": [
+          "activities/synthetic-1/activity.json"
+        ],
+        "type": "hiit",
+        "start_at": "2026-01-02T11:00:00+09:00",
+        "end_at": "2026-01-02T11:30:00+09:00",
+        "completed_date": "2026-01-02",
+        "status": "completed",
+        "updated_at": null,
+        "duration_s": 1800,
+        "moving_duration_s": null,
+        "rest_s": null,
+        "distance_m": null,
+        "speed_m_s": null,
+        "pace_s_km": null,
+        "pace_basis": null,
+        "hr_avg": null,
+        "hr_max": null,
+        "zones": [],
+        "heart_rate": [
+          {
+            "at": "2026-01-02T11:05:00+09:00",
+            "bpm": 110
+          }
+        ],
+        "heart_rate_source_ref": "activities/synthetic-1/activity_details.json",
+        "incline": null,
+        "limitations": [
+          "sets_not_available"
+        ],
+        "sets": []
+      },
+      {
+        "session_id": "synthetic-2",
+        "source_refs": [
+          "activities/synthetic-2/activity.json"
+        ],
+        "type": "walking",
+        "start_at": "2026-01-02T12:00:00+09:00",
+        "end_at": "2026-01-02T12:30:00+09:00",
+        "completed_date": "2026-01-02",
+        "status": "completed",
+        "updated_at": null,
+        "duration_s": 1800,
+        "moving_duration_s": null,
+        "rest_s": null,
+        "distance_m": null,
+        "speed_m_s": null,
+        "pace_s_km": null,
+        "pace_basis": null,
+        "hr_avg": null,
+        "hr_max": null,
+        "zones": [],
+        "heart_rate": [
+          {
+            "at": "2026-01-02T12:05:00+09:00",
+            "bpm": 110
+          }
+        ],
+        "heart_rate_source_ref": "activities/synthetic-2/activity_details.json",
+        "incline": null,
+        "limitations": [
+          "incline_not_recorded"
+        ],
+        "sets": []
+      },
+      {
+        "session_id": "synthetic-3",
+        "source_refs": [
+          "activities/synthetic-3/activity.json"
+        ],
+        "type": "treadmill_running",
+        "start_at": "2026-01-02T13:00:00+09:00",
+        "end_at": "2026-01-02T13:30:00+09:00",
+        "completed_date": "2026-01-02",
+        "status": "completed",
+        "updated_at": null,
+        "duration_s": 1800,
+        "moving_duration_s": null,
+        "rest_s": null,
+        "distance_m": null,
+        "speed_m_s": null,
+        "pace_s_km": null,
+        "pace_basis": null,
+        "hr_avg": null,
+        "hr_max": null,
+        "zones": [],
+        "heart_rate": [
+          {
+            "at": "2026-01-02T13:05:00+09:00",
+            "bpm": 110
+          }
+        ],
+        "heart_rate_source_ref": "activities/synthetic-3/activity_details.json",
+        "incline": null,
+        "limitations": [
+          "incline_not_recorded"
+        ],
+        "sets": []
+      }
+    ],
+    "strength": []
+  },
+  "comparison": null,
+  "recovery_context": [],
+  "profile": {
+    "status": "unset",
+    "snapshot_id": null,
+    "source_ref": null
+  },
+  "limitations": []
+}
