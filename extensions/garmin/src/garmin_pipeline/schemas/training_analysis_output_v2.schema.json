@@ -80,8 +80,8 @@
       "additionalProperties": false
     },
     "schema_version": {
-      "type": "integer",
-      "const": 2
+      "type": "string",
+      "const": "garmin.scope_analysis.v2"
     },
     "scope": {
       "type": "string",
@@ -89,8 +89,7 @@
         "day",
         "7d",
         "30d",
-        "all",
-        "custom"
+        "all"
       ]
     },
     "training_summary": {
@@ -445,6 +444,47 @@
         ],
         "additionalProperties": false
       }
+    },
+    "range": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "timezone"
+      ],
+      "additionalProperties": false
+    },
+    "data_cutoff": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "measurements_version": {
+      "type": "string",
+      "const": "training_measurements_v1"
+    },
+    "profile_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -464,7 +504,12 @@
     "next_workout_actions",
     "recovery_context",
     "evidence_refs",
-    "limitations"
+    "limitations",
+    "range",
+    "data_cutoff",
+    "snapshot_id",
+    "measurements_version",
+    "profile_snapshot_id"
   ],
   "additionalProperties": false
 }

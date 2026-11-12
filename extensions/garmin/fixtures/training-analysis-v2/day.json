@@ -26,7 +26,7 @@
       "walk-hr"
     ]
   },
-  "schema_version": 2,
+  "schema_version": "garmin.scope_analysis.v2",
   "scope": "day",
   "training_summary": {
     "headline": "걷기 수행 확인",
@@ -99,5 +99,14 @@
       "affected_judgment": "aerobic_findings[0]",
       "detail": "경사 미기록으로 평지 페이스 효율 비교를 보류한다."
     }
-  ]
+  ],
+  "range": {
+    "start": "2026-01-01",
+    "end": "2026-01-01",
+    "timezone": "Asia/Seoul"
+  },
+  "data_cutoff": "2026-01-02T06:00:00+09:00",
+  "snapshot_id": "synthetic-snapshot",
+  "measurements_version": "training_measurements_v1",
+  "profile_snapshot_id": null
 }
