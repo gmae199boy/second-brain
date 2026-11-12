@@ -1042,6 +1042,7 @@ def _save_evaluation(cfg, day, scope, analysis):
                 model=cfg.report_model or "",
                 created_at=dates.now_ms(),
                 message=getattr(analysis, "message", None),
+                structured=getattr(analysis, "structured", None),
             )
             conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
                          (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, day.isoformat(), scope, revision))
@@ -1083,16 +1084,28 @@ def _assert_attempt_current(cfg):
 def _work_revisions(cfg, today, regenerate):
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
-            recorded = dict(conn.execute('select scope,revision from garmin.report_work_revisions where work_id=%s and user_id=%s and connection_id=%s and report_date=%s',
-                                         (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, today.isoformat())).fetchall())
-            if not regenerate:
-                for scope in ('day', '7d', '30d', 'all'):
-                    if scope not in recorded:
-                        row = store.latest_evaluation(conn, report_date=today.isoformat(), scope=scope)
-                        if row is not None:
-                            conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
-                                         (os.environ['BRAIN_WORK_ID'], conn.user_id, conn.connection_id, today.isoformat(), scope, row[9]))
-                            recorded[scope] = row[9]
+            from garmin_pipeline.training_measurements import snapshot_id_for
+            snapshot_id = snapshot_id_for(os.environ['BRAIN_WORK_ID'],today)
+            mappings = conn.execute('''select w.scope,w.revision,e.structured
+                from garmin.report_work_revisions w join garmin.evaluation_revisions e
+                  on e.user_id=w.user_id and e.connection_id=w.connection_id
+                  and e.report_date=w.report_date and e.scope=w.scope and e.revision=w.revision
+                where w.work_id=%s and w.user_id=%s and w.connection_id=%s and w.report_date=%s''',
+                (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat())).fetchall()
+            recorded={}
+            for scope,revision,structured in mappings:
+                if (not isinstance(structured,dict) or structured.get('snapshot_id')!=snapshot_id
+                        or structured.get('schema_version')!='garmin.scope_analysis.v2' or structured.get('status')!='ok'):
+                    # 구 revision은 보존하되 새 입력과 섞어 재분석·게시하지 않는 명시적 호환 오류다.
+                    raise store.StoreError('report work revision belongs to an incompatible snapshot')
+                recorded[scope]=revision
+            # 새 work도 동일 snapshot의 성공만 채택한다. 다른 입력 revision과 섞지 않는다.
+            successful = store.successful_scope_results(conn, report_date=today.isoformat(), snapshot_id=snapshot_id)
+            for scope, result in successful.items():
+                if scope not in recorded:
+                    conn.execute('insert into garmin.report_work_revisions(work_id,user_id,connection_id,report_date,scope,revision) values (%s,%s,%s,%s,%s,%s)',
+                                 (os.environ['BRAIN_WORK_ID'],conn.user_id,conn.connection_id,today.isoformat(),scope,result['revision']))
+                    recorded[scope] = result['revision']
     return recorded
 
 
@@ -1117,6 +1130,8 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     completed = set(recorded)
     remaining = [scope for scope in ('day', '7d', '30d', 'all') if scope not in completed]
     if not remaining:
+        from garmin_pipeline.training_measurements import resolve_snapshot_root, snapshot_id_for
+        resolve_snapshot_root(cfg,snapshot_id_for(os.environ['BRAIN_WORK_ID'],today))
         import report_publish
         document = report_publish.publish_and_wait(cfg, today, recorded)
         import report_channel
@@ -1152,15 +1167,12 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
                     # New arrivals belong to a later run; reject removes pending too.
                     if unhandled:
                         failed = True
-    exported = report_input.build(cfg, today, started_at=started_at)
-    measurements = digest.build(exported.manifest, exported.days, exported.activities,
-                                exported.labels, exported.body)
-    report_input.write_json(exported.path / 'digest.json', measurements)
+    exported = report_input.prepare_snapshot(cfg, today, os.environ['BRAIN_WORK_ID'], started_at=started_at)
     runtime = body.runtime_root(cfg)
     usages = []
     for scope in remaining:
         if scope == 'day':
-            inputs = [os.path.relpath(exported.path, runtime)]
+            inputs = [os.path.relpath(exported.path / 'day', runtime)]
         else:
             try:
                 folder = report_input.build_period(cfg, exported.path, today, scope)
@@ -1170,7 +1182,7 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
                 failed = True
                 continue
             inputs = [os.path.relpath(folder, runtime),
-                      os.path.relpath(exported.path / 'profile.md', runtime)]
+                      os.path.relpath(folder / 'profile.md', runtime)]
         _assert_attempt_current(cfg)
         analysis, _, failure, _ = _evaluate(cfg, writer, inputs, scope, usages)
         if failure is not None:
