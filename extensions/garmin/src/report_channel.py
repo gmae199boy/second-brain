@@ -82,9 +82,9 @@ def failure(cfg, day, scopes, env=None):
     failed = [scope for scope in report_message.SCOPES if scope in scopes]
     labels = {'day': '1일', '7d': '7일', '30d': '30일', 'all': '전체'}
     text = (f'Garmin 리포트 · {day.isoformat()}\n' + '·'.join(labels[scope] for scope in failed)
-            + ' 분석이 최초 실행과 최대 5회 재시도 후에도 실패했습니다. 성공한 기간 결과는 저장했습니다. 완성된 리포트는 발송하지 않았습니다.')
+            + ' 분석을 완료하지 못했습니다. 오류 유형에 따라 재시도를 중단했습니다. 성공한 기간 결과는 저장하며 다른 기간 분석은 계속합니다. 완성된 리포트는 발송하지 않았습니다.')
     with store.write_session(cfg) as conn:
         with store.transaction(conn):
-            key = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report-failed-v2', env['BRAIN_WORK_ID'])
+            key = _key(str(conn.user_id), str(conn.connection_id), day.isoformat(), 'report-failed-v3', env['BRAIN_WORK_ID'], failed)
             return _submit(conn, env, 'garmin.report.completed', key, day.isoformat(), None, text,
                            messages=[{'itemId': 'failure', 'text': text}])

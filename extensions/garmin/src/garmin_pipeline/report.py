@@ -5,6 +5,8 @@ Codex runs in the runtime root in the supervisor process group and without API k
 """
 
 import contextlib
+import contextvars
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib.resources
 import json
 import logging
@@ -14,6 +16,7 @@ import signal
 import psycopg
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -103,6 +106,10 @@ FALLBACK_TEXT: dict[errors.ReportFailReason, str] = {
 _DIR_MODE = 0o700
 
 logger = logging.getLogger(__name__)
+# Model children remain in the supervisor-owned group so cancellation kills all.
+# During parallel analysis only the host, after draining the pool, cleans that group.
+_parallel_analysis = contextvars.ContextVar('garmin_parallel_analysis', default=False)
+_analysis_cancel = contextvars.ContextVar('garmin_analysis_cancel', default=None)
 
 @dataclass(frozen=True)
 class DailyAnalysis:
@@ -561,6 +568,9 @@ class AnalysisWriter:
             deadline = started + timeout
             next_progress = started + PROGRESS_INTERVAL_SECONDS
             while True:
+                cancelled = _analysis_cancel.get()
+                if cancelled is not None and cancelled.is_set():
+                    raise WriterFailed(failed, 'analysis cancelled')
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
@@ -587,7 +597,8 @@ class AnalysisWriter:
         finally:
             try:
                 _end_child(proc)
-                _cleanup_owned_group(group)
+                if not _parallel_analysis.get():
+                    _cleanup_owned_group(group)
             finally:
                 if trapped:
                     signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
@@ -670,7 +681,7 @@ def _daily_analysis(
             reason = errors.ReportFailReason.CODEX_FAILED
         logger.warning("하루 분석 작성기 실패: %s (%s)", reason, error.detail or "-")
         return _fallback(reason), reason, None
-    except (store.StoreError, psycopg.Error):
+    except (store.StoreError, psycopg.Error, ProcessCleanupError):
         raise
     except Exception as error:  # noqa: BLE001 - 작성기의 예상 밖 실패도 폴백으로 바꾼다
         reason = errors.ReportFailReason.CODEX_FAILED
@@ -1347,7 +1358,13 @@ def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
     feedback, terminal = _scope_retry_state(cfg, day, scope)
     if terminal:
         return None, None, errors.ReportFailReason.OUTPUT_INVALID, None
-    while (attempt := _reserve_scope_attempt(cfg, day, scope)) is not None:
+    while True:
+        cancelled = _analysis_cancel.get()
+        if cancelled is not None and cancelled.is_set():
+            raise SupervisedReportFailed('analysis cancelled')
+        attempt = _reserve_scope_attempt(cfg, day, scope)
+        if attempt is None:
+            break
         _assert_attempt_current(cfg)
         _record_scope_diagnostic(cfg, day, scope, attempt)
         diagnostic = analysis_diagnostics.Attempt(feedback=feedback)
@@ -1362,6 +1379,7 @@ def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
                 diagnostic.code = analysis_diagnostics.code_for(failure)
             # Infrastructure/capability failures do not improve by repairing model output.
             terminal = diagnostic.code in analysis_diagnostics.DETERMINISTIC or diagnostic.code == feedback
+            terminal = terminal or diagnostic.code == 'AGENT_TIMEOUT'
             terminal = terminal or attempt >= MAX_SCOPE_ATTEMPTS
             feedback = diagnostic.code
         except BaseException:
@@ -1429,9 +1447,10 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     exported = report_input.prepare_snapshot(cfg, today, os.environ['BRAIN_WORK_ID'], started_at=started_at)
     runtime = body.runtime_root(cfg)
     usages = []
+    prepared = {}
     for scope in remaining:
         if scope == 'day':
-            inputs = [os.path.relpath(exported.path / 'day', runtime)]
+            prepared[scope] = [os.path.relpath(exported.path / 'day', runtime)]
         else:
             try:
                 folder = report_input.build_period(cfg, exported.path, today, scope)
@@ -1440,17 +1459,49 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
             except (OSError, UnicodeError, json.JSONDecodeError):
                 failed = True
                 continue
-            inputs = [os.path.relpath(folder, runtime),
-                      os.path.relpath(folder / 'profile.md', runtime)]
-        analysis, _, failure, _ = _evaluate_with_retries(cfg, writer, inputs, scope, usages, today)
-        if failure is not None:
-            exhausted.append(scope)
-            failed = True
-            continue
-        _save_evaluation(cfg, today, scope, analysis)
+            prepared[scope] = [os.path.relpath(folder, runtime),
+                               os.path.relpath(folder / 'profile.md', runtime)]
+    # Each task inherits the selected account, but owns its own connections and
+    # short fenced writes. The outer report session advisory lock stays held.
+    group = _owned_process_group() if isinstance(writer, AnalysisWriter) else None
+    trapped, previous = _trap_sigterm()
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='garmin-analysis')
+    token = _parallel_analysis.set(True)
+    cancelled = threading.Event()
+    cancel_token = _analysis_cancel.set(cancelled)
+    futures = {}
+    try:
+        for scope, inputs in prepared.items():
+            context = contextvars.copy_context()
+            futures[pool.submit(context.run, _evaluate_with_retries,
+                cfg, writer, inputs, scope, usages, today)] = scope
+        for future in as_completed(futures):
+            scope = futures[future]
+            analysis, _, failure, _ = future.result()
+            if failure is not None:
+                exhausted.append(scope)
+                failed = True
+                import report_channel
+                report_channel.failure(cfg, today, [scope])
+            else:
+                _assert_attempt_current(cfg)
+                _save_evaluation(cfg, today, scope, analysis)
+    finally:
+        cancelled.set()
+        _analysis_cancel.reset(cancel_token)
+        _parallel_analysis.reset(token)
+        # On cancellation/fencing exceptions, stop the models BEFORE joining threads.
+        # The same group is still the core supervisor's cancellation boundary.
+        try:
+            for future in futures:
+                future.cancel()
+            if group is not None:
+                _cleanup_owned_group(group)
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+            if trapped:
+                signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
     if exhausted:
-        import report_channel
-        report_channel.failure(cfg, today, exhausted)
         raise ScopeAnalysisExhausted('scope retry budget exhausted')
     if failed:
         raise SupervisedReportFailed('analysis or body intake failed')
