@@ -34,3 +34,5 @@ description: Garmin 수동 수집, 이관 사전 점검·이관·검증, 일일 
 일일 report·재생성·report-send는 `garmin.report.completed`, 기간 분석은 `garmin.period_report.completed` 결과 이벤트를 기록한다. 지난 날짜의 예약 따라잡기도 이벤트를 기록하며 당일·과거 판정과 발송은 core 구독 설정이 담당한다. 확장 스크립트는 메신저·채널·발송 시각을 판별하거나 발송을 요청하지 않는다. 구독이 없어도 분석·저장은 성공한다.
 
 기간 분석은 저장된 전체 기간 보고서 문서를 요약 뒤에 첨부한다. 현재 임의 기간용 그래프 렌더러는 없어 기간 분석에 그래프 앨범은 포함되지 않는다.
+
+분석 에이전트는 사용자 공통 `garmin.analysis_agent`(codex/claude), `garmin.analysis_model`, `garmin.analysis_reasoning_effort`, `garmin.analysis_timeout_minutes`로 선택한다. 설정 변경은 brain-config 절차로 진행한다. 네 기간과 custom은 같은 선택을 사용하며 체성분 intake는 Codex를 유지한다. Claude 선택 시 intake 모델은 Codex 로그인 기본값이다. Claude Code는 구독 로그인과 2.1.290 이상이 필요하며 가용하지 않으면 다른 provider로 자동 전환하지 않는다.

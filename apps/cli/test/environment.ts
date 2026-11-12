@@ -28,7 +28,7 @@ const FAKE_AGENT_DIR = mkdtempSync(join(tmpdir(), 'brain-agent-'));
 const FAKE_AGENT = join(FAKE_AGENT_DIR, 'codex');
 const FAKE_LOGIN_SHELL = join(FAKE_AGENT_DIR, 'login-shell');
 // 설치/확장 fixture는 이 Mac의 실제 Codex를 탐지하거나 실행하지 않는다.
-writeFileSync(FAKE_AGENT, '#!/bin/sh\n[ "$1" = "--version" ] || exit 99\nprintf "synthetic-codex 1.0\\n"\n');
+writeFileSync(FAKE_AGENT, '#!/bin/sh\n[ "$1" = "--version" ] || exit 99\nprintf "codex-cli 1.0.0\\n"\n');
 writeFileSync(FAKE_LOGIN_SHELL, `#!/bin/sh\nprintf '%s\\n' '${FAKE_AGENT}'\n`);
 chmodSync(FAKE_AGENT, 0o700); chmodSync(FAKE_LOGIN_SHELL, 0o700);
 

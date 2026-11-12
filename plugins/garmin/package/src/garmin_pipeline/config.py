@@ -34,6 +34,8 @@ class Config:
     lock_wait_seconds: float
     cffi_api_session: bool
 
+    analysis_agent: str = "codex"
+
     @property
     def db_path(self) -> Path:
         """SQLite DB 파일: `<data_dir>/garmin.db`."""

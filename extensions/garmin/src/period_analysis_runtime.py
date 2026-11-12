@@ -50,7 +50,7 @@ def _save(cfg, data, result, work):
                 returning start_date,end_date,revision,summary''',
                 (conn.user_id, conn.connection_id, data['start_date'], data['end_date'], work,
                  json.dumps(focus), result.summary, result.report_md, json.dumps(result.judgments),
-                 json.dumps(result.evidence), json.dumps(result.next_checks), cfg.report_model, dates.now_ms(), json.dumps(result.message),
+                 json.dumps(result.evidence), json.dumps(result.next_checks), report.stored_model(cfg), dates.now_ms(), json.dumps(result.message),
                  conn.user_id, conn.connection_id, data['start_date'], data['end_date'])).fetchone()
     return row
 
@@ -136,7 +136,7 @@ def run(env=None, *, writer=None):
                 saved = _saved(conn, account.work_id)
         if saved is None:
             report_runtime.install_skills(cfg)
-            result = _analyze(cfg, data, report.CodexWriter(executable=report.codex_executable(actual)) if writer is None else writer)
+            result = _analyze(cfg, data, report.analysis_writer(cfg, actual) if writer is None else writer)
             saved = _save(cfg, data, result, account.work_id)
         event = _emit(cfg, saved, actual)
         return json.dumps({'status': 'success', 'revision': saved[2], 'event_id': str(event)})

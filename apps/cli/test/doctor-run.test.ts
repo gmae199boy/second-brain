@@ -120,7 +120,7 @@ describe('brain doctor run without a configuration it can read', () => {
     }
     expect(checks.map((check: { id: string }) => check.id)).toEqual([
       'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', 'extensions',
-      'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'drive-refresh-lock', 'daemon', 'agent-codex-path',
+      'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'drive-refresh-lock', 'daemon', 'agent-codex-path', 'agent-claude-path',
     ]);
     expect(checks).toContainEqual({ id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' });
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
@@ -160,7 +160,7 @@ describe('brain doctor run without a configuration it can read', () => {
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
     expect(run.stdout).toContain('spool: ok 0건');
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 8, 경고 2, 실패 3, 건너뜀 11');
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 8, 경고 3, 실패 3, 건너뜀 11');
     expect(run.stderr).not.toContain('CONFIG_MISSING');
     assertKoreanLines(run.stdout);
   });

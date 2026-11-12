@@ -88,6 +88,10 @@ class ReportFailReason(StrEnum):
     앞의 넷은 하루 분석 작성기 실패이고, 리포트는 하루 분석 자리에 사유를 적어 남긴다. `write_failed`면 리포트 파일이 없다.
     """
 
+    AGENT_CAPABILITY_UNSUPPORTED = "agent_capability_unsupported"
+    AGENT_LOGIN_REQUIRED = "agent_login_required"
+    AGENT_TIMEOUT = "agent_timeout"
+    AGENT_FAILED = "agent_failed"
     CODEX_TIMEOUT = "codex_timeout"
     CODEX_FAILED = "codex_failed"
     OUTPUT_INVALID = "output_invalid"

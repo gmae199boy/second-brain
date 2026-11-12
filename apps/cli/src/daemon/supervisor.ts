@@ -1,4 +1,4 @@
-import { codexRuntimeEnvironment, executableEnvironment } from '../runtime/executable.js';
+import { analysisRuntimeEnvironment, executableEnvironment } from '../runtime/executable.js';
 import { validateSchema } from '../runtime/json-schema.js';
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, rename, rm, readdir, realpath, lstat } from 'node:fs/promises';
@@ -23,7 +23,7 @@ export function scheduleEnvironment(groups: import('second_brain').ScheduledOccu
 /** Runtime lookup and login context for supervised extension processes. */
 export function extensionRuntimeEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const key of ['HOME', 'PATH', 'CODEX_HOME', 'XDG_CONFIG_HOME']) {
+  for (const key of ['HOME', 'PATH', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME']) {
     const value = env[key];
     if (typeof value === 'string') result[key] = value;
   }
@@ -64,8 +64,6 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               const self = userId === undefined ? await resolveSelfUser(opened.store) : { ok: true as const, userId };
               if (!self.ok) return { ok: false, code: self.code };
               // core role로 전역 경로를 읽고 확장 snapshot의 namespace와 분리한다.
-              const agent = await codexRuntimeEnvironment(opened.store, options.env);
-              if (!agent.ok) return { ok: false, code: agent.code };
               const read = await readScopedSettings(opened.store, self.userId, declarations);
               if (!read.ok) return { ok: false, code: read.code };
               let secrets: Record<string, string> = {};
@@ -74,6 +72,10 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
               } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const snapshot = createExtensionSnapshot({ extension: manifest.name, userId: self.userId, stage: manifest.auth?.kind === work.kind ? 'auth' : 'work', declarations, ...('required_settings' in work && Array.isArray(work.required_settings) ? { requiredKeys: work.required_settings } : {}), settings: Object.fromEntries(read.settings.map(setting => [setting.key, setting.value])), secrets, machine: { tokenstore: join(directory, 'tokenstore') } });
               if (!snapshot.ok || !url) return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
+              const provider = JSON.parse(snapshot.serialized).values['garmin.analysis_agent'] ?? 'codex';
+              if (provider !== 'codex' && provider !== 'claude') return { ok: false, code: 'EXTENSION_CONFIG_INVALID' };
+              const agent = await analysisRuntimeEnvironment(opened.store, options.env, provider);
+              if (!agent.ok) return { ok: false, code: agent.code };
               let extensionUrl: string;
               try { extensionUrl = await extensionDatabaseUrl(options.home, manifest.name, url); } catch { return { ok: false, code: 'EXTENSION_CONFIG_INVALID' }; }
               const versions = await opened.store.readSchemaVersions();

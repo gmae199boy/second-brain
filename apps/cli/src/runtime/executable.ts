@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join, normalize, win32 } from 'node:path';
 import { promisify } from 'node:util';
-import { CODEX_PATH_HINT, resolveExecutable, type DoctorCheckSource, type ExecutablePort, type SettingsStore } from 'second_brain';
+import { CODEX_PATH_HINT, agentPathHint, resolveExecutable, type AgentProvider, type DoctorCheckSource, type ExecutablePort, type SettingsStore } from 'second_brain';
 const exec = promisify(execFile);
 export const EXECUTABLE_TIMEOUT_MS = 3_000;
 export type ExecutableRun = (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<string>;
@@ -57,23 +57,30 @@ export function systemExecutablePort(env: NodeJS.ProcessEnv, platform: NodeJS.Pl
       for (const prefix of lines(await safeRun(shell, ['-lc', 'npm prefix -g']))) add(prefix, 'bin');
       return [...new Set(result.map(p => paths.normalize(p)))];
     },
-    async inspect(path) {
+    async inspect(path, name) {
       if (!paths.isAbsolute(path)) return 'not-executable';
       try { if (!(await stat(path)).isFile()) return 'not-executable'; await access(path, platform === 'win32' ? constants.F_OK : constants.X_OK); }
       catch { return 'not-executable'; }
-      try { return (await run(path, ['--version'], env)).trim() ? 'ok' : 'version-failed'; }
+      try {
+        const version = (await run(path, ['--version'], env)).trim();
+        const valid = name === 'claude' ? /^\d+\.\d+\.\d+ \(Claude Code\)$/i.test(version)
+          : name === 'codex' ? /^(?:codex-cli|codex) \d+(?:\.\d+)*(?:[-+][A-Za-z0-9.-]+)?$/i.test(version) : Boolean(version);
+        return valid ? 'ok' : 'version-failed';
+      }
       catch { return 'version-failed'; }
     },
   };
 }
 
 export function executableSettingValidator(env: NodeJS.ProcessEnv) {
-  return async (value: string) => {
-    if (!isAbsolute(value)) return { ok: false as const, message: `Codex 경로는 절대 경로여야 합니다. ${CODEX_PATH_HINT}` };
+  return async (value: string, key = 'agent.codex_path') => {
+    const provider: AgentProvider = key === 'agent.claude_path' ? 'claude' : 'codex';
+    const hint = agentPathHint(provider);
+    if (!isAbsolute(value)) return { ok: false as const, message: `${provider} 경로는 절대 경로여야 합니다. ${hint}` };
     let path: string;
-    try { path = await realpath(value); } catch { return { ok: false as const, message: `Codex 실행 파일을 확인할 수 없습니다. ${CODEX_PATH_HINT}` }; }
+    try { path = await realpath(value); } catch { return { ok: false as const, message: `${provider} 실행 파일을 확인할 수 없습니다. ${hint}` }; }
     // 저장할 경로를 먼저 확정한다. symlink 뒤의 ..는 문자열 normalize와 의미가 다르다.
-    const result = await resolveExecutable(systemExecutablePort(env), 'codex', path);
+    const result = await resolveExecutable(systemExecutablePort(env), provider, provider === 'claude' ? value : path);
     return result.ok ? { ok: true as const, value: result.path } : { ok: false as const, message: result.message };
   };
 }
@@ -106,4 +113,48 @@ export async function codexRuntimeEnvironment(store: Pick<SettingsStore, 'getSet
   const found = path ? await resolveExecutable(port, 'codex', path) : null;
   const result: Record<string, string> = found?.ok ? { BRAIN_CODEX_PATH: found.path } : {};
   return { ok: true as const, env: result };
+}
+
+/** Claude native 업데이트에도 안정 launcher 경로를 보존한다. */
+export async function detectAgentPath(store: Pick<SettingsStore, 'getSettings' | 'insertSetting'>, env: NodeJS.ProcessEnv, provider: AgentProvider, port = systemExecutablePort(env)): Promise<string> {
+  const key = `agent.${provider}_path`, hint = agentPathHint(provider);
+  const prior = await store.getSettings({ userId: null, keys: [key] });
+  if (!prior.ok) return `${provider} 설정을 조회하지 못했습니다. ${hint}`;
+  if (prior.settings.length) return `${provider} 경로 설정을 유지했습니다. brain doctor run으로 확인하세요`;
+  const found = await resolveExecutable(port, provider);
+  if (!found.ok) return found.message;
+  const saved = await store.insertSetting({ userId: null, key, value: found.path, updatedAt: new Date() });
+  return saved.ok ? `${provider} 실행 파일을 탐지해 ${key}에 저장했습니다 (${found.source})` : `${provider} 경로를 저장하지 못했습니다. ${hint}`;
+}
+export function agentPathCheck(store: Pick<SettingsStore, 'getSettings'>, port: ExecutablePort, provider: AgentProvider): DoctorCheckSource {
+  const id = `agent-${provider}-path`, key = `agent.${provider}_path`;
+  return { id, async run() {
+    const read = await store.getSettings({ userId: null, keys: [key] });
+    if (!read.ok) return { id, status: 'warn', code: read.code, detail: `${provider} 설정을 읽지 못했습니다` };
+    const path = read.settings[0]?.value;
+    if (path === undefined) return { id, status: 'warn', code: 'ANALYSIS_AGENT_NOT_FOUND', detail: `${provider} 경로가 저장되지 않았습니다. ${agentPathHint(provider)}` };
+    const found = await resolveExecutable(port, provider, path);
+    return found.ok ? { id, status: 'ok', detail: `저장된 ${provider} 실행 경로와 버전을 확인했습니다` } : { id, status: 'warn', code: found.code, detail: found.message };
+  } };
+}
+/** provider는 확장 snapshot에서만 선택하며 global 경로는 snapshot에 넣지 않는다. */
+export async function analysisRuntimeEnvironment(store: Pick<SettingsStore, 'getSettings'>, env: NodeJS.ProcessEnv, provider: AgentProvider, port = systemExecutablePort(env)) {
+  const keys = [...new Set(['agent.codex_path', `agent.${provider}_path`])];
+  const read = await store.getSettings({ userId: null, keys });
+  if (!read.ok) return read;
+  const result: Record<string, string> = { BRAIN_ANALYSIS_AGENT: provider };
+  for (const name of [...new Set<AgentProvider>(['codex', provider])]) {
+    const path = read.settings.find(s => s.key === `agent.${name}_path`)?.value;
+    if (path === undefined) continue;
+    const found = await resolveExecutable(port, name, path);
+    if (found.ok) {
+      if (name === 'codex') result.BRAIN_CODEX_PATH = found.path;
+      if (name === provider) result.BRAIN_ANALYSIS_EXECUTABLE = found.path;
+    }
+  }
+  return { ok: true as const, env: result };
+}
+
+export async function detectAnalysisPaths(store: Pick<SettingsStore, 'getSettings' | 'insertSetting'>, env: NodeJS.ProcessEnv): Promise<string> {
+  return [await detectCodexPath(store, env), await detectAgentPath(store, env, 'claude')].join('\n');
 }

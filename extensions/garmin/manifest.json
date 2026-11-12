@@ -340,7 +340,11 @@
       "key": "garmin.analysis_agent",
       "type": "string",
       "required": [],
-      "default": "codex"
+      "default": "codex",
+      "enum": [
+        "codex",
+        "claude"
+      ]
     },
     {
       "key": "garmin.analysis_model",
@@ -351,7 +355,16 @@
       "key": "garmin.analysis_reasoning_effort",
       "type": "string",
       "required": [],
-      "default": "high"
+      "default": "high",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     {
       "key": "garmin.analysis_timeout_minutes",

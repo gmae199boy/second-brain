@@ -17,11 +17,11 @@ def validate_settings(values):
         raise ValueError('invalid settings')
     if any(not isinstance(values[k], str) for k in _STRING_SETTINGS & values.keys()):
         raise ValueError('invalid string setting')
-    if values.get('garmin.analysis_agent', 'codex') != 'codex':
+    if values.get('garmin.analysis_agent', 'codex') not in ('codex', 'claude'):
         raise ValueError('invalid analysis agent')
     if 'garmin.analysis_model' in values and not values['garmin.analysis_model'].strip():
         raise ValueError('invalid model')
-    if values.get('garmin.analysis_reasoning_effort', 'high') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh'):
+    if values.get('garmin.analysis_reasoning_effort', 'high') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
         raise ValueError('invalid reasoning effort')
     timeout = values.get('garmin.analysis_timeout_minutes', 20)
     if type(timeout) not in (int, float) or not 1 <= timeout <= 9007199254740991 or int(timeout) != timeout:

@@ -53,7 +53,10 @@ export const TELEGRAM_CHAT_ID: SettingDefinition = {
 export const AGENT_CODEX_PATH: SettingDefinition = { key: 'agent.codex_path', scope: 'global', defaultValue: '', normalize(raw) {
   return raw === '' || isAbsoluteExecutablePath(raw) ? { ok: true, value: raw } : { ok: false, message: `Codex 경로는 절대 경로여야 합니다. ${CODEX_PATH_HINT}` };
 } };
-export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [AGENT_CODEX_PATH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS, DRIVE_ROOT_FOLDER_ID, DRIVE_WATCH_FOLDERS, DRIVE_SYNC_INTERVAL, DRIVE_ACCOUNT_ID];
+export const AGENT_CLAUDE_PATH: SettingDefinition = { key: 'agent.claude_path', scope: 'global', defaultValue: '', normalize(raw) {
+  return raw === '' || isAbsoluteExecutablePath(raw) ? { ok: true, value: raw } : { ok: false, message: 'Claude 경로는 절대 경로여야 합니다' };
+} };
+export const CORE_SETTING_DEFINITIONS: readonly SettingDefinition[] = [AGENT_CODEX_PATH, AGENT_CLAUDE_PATH, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TIMEZONE_SETTING, DRIVE_KEEP_LOCAL_DAYS, DRIVE_ROOT_FOLDER_ID, DRIVE_WATCH_FOLDERS, DRIVE_SYNC_INTERVAL, DRIVE_ACCOUNT_ID];
 /** Extensions register complete definitions; unknown namespaces stay unknown. */
 export function settingDefinitions(extensions: readonly SettingDefinition[] = []): ReadonlyMap<string, SettingDefinition> {
   const definitions = new Map(CORE_SETTING_DEFINITIONS.map(def => [def.key, def]));
@@ -86,7 +89,7 @@ export interface SettingsDependencies {
   schemaVersions: SchemaVersions;
   clock: Clock;
   settingDefinitions?: readonly SettingDefinition[];
-  validateExecutablePath?: (value: string) => Promise<SettingValidation>;
+  validateExecutablePath?: (value: string, key?: string) => Promise<SettingValidation>;
   onSettingChanged?: (change:{key:string;value:string})=>Promise<void>;
 }
 function invalid(message: string): SettingResult { return { ok: false, code: 'CONFIG_INVALID', message }; }
@@ -113,10 +116,10 @@ export async function setSetting(deps: SettingsDependencies, input: { key: strin
   if (input.scope !== undefined && input.scope !== scope) return invalid('설정 scope가 일치하지 않습니다');
   const parsed = definition.normalize(input.value);
   if (!parsed.ok) return invalid(parsed.message);
-  if (input.key === AGENT_CODEX_PATH.key) {
-    if (parsed.value === '') return invalid(`Codex 경로는 비어 있을 수 없습니다. ${CODEX_PATH_HINT}`);
+  if (input.key === AGENT_CODEX_PATH.key || input.key === AGENT_CLAUDE_PATH.key) {
+    if (parsed.value === '') return invalid('분석 실행 파일 경로는 비어 있을 수 없습니다');
     if (!deps.validateExecutablePath) return invalid('실행 파일 검증기를 사용할 수 없습니다');
-    const checked = await deps.validateExecutablePath(parsed.value);
+    const checked = await deps.validateExecutablePath(parsed.value, input.key);
     if (!checked.ok) return invalid(checked.message);
     parsed.value = checked.value;
   }
