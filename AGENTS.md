@@ -28,7 +28,8 @@ Personal Brain (`second-brain`): a local-first memory of agent sessions whose so
 
 ## 티켓 자동화와 컴팩션 복구
 
-- 새 세션 또는 컴팩션 후 첫 행동은 `_bmad-output/personal-brain/automation/runbook.md`를 읽는 것이다. 자동화 관련 작업·재개·상태 보고 전에는 반드시 다시 읽는다.
+- **중앙 감독자만** 새 세션 또는 컴팩션 후 첫 행동으로 `_bmad-output/personal-brain/automation/runbook.md`를 읽는다. 자동화 관련 작업·재개·상태 보고 전에는 반드시 다시 읽는다.
+- Orca로 배정된 워커(Task·Dispatch ID가 있는 세션)는 런북을 읽지 않는다 — 2026-11-12 사용자 지시. 워커는 자기 Task 명세와 이 파일의 다른 절(정책·시험 실행 범위·공개 CLI와 스킬)만 따른다. 명세가 런북의 특정 절을 지목할 때만 그 절을 읽는다.
 - 중앙 감독자는 `.brain-automation/state.json`도 읽고 실제 Git·티켓·Orca 상태와 대조한다. 없거나 손상됐으면 실행 중인 워커가 없다고 추정하지 말고 런북의 복구 절차를 따른다.
 - 티켓 워커는 자신의 Dispatch 지시와 전용 체크포인트를 먼저 복원한다. 중앙 상태 파일을 수정하거나 main을 병합·푸시하지 않는다.
 - 런북·상태가 실행 준비 단계이면 티켓을 자동 시작하지 않는다. 실행 중이면 실제 상태와 대조한 다음 행동을 이어 간다. 컴팩션은 실행 승인이나 중단 상태를 바꾸지 않는다.
