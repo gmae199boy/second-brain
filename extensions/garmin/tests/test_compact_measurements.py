@@ -10,6 +10,7 @@ FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures/training-analysis-v2/c
 class CompactMeasurementsTest(unittest.TestCase):
     def test_every_session_set_window_missing_value_and_reference_is_preserved(self):
         original = json.loads(FIXTURE.read_text())
+        original['comparison'] = copy.deepcopy(original['current'])
         before = copy.deepcopy(original)
         result = compact_measurements.build(original)
         self.assertEqual(original, before)

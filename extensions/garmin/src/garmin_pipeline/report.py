@@ -1562,11 +1562,16 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
     token = _model_batch.set(batch)
     cancel_token = _analysis_cancel.set(cancelled)
     futures = {}
+    fatal_errors = []
+    fatal_lock = threading.Lock()
     try:
         def evaluate_scope(inputs, scope):
             try:
                 return _evaluate_with_retries(cfg, writer, inputs, scope, usages, today)
-            except BaseException:
+            except BaseException as error:
+                with fatal_lock:
+                    if not fatal_errors:
+                        fatal_errors.append(error)
                 cancelled.set()
                 raise
         for scope, inputs in prepared.items():
@@ -1574,7 +1579,16 @@ def run_supervised(cfg, writer, *, regenerate=False, today=None):
             futures[pool.submit(context.run, evaluate_scope, inputs, scope)] = scope
         for future in as_completed(futures):
             scope = futures[future]
-            analysis, _, failure, _ = future.result()
+            try:
+                analysis, _, failure, _ = future.result()
+            except BaseException:
+                # A queued task may observe cancellation before as_completed
+                # yields the task that caused it. Preserve that primary error.
+                with fatal_lock:
+                    primary = fatal_errors[0] if fatal_errors else None
+                if primary is not None:
+                    raise primary from None
+                raise
             if failure is not None:
                 exhausted.append(scope)
                 failed = True
