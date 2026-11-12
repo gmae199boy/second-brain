@@ -112,9 +112,54 @@ class TrainingChartsTest(unittest.TestCase):
         charts._heart(fig, model)
         primary = fig.axes[0]
         self.assertTrue(primary.lines)
-        self.assertEqual(primary.lines[0].get_marker(), 'o')
+        self.assertEqual(len(fig.axes), 1)
         self.assertEqual(len(primary.patches), 0)
         self.assertTrue(any('심박' in line.get_label() for line in primary.lines))
+
+    def test_multiple_activities_share_legacy_time_axis_zones_and_legend(self):
+        from matplotlib.colors import to_rgba
+        model = charts.adapt_measurements(fixture())
+        base = model['sessions'][0]
+        first = dict(base, session_id='first', start_ms=60000, end_ms=180000,
+                     label='합성 근력', hr_samples=[(60000, 100), (120000, 130)],
+                     zone_lows=[90, 110, 130, 150, 170])
+        second = dict(base, session_id='second', start_ms=240000, end_ms=360000,
+                      label='합성 걷기', hr_samples=[(240000, 120), (300000, 140)],
+                      zone_lows=[90, 110, 130, 150, 170])
+        no_hr = dict(base, session_id='empty', start_ms=420000, end_ms=480000,
+                     label='합성 심박 없음', hr_samples=[], zone_lows=[None] * 5)
+        model['sessions'] = [second, no_hr, first]
+        fig = figure(); self.addCleanup(fig.clear)
+        self.assertTrue(charts._heart(fig, model))
+        self.assertEqual(len(fig.axes), 1)
+        ax = fig.axes[0]
+        heart = ax.lines[0]
+        self.assertEqual(heart.get_color(), 'tab:red')
+        self.assertEqual(list(heart.get_xdata()), [0, 1, 3, 4])
+        self.assertEqual(list(heart.get_ydata()), [100, 130, 120, 140])
+        self.assertEqual([line.get_xdata()[0] for line in ax.lines[1:]], [0, 2, 3, 5, 6, 7])
+        self.assertEqual([text.get_text() for text in ax.texts], ['합성 근력', '합성 걷기', '합성 심박 없음'])
+        self.assertEqual([t.get_text() for t in ax.get_legend().get_texts()], ['심박'] + [f'존 {i}' for i in range(1, 6)])
+        self.assertEqual(len(ax.collections), 10)
+        for collection, color in zip(ax.collections[:5], ['tab:blue', 'tab:green', 'gold', 'tab:orange', 'tab:red']):
+            self.assertEqual(tuple(collection.get_facecolor()[0]), to_rgba(color, .12))
+        self.assertEqual(ax.get_xlabel(), '시간 (분)')
+        self.assertEqual(len(ax.patches), 0)
+
+    def test_heart_handles_missing_start_duplicate_samples_and_no_samples(self):
+        model = charts.adapt_measurements(fixture())
+        base = model['sessions'][0]
+        model['sessions'] = [dict(base, start_ms=None, end_ms=None, hr_samples=[(60000, 100)]),
+                             dict(base, session_id='later', start_ms=120000, end_ms=180000,
+                                  hr_samples=[(60000, 999), (120000, 120)])]
+        fig = figure(); self.addCleanup(fig.clear)
+        charts._heart(fig, model)
+        self.assertEqual(len(fig.axes), 1)
+        self.assertEqual(list(fig.axes[0].lines[0].get_ydata()), [100, 120])
+        model['sessions'] = [dict(base, hr_samples=[])]
+        empty = figure(); self.addCleanup(empty.clear)
+        self.assertFalse(charts._heart(empty, model))
+        self.assertEqual(empty.axes, [])
 
     def test_render_all_scopes_metadata_limits_and_private_files(self):
         with tempfile.TemporaryDirectory() as folder:

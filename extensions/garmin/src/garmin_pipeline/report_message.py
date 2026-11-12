@@ -148,8 +148,8 @@ def _plain(value):
 
 
 def render_scope(structure):
-    """C1 수행 줄과 짧은 평가만 표시한다. 목표 1500, 최대 4000 UTF-16이다."""
-    from garmin_pipeline.training_display import display_name, localize_text
+    """수행 나열 없이 짧은 평가와 다음 행동을 표시한다. 목표 1500, 최대 4000 UTF-16이다."""
+    from garmin_pipeline.training_display import localize_text
     if structure.get('schema_version') != 'garmin.scope_analysis.v2' or structure.get('scope') not in SCOPES:
         raise ValueError('invalid scope message structure')
     scope, window = structure['scope'], structure['range']
@@ -184,19 +184,15 @@ def render_scope(structure):
             actions.append(action_line)
     if not structure.get('next_workout_actions'):
         actions = [short(x) for x in message.get('recommendations', [])[:2]]
-    findings = structure.get('performance_lines')
-    if findings is None:
-        # 구 저장 v2에는 C1 수행 줄이 없다. 모델의 과거 날짜 나열을 메시지에 다시 싣지 않는다.
-        findings = list(dict.fromkeys(display_name(key) + ' (상세 기록은 통합 문서 참고)' for key in keys))
     recovery = [short(' '.join(filter(None, (x.get('context'), x.get('effect_on_training'), x.get('uncertainty')))), whole=True)
                 for x in structure.get('recovery_context', [])][:3]
     limits = [short(x.get('detail') or x.get('affected_judgment')) for x in structure.get('limitations', []) if x.get('scope') == scope][:2]
     sections = [('판정', [short(summary.get('headline')), short(summary.get('assessment'))]),
-                ('다음 운동', actions), ('운동 수행', findings), ('회복', recovery), ('한계', limits)]
+                ('다음 운동', actions), ('회복', recovery), ('한계', limits)]
     note = '\n\n일부 내용은 길이 제한으로 생략했습니다. 통합 문서에서 전체 평가를 확인하세요.'
     if utf16_length('\n'.join(lines)) > 4000 - utf16_length(note):
         raise ValueError('scope header exceeds message budget')
-    # 목표 길이 때문에 유효한 수행/행동/한계를 버리지 않는다. 모두 들어가면 그대로 보낸다.
+    # 목표 길이 때문에 유효한 판정/행동/한계를 버리지 않는다. 모두 들어가면 그대로 보낸다.
     complete = lines[:]
     seen = set()
     for label, values in sections:
@@ -206,9 +202,8 @@ def render_scope(structure):
             complete.extend(['', label] + ['• ' + value for value in unique])
     if utf16_length('\n'.join(complete) + (note if omitted else '')) <= 4000:
         return '\n'.join(complete) + (note if omitted else '')
-    # 하드 상한 초과 때만 생략한다. 먼저 수행과 다른 필수 구획에 쓸 공간을 예약한다.
+    # 하드 상한 초과 때만 기존 구획 순서대로 완전한 줄을 생략한다.
     budget = 4000 - utf16_length(note)
-    reserved = utf16_length('\n'.join(['', '운동 수행'] + ['• ' + plain(value) for value in findings]))
     for label, values in sections:
         heading = False
         for value in values:
@@ -217,8 +212,7 @@ def render_scope(structure):
                 continue
             seen.add(value)
             candidate = ([] if heading else ['', label]) + ['• ' + value]
-            allowance = budget - reserved if label in ('판정', '다음 운동') else budget
-            if utf16_length('\n'.join(lines + candidate)) <= allowance:
+            if utf16_length('\n'.join(lines + candidate)) <= budget:
                 lines.extend(candidate); heading = True
             else:
                 omitted = True

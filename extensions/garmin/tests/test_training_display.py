@@ -84,7 +84,7 @@ class TrainingDisplayTest(unittest.TestCase):
         self.assertNotIn('모델이', '\n'.join(result['performance_lines']))
         self.assertEqual(data['performance_lines'], ['모델이 만든 과거 기록 나열'])
 
-    def test_day_and_month_message_are_short_and_one_row_per_exercise(self):
+    def test_day_and_month_message_omit_enriched_performance(self):
         for scope in ('day', '30d'):
             path = Path(__file__).parent / 'fixtures/messages-v2' / (scope + '.json')
             structure = json.loads(path.read_text())
@@ -94,11 +94,11 @@ class TrainingDisplayTest(unittest.TestCase):
             structure = display.enrich_analysis(structure, value)
             text = report_message.render_scope(structure)
             self.assertLessEqual(report_message.utf16_length(text), 1500)
-            block = text.split('\n운동 수행\n')[1].split('\n\n')[0]
-            self.assertEqual(len(block.splitlines()), 1)
-            self.assertIn('웨이티드 푸시업', block)
+            self.assertNotIn('\n운동 수행\n', text)
+            for line in structure['performance_lines']:
+                self.assertNotIn(line, text)
             self.assertNotIn('PUSH_UP', text)
-            self.assertNotIn('2025-', block)
+            self.assertNotIn('2025-', text)
 
     def test_missing_set_strength_session_remains_visible(self):
         value = measurements()

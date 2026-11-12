@@ -37,10 +37,10 @@ class MessageV2Test(unittest.TestCase):
             texts.append(text)
         self.assertEqual(len(set(texts)), 4)
 
-    def test_unknown_activity_type_is_preserved_without_guessing(self):
+    def test_unknown_activity_type_is_not_listed_as_performance(self):
         value = fixture()
         value['aerobic_findings'][0]['activity_type'] = None
-        self.assertIn('유형 미상', messages.render_scope(value))
+        self.assertNotIn('운동 수행', messages.render_scope(value))
 
     def test_budget_drops_whole_sentences_and_keeps_actions_and_limitations(self):
         value = fixture()
@@ -50,11 +50,29 @@ class MessageV2Test(unittest.TestCase):
         text = messages.render_scope(value)
         self.assertLessEqual(messages.utf16_length(text), 4000)
         self.assertNotIn('😀', text)
-        self.assertIn('합성운동 (상세 기록은 통합 문서 참고)', text)
-        self.assertNotIn('과거', text.split('운동 수행')[-1])
+        self.assertNotIn('합성운동', text)
+        self.assertNotIn('운동 수행', text)
         self.assertIn(value['next_workout_actions'][0]['action'], text)
         self.assertIn(value['limitations'][0]['detail'], text)
         self.assertNotIn('…', text)
+
+    def test_all_scopes_omit_performance_with_or_without_host_lines(self):
+        for scope in messages.SCOPES:
+            for enriched in (False, True):
+                with self.subTest(scope=scope, enriched=enriched):
+                    value = fixture(scope)
+                    value['recovery_context'] = [{'context': '합성 회복 관측.', 'effect_on_training': '조건 유지.', 'uncertainty': '인과 불확실.'}]
+                    if enriched:
+                        value['performance_lines'] = ['합성 수행 기록 10kg × 10·10']
+                    text = messages.render_scope(value)
+                    self.assertNotIn('운동 수행', text)
+                    self.assertNotIn('합성 수행 기록', text)
+                    self.assertNotIn('상세 기록은 통합 문서 참고', text)
+                    for label in ('판정', '다음 운동', '회복', '한계'):
+                        self.assertIn('\n' + label + '\n', text)
+                    # 수행 행의 유무·길이가 나머지 구획에 영향을 주지 않는다.
+                    value['performance_lines'] = ['다른 수행 행' * 2000] * 20
+                    self.assertEqual(messages.render_scope(value), text)
 
     def test_conditional_action_is_an_indivisible_semantic_unit(self):
         value = fixture()
@@ -124,7 +142,7 @@ class MessageV2Test(unittest.TestCase):
         self.assertTrue(all(call.args[2] == ['fixed-snapshot'] for call in evaluate.call_args_list))
         self.assertEqual(record.call_args.args[4].code, 'SUCCESS')
 
-    def test_target_budget_never_drops_rows_that_fit_hard_limit(self):
+    def test_performance_rows_do_not_expand_other_sections(self):
         value = fixture()
         value['training_summary'].update(headline='판정' * 80 + '.', assessment='해석' * 80 + '.')
         value['next_workout_actions'] = [dict(value['next_workout_actions'][0], action=f'제안{i}' + '행동' * 80, reason='이유' * 50, condition='조건' * 50) for i in range(2)]
@@ -132,7 +150,7 @@ class MessageV2Test(unittest.TestCase):
         text = messages.render_scope(value)
         self.assertLessEqual(messages.utf16_length(text), 4000)
         for line in value['performance_lines']:
-            self.assertIn(line, text)
+            self.assertNotIn(line, text)
         self.assertIn('제안0', text); self.assertIn('제안1', text)
         self.assertIn('한계', text)
         self.assertIn('판정' * 80, text)

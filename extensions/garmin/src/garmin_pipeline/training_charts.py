@@ -14,7 +14,7 @@ from pathlib import Path
 
 SCOPES = ('day', '7d', '30d', 'all')
 LABELS = dict(zip(SCOPES, ('1일', '7일', '30일', '전체')))
-RENDERER_VERSION = 'training-charts-v2'
+RENDERER_VERSION = 'training-charts-v3'
 MAX_EXERCISES = 8
 
 
@@ -197,17 +197,29 @@ def _strength(figure, model, groups):
 
 
 def _heart(figure, model):
-    # 재설계 전 charts._session의 존 배경·활동 경계·심박선·범례를 그대로 재사용한다.
-    # 세트 수직 음영은 존 배경과 겹치므로 제외한다. C1에 없는 BB는 채우지 않는다.
+    # 이전 _session의 한 축에 그날 모든 활동과 표본을 함께 표시한다.
+    # C1에 없는 BB는 채우지 않으며 세트 수직 음영은 추가하지 않는다.
     from garmin_pipeline.charts import _session
-    sessions = [s for s in model['sessions'] if s['hr_samples']]
-    axes = figure.subplots(len(sessions), 1, squeeze=False).flat
-    for index, (ax, session) in enumerate(zip(axes, sessions), 1):
-        origin = session['start_ms'] if session['start_ms'] is not None else session['hr_samples'][0][0]
-        item = {'hr': session['hr_samples'], 'start_ms': origin, 'body_battery': [],
-                'activities': [{'start_ms': origin, 'end_ms': session['end_ms'],
-                                'label': session['label'], 'zone_low_bpm': session['zone_lows']}]}
-        _session(figure, item, index, ax=ax)
+    sessions = sorted(model['sessions'], key=lambda s: (
+        s['start_ms'] if s['start_ms'] is not None else
+        s['hr_samples'][0][0] if s['hr_samples'] else float('inf'), str(s['session_id'])))
+    samples, activities, starts = {}, [], []
+    for session in sessions:
+        start = session['start_ms']
+        if start is None and session['hr_samples']:
+            start = session['hr_samples'][0][0]
+        for at, bpm in session['hr_samples']:
+            # 이전 _read_sessions와 같이 겹치는 timestamp는 첫 활동 표본을 보존한다.
+            samples.setdefault(at, bpm)
+        if start is not None:
+            starts.append(start)
+            activities.append({'start_ms': start, 'end_ms': session['end_ms'],
+                               'label': session['label'], 'zone_low_bpm': session['zone_lows']})
+    if not samples:
+        return False
+    item = {'hr': sorted(samples.items()), 'start_ms': min(starts + list(samples)),
+            'body_battery': [], 'activities': activities}
+    return _session(figure, item, 1)
 
 
 def render_model(model, out_dir, *, cache_dir=None):
@@ -231,9 +243,9 @@ def render_model(model, out_dir, *, cache_dir=None):
     for name, metric, groups, draw in jobs:
         path, figure = out_dir / name, None
         try:
-            rows = len(groups) if groups else sum(bool(s['hr_samples']) for s in model['sessions'])
+            rows = len(groups)
             with matplotlib.rc_context({'font.family': FONT_FAMILY, 'axes.unicode_minus': False}):
-                figure = Figure(figsize=(14 if groups else 12, min(24, max(5, rows * 3.5))), dpi=150)
+                figure = Figure(figsize=(14, min(24, max(5, rows * 3.5))) if groups else (12, 6), dpi=150)
                 draw(figure)
                 title = _heading(model)
                 figure.suptitle(title, fontsize=12)
