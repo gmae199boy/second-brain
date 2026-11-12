@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 from garmin_pipeline import (
     body,
+    analysis_output,
     charts,
     config,
     dates,
@@ -96,6 +97,7 @@ class DailyAnalysis:
     next_checks: list[str] = field(default_factory=list)
     usage: dict[str, int] | None = None
     message: dict | None = None
+    structured: dict | None = None
 
 
 class WriterFailed(Exception):
@@ -171,6 +173,7 @@ def codex_argv(
     inputs: list[str] | None = None,
     intake: bool = False,
     scope: str | None = None,
+    output_contract: str | None = None,
 ) -> list[str]:
     """`codex exec` argv(셸 없음). `-i`가 값을 여러 개 받으므로 프롬프트를 그 앞에 둔다."""
     argv = [
@@ -193,7 +196,8 @@ def codex_argv(
         str(schema),
         "-o",
         str(output),
-        codex_prompt(images if inputs is None else inputs, intake=intake, scope=scope),
+        codex_prompt(images if inputs is None else inputs, intake=intake, scope=scope)
+        + (f"\n\n출력 계약: {output_contract}. 이 schema의 필드만 출력한다." if output_contract else ""),
     ]
     if images:
         argv += ["-i", *images]
@@ -303,7 +307,7 @@ def _schema_error(schema: dict[str, object], instance: object) -> str | None:
     return f"{location}: {error.validator}"
 
 
-def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
+def _read_output(output: Path, schema_path: Path, *, measurements=None) -> DailyAnalysis | dict:
     """`-o` 파일을 스키마로 검증해 `DailyAnalysis`. 맞지 않으면 `WriterFailed(output_invalid)`."""
     invalid = errors.ReportFailReason.OUTPUT_INVALID
     try:
@@ -328,6 +332,10 @@ def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
         raise WriterFailed(invalid, "report_md가 비어 있음")
     if not _utf8(data["report_md"]) or not _utf8(data["summary"]):
         raise WriterFailed(invalid, "summary이 UTF-8이 아님")
+    try:
+        analysis_output.validate(data, measurements)
+    except ValueError as error:
+        raise WriterFailed(invalid, str(error)) from None
     return DailyAnalysis(
         data["status"],
         data["report_md"],
@@ -336,6 +344,7 @@ def _read_output(output: Path, schema_path: Path) -> DailyAnalysis | dict:
         data["evidence"],
         data["next_checks"],
         message=data.get("message"),
+        structured=data if data.get("schema_version") == analysis_output.VERSION else None,
     )
 
 
@@ -395,12 +404,16 @@ class CodexWriter:
                 failed, f"임시 폴더를 만들지 못함: {type(error).__name__}"
             ) from None
         try:
+            measurements = None if intake else analysis_output.measurements_for_inputs(
+                body.runtime_root(cfg), inputs, scope)
             resource = (
                 importlib.resources.files("garmin_pipeline")
                 / "schemas"
                 / (
                     "body_intake_output.schema.json"
                     if intake
+                    else analysis_output.SCHEMA
+                    if measurements is not None
                     else "period_review_output.schema.json"
                     if scope
                     else REPORT_OUTPUT_SCHEMA
@@ -417,12 +430,13 @@ class CodexWriter:
                     inputs=images if intake else inputs,
                     intake=intake,
                     scope=scope,
+                    output_contract=None if intake else schema_path.name,
                 )
                 events = workdir / "events.jsonl"
                 with events.open("wb") as stream:
                     self._run(cfg, argv, timeout, stdout=stream, progress=self.progress,
                               body_handler=self.body_handler if intake else None, workdir=workdir)
-                result = _read_output(output, schema_path)
+                result = _read_output(output, schema_path, measurements=measurements)
                 if isinstance(result, DailyAnalysis):
                     result = replace(result, usage=_usage(events))
                 return result

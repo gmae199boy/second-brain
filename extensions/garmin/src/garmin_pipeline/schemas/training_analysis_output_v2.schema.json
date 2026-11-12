@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "report_md": {
+      "type": "string"
+    },
+    "judgments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "message": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "headline": {
+          "type": "string"
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2
+        },
+        "trend_line": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "headline",
+        "recommendations",
+        "trend_line",
+        "limitations",
+        "schema_version",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "garmin.scope_analysis.v2"
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "day",
+        "7d",
+        "30d",
+        "all"
+      ]
+    },
+    "training_summary": {
+      "type": "object",
+      "properties": {
+        "headline": {
+          "type": "string"
+        },
+        "assessment": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "performed",
+            "no_workout",
+            "sets_missing"
+          ]
+        }
+      },
+      "required": [
+        "headline",
+        "assessment",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "strength_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "exercise_key": {
+            "type": "string"
+          },
+          "observation_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observed_change": {
+            "type": "string"
+          },
+          "comparison_status": {
+            "type": "string",
+            "enum": [
+              "comparable",
+              "partial",
+              "insufficient"
+            ]
+          },
+          "interpretation": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "moderate",
+              "low"
+            ]
+          },
+          "missing_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "exercise_key",
+          "observation_refs",
+          "observed_change",
+          "comparison_status",
+          "interpretation",
+          "confidence",
+          "missing_evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "aerobic_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "activity_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activity_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observed_change": {
+            "type": "string"
+          },
+          "interpretation": {
+            "type": "string"
+          },
+          "comparison_status": {
+            "type": "string",
+            "enum": [
+              "comparable",
+              "conditions_differ",
+              "insufficient_history"
+            ]
+          },
+          "comparison_conditions": {
+            "type": "string"
+          },
+          "intensity_basis": {
+            "type": "string",
+            "enum": [
+              "hr_zones",
+              "hr_samples",
+              "hr_summary",
+              "duration_only"
+            ]
+          },
+          "grade_status": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "unrecorded",
+              "not_applicable"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "activity_type",
+          "activity_refs",
+          "observed_change",
+          "interpretation",
+          "comparison_status",
+          "comparison_conditions",
+          "intensity_basis",
+          "grade_status",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "progression": {
+      "type": "object",
+      "properties": {
+        "observed_progress": {
+          "type": "string",
+          "enum": [
+            "maintained",
+            "increased",
+            "decreased",
+            "not_comparable"
+          ]
+        },
+        "observation_reason": {
+          "type": "string"
+        },
+        "overload_decision": {
+          "type": "string",
+          "enum": [
+            "follow_plan",
+            "maintain",
+            "consider_adjustment",
+            "insufficient_evidence"
+          ]
+        },
+        "decision_reason": {
+          "type": "string"
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "observed_progress",
+        "observation_reason",
+        "overload_decision",
+        "decision_reason",
+        "missing_evidence",
+        "evidence_refs"
+      ],
+      "additionalProperties": false
+    },
+    "next_workout_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "exercise_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "required_input": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "exercise_key",
+          "action",
+          "reason",
+          "condition",
+          "required_input",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 2
+    },
+    "recovery_context": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "string"
+          },
+          "effect_on_training": {
+            "type": "string"
+          },
+          "temporal_relation": {
+            "type": "string",
+            "enum": [
+              "before_workout",
+              "after_workout",
+              "unknown"
+            ]
+          },
+          "uncertainty": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "context",
+          "effect_on_training",
+          "temporal_relation",
+          "uncertainty",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "comparison_window": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ref",
+          "source_ref",
+          "comparison_window"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "sets_missing",
+              "load_missing",
+              "partial_volume",
+              "comparison_unavailable",
+              "conditions_differ",
+              "single_observation",
+              "plan_missing",
+              "effort_missing",
+              "profile_missing",
+              "incline_unrecorded",
+              "hr_missing",
+              "hr_quality_unknown",
+              "zone_coverage_partial",
+              "recovery_timing_unknown",
+              "coverage_partial",
+              "other"
+            ]
+          },
+          "scope": {
+            "type": "string"
+          },
+          "affected_judgment": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code",
+          "scope",
+          "affected_judgment",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "range": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "timezone"
+      ],
+      "additionalProperties": false
+    },
+    "data_cutoff": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "measurements_version": {
+      "type": "string",
+      "const": "training_measurements_v1"
+    },
+    "profile_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "report_md",
+    "judgments",
+    "evidence",
+    "next_checks",
+    "message",
+    "schema_version",
+    "scope",
+    "training_summary",
+    "strength_findings",
+    "aerobic_findings",
+    "progression",
+    "next_workout_actions",
+    "recovery_context",
+    "evidence_refs",
+    "limitations",
+    "range",
+    "data_cutoff",
+    "snapshot_id",
+    "measurements_version",
+    "profile_snapshot_id"
+  ],
+  "additionalProperties": false
+}
