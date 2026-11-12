@@ -266,6 +266,18 @@ class SupervisedReportTest(unittest.TestCase):
             with self.assertRaises(RuntimeError): self.completed_scopes(self.cfg, DAY)
         self.assertCountEqual(self.calls, ['closed'])
 
+    def test_notification_failure_cannot_erase_terminal_classification(self):
+        def fail(cfg, inputs):
+            raise report.WriterFailed(errors.ReportFailReason.OUTPUT_INVALID, 'provider model effort mismatch')
+        with patch.object(self.writer,'write',side_effect=fail), \
+             patch.object(report,'_notify_terminal_scope',side_effect=store.StaleAttempt('delivery failed')):
+            with self.assertRaises(store.StaleAttempt): self.run_report()
+        self.assertEqual(self.diagnostics['day'][-1]['code'], 'PROVIDER_SELECTION')
+        self.assertTrue(self.diagnostics['day'][-1]['terminal'])
+        attempts = self.attempts['day']
+        with self.assertRaises(report.ScopeAnalysisExhausted): self.run_report()
+        self.assertEqual(self.attempts['day'],attempts)
+
     def test_concurrency_two_and_early_failure_while_other_scope_is_running(self):
         entered = threading.Event(); release = threading.Event()
         active = 0; peak = 0; lock = threading.Lock()

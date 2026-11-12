@@ -140,10 +140,7 @@ class WriterFailed(Exception):
         diagnostic = analysis_diagnostics.current.get()
         if diagnostic is not None:
             diagnostic.code = self.diagnostic_code
-            if (self.diagnostic_code in analysis_diagnostics.DETERMINISTIC
-                    and diagnostic.notify_terminal is not None and not diagnostic.notified):
-                diagnostic.notify_terminal(self.diagnostic_code)
-                diagnostic.notified = True
+            diagnostic.terminal = self.diagnostic_code in analysis_diagnostics.DETERMINISTIC
         super().__init__(f"{self.reason}: {detail}" if detail else str(self.reason))
 
 
@@ -653,6 +650,12 @@ class AnalysisWriter:
                     if progress is not None and proc.poll() is None and now >= next_progress and now < deadline:
                         progress()
                         next_progress = now + PROGRESS_INTERVAL_SECONDS
+        except WriterFailed:
+            # Stop the direct writer before notification can wait on a DB/account
+            # lock. Tree quiescence still gates decoding and slot release below.
+            _end_child(proc)
+            analysis_diagnostics.notify_terminal()
+            raise
         finally:
             try:
                 try:
@@ -1461,13 +1464,14 @@ def _evaluate_with_retries(cfg, writer, inputs, scope, usages, day):
                 return analysis, text, failure, summary
             if diagnostic.code == 'SUCCESS':
                 diagnostic.code = analysis_diagnostics.code_for(failure)
+            analysis_diagnostics.notify_terminal()
             # Infrastructure/capability failures do not improve by repairing model output.
-            terminal = diagnostic.code in analysis_diagnostics.DETERMINISTIC or diagnostic.code == feedback
+            terminal = diagnostic.terminal or diagnostic.code == feedback
             terminal = terminal or diagnostic.code == 'AGENT_TIMEOUT'
             terminal = terminal or attempt >= MAX_SCOPE_ATTEMPTS
             feedback = diagnostic.code
         except BaseException:
-            if diagnostic.notified:
+            if diagnostic.terminal:
                 terminal = True
             else:
                 diagnostic.code = 'INTERRUPTED'

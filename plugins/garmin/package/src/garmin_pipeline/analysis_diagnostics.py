@@ -33,6 +33,8 @@ class Attempt:
     event_bytes: int = 0
     notify_terminal: object = None
     notified: bool = False
+    notification_attempted: bool = False
+    terminal: bool = False
 
 current = ContextVar('garmin_analysis_attempt', default=None)
 
@@ -47,3 +49,12 @@ def code_for(reason, detail=''):
         'agent_capability_unsupported': 'agent_capability_unsupported',
         'agent_login_required': 'agent_login_required',
     }.get(str(reason), 'ANALYSIS_FAILED'))
+
+
+def notify_terminal():
+    diagnostic = current.get()
+    if diagnostic is not None and diagnostic.terminal and not diagnostic.notification_attempted:
+        diagnostic.notification_attempted = True
+        if diagnostic.notify_terminal is not None:
+            diagnostic.notify_terminal(diagnostic.code)
+            diagnostic.notified = True

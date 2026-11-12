@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from garmin_pipeline import errors, report
+from garmin_pipeline import errors, report, store
 from test_report_runtime import report_env
 import report_runtime
 
@@ -119,6 +119,27 @@ with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run([sys.executable,'-c',code], start_new_session=True,
             capture_output=True,text=True,timeout=25)
         self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_output_limit_terminates_direct_child_before_blocking_notification(self):
+        from garmin_pipeline import analysis_diagnostics
+        proc=Mock(); proc.poll.return_value=None; proc.wait.return_value=0
+        stream=Mock(); stream.tell.return_value=report.MAX_OUTPUT_BYTES+1
+        observed=[]
+        def notify(code):
+            self.assertTrue(proc.terminate.called)
+            observed.append(code)
+            raise store.StaleAttempt('synthetic notification fence failure')
+        diagnostic=analysis_diagnostics.Attempt(notify_terminal=notify)
+        token=analysis_diagnostics.current.set(diagnostic)
+        try:
+            with patch.object(report.subprocess,'Popen',return_value=proc), \
+                 patch.object(report,'_trap_sigterm',return_value=(False,None)):
+                with self.assertRaises(store.StaleAttempt):
+                    report.AnalysisWriter._run(self.cfg,['fake'],5,stdout=stream)
+        finally: analysis_diagnostics.current.reset(token)
+        self.assertEqual(observed,['OUTPUT_LIMIT'])
+        self.assertEqual(diagnostic.code,'OUTPUT_LIMIT')
+        self.assertTrue(diagnostic.terminal)
 
     def test_missing_configured_agent_has_actionable_error_without_spawn(self):
         with patch.dict(os.environ, {'PATH': '/usr/bin:/bin'}, clear=True), patch.object(report.subprocess, 'Popen') as spawn:
