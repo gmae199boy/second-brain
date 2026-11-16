@@ -2,8 +2,8 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
@@ -13,6 +13,14 @@ CLI = REPO / "_bmad/method/scripts/tickets.py"
 
 
 class EpicBuiltTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.uv = shutil.which("uv")
+        if cls.uv is None:
+            raise unittest.SkipTest(
+                "uv is required to resolve tickets.py PEP 723 dependencies (pyyaml)"
+            )
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -42,7 +50,7 @@ class EpicBuiltTests(unittest.TestCase):
 
     def run_cli(self, command="next"):
         result = subprocess.run(
-            [sys.executable, str(CLI), command, str(self.root)],
+            [self.uv, "run", str(CLI), command, str(self.root)],
             capture_output=True, text=True, cwd=REPO,
         )
         return result, json.loads(result.stdout) if result.stdout.strip() else {"error": result.stderr}

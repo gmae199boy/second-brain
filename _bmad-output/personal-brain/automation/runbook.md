@@ -68,9 +68,9 @@
 ## 티켓 선택과 배정
 
 ```sh
-python3.14 _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
-python3.14 _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
-python3.14 _bmad/method/scripts/tickets.py find <ticket-ref>
+uv run _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
+uv run _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
+uv run _bmad/method/scripts/tickets.py find <ticket-ref>
 ```
 
 실제 트리를 매번 다시 읽고 `problems`·의존조건·미완료 작업을 확인한다. 선택 가능 0건은 완료가 아니다. 기존 built 티켓도 이전 검증·리뷰·원격 main 반영 증거를 확인한 뒤 종료 대상으로 계산한다. 기존 in-review 티켓은 실제 부분 작업과 원래 baseline부터 이어간다. dropped 티켓을 부활시키지 않는다.
@@ -184,12 +184,16 @@ blocked 티켓의 검토 완료 부분 작업이 main에 반영된 경우도 워
 ## 준비 패치 검증과 업데이트
 
 ```sh
-python3.14 -B -m unittest discover -s tooling/brain-automation/tests -v
-python3.14 _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
-python3.14 _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
+uv run python -B -m unittest discover -s tooling/brain-automation/tests -v
+uv run _bmad/method/scripts/tickets.py status _bmad-output/personal-brain
+uv run _bmad/method/scripts/tickets.py next _bmad-output/personal-brain
 git diff --check
 ```
 
+### BMad setup/update 후 확인
+
 패치 대상은 `_bmad/method/scripts/tickets.py`, 회귀 테스트는 `tooling/brain-automation/tests/test_epic_built.py`다. 전역 스킬에는 영향이 없지만 BMAD setup/update가 프로젝트 복사본을 덮어쓸 수 있다. 패치를 별도 커밋으로 보존하고 재설치 후 diff와 회귀 테스트를 다시 확인한다. 무조건 옛 파일 전체를 덮어쓰지 말고 새 버전과 병합한다.
+
+BMad 6.13 갱신부터 `tickets.py`에 PEP 723 `pyyaml` 의존성이 있으므로 uv를 설치하고 위 `uv run` 회귀 시험과 실제 트리 `status`로 의존성 해석·에픽 `built` 패치·problems 0을 확인한다(uv가 없으면 회귀 시험은 사유를 표시하고 skip하므로 통과 증거로 삼지 않는다).
 
 준비 패치·테스트·런북·AGENTS 연결과 새 override의 공식 resolve/render 검증은 준비 커밋으로 원격 main에 반영했다. 최상위 독립 지휘자의 실제 depth 1 구현 시작도 확인했다. 각 티켓의 구현·리뷰·브랜치 push·main 병합/push 및 에픽 전이는 별도 증거로 판정하며, 준비 검증을 티켓 완료로 대신하지 않는다.
