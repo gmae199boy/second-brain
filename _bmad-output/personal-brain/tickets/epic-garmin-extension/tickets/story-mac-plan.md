@@ -20,6 +20,8 @@ blocked_at: "2026-11-06"
 blocked_reason: "plugin 설치본(detached clone)에서 운영자 TTY offline 확인을 입력할 지원 진입점 없음(npx는 detached 거부 bootstrap.ts:318, hook은 stdin 닫음). 제품 수정 반영·release 뒤 재개"
 ---
 
+> 2026-11-16: Garmin 일회성 이관은 완료됐고 해당 명령과 도구는 제거됐다. 아래 이관 절차·결함은 당시 기록이며 현재 실행 지침이 아니다.
+
 <intent-contract>
 
 ## Intent

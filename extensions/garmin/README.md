@@ -1,66 +1,37 @@
-# Garmin native tracer 검증 인계
+# Garmin 검증 인계
 
-21.2의 수락 시험 코드는 합성 schema 16 SQLite와 합성 report·facts·graph,
-격리 Brain home 및 시험 PostgreSQL만 사용한다. `fixtures/native/synthetic.py`는
-명시 profile과 고정 시간으로 다섯 capture를 만들고, fake Garmin·모델·Telegram
-대체물도 제공한다. `tests/oracle/src`는 Garmin 고정 commit
-`7fb33dd1661ad25cd73e14ed63abe0a87151f62e`에서 추적된 원본을 변경 없이
-복사한 독립 SQLite oracle이다. 제품 PG 코드로 기대값을 만들지 않는다.
+옛 Garmin 이관 기능은 일회성 작업 완료 후 제거했다. 이미 반입한 데이터와 보존 표는 유지하며, 과거 계획·보고는 당시 이력이다. 현재 수집·분석·조회 시험은 격리 Brain home, 합성 자료와 전용 시험 PostgreSQL만 사용한다. `tests/oracle/src`는 고정 원본을 복사한 독립 SQLite oracle이다.
 
-이번 21.2 구현에서는 시험 실행을 **21.8로 이관, 미실행**한다. 21.8은
-21.6 뒤, 21.7 전에 아래 전체 시험을 수행한다. 운영 DB·실제 Garmin 계정,
-토큰·건강자료·공유 role/container는 사용하거나 삭제하지 않는다. 시험 전
-Docker가 동작하고 전용 54329 포트가 비어 있는지 확인한다. 아래 프로젝트명은
-이번 실행이 직접 만든 임시 자원에만 사용하며 같은 이름의 기존 자원이 있으면
-소유권을 먼저 확인하고 덮어쓰거나 정리하지 않는다.
+전체 회귀는 공용 시험 잠금을 획득하고 전용 시험 DB를 준비한 뒤 `pnpm test`와 `pnpm test:python`을 순서대로 실행한다. 실패와 재검증은 관련 시험 파일을 지정하고, 기준 SHA·명령·종료 코드·로그·소유 자원과 실패 처분을 기록한다. 운영 DB와 실제 계정은 사용하지 않는다.
+
+## 공용 시험 자원 준비와 정리
+
+전체 회귀는 공용 잠금 `~/.brain-operations/test-lock`을 `mkdir`로 획득한 실행만 수행한다. 잠금 획득에 실패하면 기존 실행의 소유권을 확인하고 기다리며 다른 실행의 잠금이나 자원을 지우지 않는다. Docker가 실행 중이고 전용 54329 포트와 아래 프로젝트명이 비어 있는지 먼저 확인한다. 다음은 이 실행이 직접 소유하는 전용 시험 자원만 준비한다.
 
 ```sh
-git rev-parse HEAD
-docker compose -p brain-garmin-21-8 -f compose.test.yaml up -d --wait
-export BRAIN_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres
-pnpm test
-pnpm test:python
+mkdir -p ~/.brain-operations
+if mkdir ~/.brain-operations/test-lock; then
+  if docker compose -p brain-garmin-21-8 -f compose.test.yaml up -d --wait; then
+    export BRAIN_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54329/postgres
+    pnpm test
+    pnpm test:python
+  else
+    printf "시험 DB 준비 실패: 소유 자원을 확인하고 정리하세요.\n"
+  fi
+else
+  printf "시험 잠금 획득 실패: 기존 실행을 확인하세요.\n"
+fi
 ```
 
-두 전체 시험은 순서대로 한 번씩 실행한다. `pnpm test:python`의 global setup과
-`extHome`이 각 시험마다 별도 `brain_test_<random>` DB·소유 role·임시 home을
-만들고 정리하며, `garmin-unit.test.ts`는 그 DB의 관리자·해당 확장 role·시험
-app role만 Python 단위시험에 전달한다. 자격이 없으면 시험은 실패하며 건너뛰지
-않는다. 재검증이 필요하면 실패 원인 수정 후 관련 시험을 실행한다:
-
-```sh
-pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-native.test.ts apps/cli/python-test/garmin-unit.test.ts
-```
-
-기대 관찰: 설치→감독 import→파일 drain→import-verify 성공, schema 16의
-모든 표에 대해 행 수·자연키·값·NULL 동일, day/7d/30d/all 폴더 목록과 JSON
-값·배열 순서·NULL 동일, crash 뒤 재개·동일 batch 중복 없음, 파일 hash와
-중립 metadata 및 선택 revision→file_id 일치, revision 두 행과 최신 view 한 행,
-기존 세션·메시지·파일 보존이다. profile 미확인·stale·충돌·불명 provenance는
-각 시험이 차단 또는 명시적인 미연결로 확인한다. 새·기존 Garmin 시험과 경로
-분류 시험이 모두 실행돼야 한다. `test_normalize_oracle_pg.py`는 격리 DB의
-유효한 work/attempt와 확장 role을 사용하며, 고정 합성 `normalize_v8/input.json`을
-`tests/normalize_oracle_child.py`의 별도 subprocess에서 고정 SQLite 원본으로
-계산한 뒤 실제 PG 처리·0건 재실행·rebuild 결과와 비교한다. 고정 시각과 동일
-시간대를 사용하고 원본의 parse_error도 그대로 비교한다. 실제 projection 쓰기
-실패 후 pending과 재개 및 기존 항목 crash/재구성 게시 실패 시험도 함께 실행한다.
-
-명령·종료 코드·로그·기준 SHA·시험 DB/role/container 및 home의 소유권,
-실패별 처분·관련 재검증 결과를 21.8 증거에 기록한다. 작업이 끝난 뒤 이 실행이
-직접 만든 compose 프로젝트만 정리한다:
+두 전체 시험은 순서대로 실행한다. 격리된 `brain_test_<random>` DB·role·임시 home을 사용하며 운영 DB와 실제 계정은 쓰지 않는다. 시험 결과와 자원 소유권을 기록하고, 완료 후 **이 실행이 만든** 프로젝트만 정리한 뒤 소유한 잠금을 해제한다.
 
 ```sh
 unset BRAIN_TEST_DATABASE_URL
 docker compose -p brain-garmin-21-8 -f compose.test.yaml down
+rmdir ~/.brain-operations/test-lock
 ```
 
-미실행 시험이나 미해결 실패가 있으면 21.8을 built로 처리하거나 21.7을
-시작하지 않는다.
-
-기존 schema 10/15·비정상 TEXT·legacy 장부 회귀는 격리 설치본에만 놓는
-`tests/preservation_entry.py`가 현재 보존 primitives를 감독 실행하여 유지한다.
-운영 manifest는 native 반입과 감독 수집 일감을 제공한다. 새 native tracer와 기존 보존·업그레이드
-시험을 모두 실행해 두 계약을 확인하며 어떤 시험도 삭제하거나 skip하지 않는다.
+중단·오류 때도 소유 자원 정리를 확인한 후 잠금을 해제한다. 파일 지정 Python 시험은 `apps/cli/python-test/vitest.config.ts`의 global setup이 lease나 명시된 전용 DB가 없으면 소유 전용 컨테이너를 생성·정리한다. 이미 `BRAIN_TEST_DATABASE_URL` 또는 lease가 있으면 그 시험 전용 자원의 소유권을 먼저 확인한다.
 
 ## 감독 수집과 21.8 시험 인계
 
@@ -70,7 +41,7 @@ docker compose -p brain-garmin-21-8 -f compose.test.yaml down
 재검증한다:
 
 ```sh
-pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-collect.test.ts apps/cli/python-test/garmin-native.test.ts apps/cli/python-test/garmin-unit.test.ts
+pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-collect.test.ts apps/cli/python-test/garmin-unit.test.ts
 ```
 
 `garmin-collect.test.ts`는 격리 설치본의 외부 Garmin 어댑터만 fake로 교체하고
@@ -103,7 +74,7 @@ DB/role·격리 home 준비와 소유권 확인 후 `pnpm test` 다음 `pnpm tes
 순차 실행한다. 실패 수정 후 관련 재검증은 다음과 같다.
 
 ```sh
-pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-report.test.ts apps/cli/python-test/garmin-native.test.ts apps/cli/python-test/garmin-unit.test.ts
+pnpm exec vitest run --config apps/cli/python-test/vitest.config.ts apps/cli/python-test/garmin-report.test.ts apps/cli/python-test/garmin-unit.test.ts
 ```
 
 Python discovery의 `test_report_input_pg.py`는 고정 합성 입력을 각각 별도
@@ -250,50 +221,9 @@ Garmin 시험과 경로 분류를 포함해 `pnpm test` 다음 `pnpm test:python
 소유권, 명령·종료 코드·로그·실패 처분 및 재검증을 기록한다. 미실행 시험이나
 미해결 실패가 있으면 21.8 built 및 21.7 시작은 금지한다.
 
-## 전체5 capture에서 확인된4 반입
+## 과거 이관 이력
 
-manifest v1/v2는 기존대로 다섯 source role 전체를 요구한다. v3도 전체5 snapshot과
-소유 파일·inventory를 보관하며, 다음 고정 선택만 허용한다. 아래 ID는 합성 예시다.
-
-```json
-"selection": {
-  "version": 1,
-  "include": ["synthetic-D2", "synthetic-D1", "synthetic-D4", "synthetic-D5"],
-  "exclude": [{"dataset": "synthetic-D3", "reason": "unconfirmed-account"}]
-}
-```
-
-v3는 v2의 필드에 `selection`을 추가한다. include는 production, development,
-production-pre-epic5, production-before-history-start의 dataset ID 네 개와 정확히
-일치해야 하고 development-before-change만 위 사유로 제외한다. 입력 순서는 권위에
-영향을 주지 않으며 D2→D1→D4→D5 순서를 유지한다. 부분 role·단일 dataset·추가 archive·
-다른 제외 사유·중복·unknown ID는 거부한다. 계정을 입력하거나 미확인 profile을
-합성하지 않는다. 선택된 모든 snapshot의 단일 동일 profile, schema와 값, 파일 계획을
-content/account/file 쓰기 전에 검사한다. 기존 user/attempt/계정 쓰기 락은 유지한다.
-
-`tooling/garmin-import/capture.py`의 descriptor에 v3 manifest를 명시하면 전체5를
-그대로 capture한다. private-report의 selection_receipt에는 전체 snapshot·파일의
-SHA-256과 dataset별 표 행수, 선택/제외 사유를 남긴다. D3와 소유 파일·inventory는
-preservation/native/file 반입과 검증 비교에서 제외한다. D3 보존은 Brain 계정 귀속이나
-DB 반입 성공을 의미하지 않는다. 별도로 보관한 추가 archive는 이 manifest에 넣지 않는다.
-
-preflight/import/verify는 같은 selected view를 사용한다. 기존 `datasets`/`rows` 집계는
-선택 반입 범위이며 전체 capture 처분은 private selection_receipt로 확인한다. v3의
-fingerprint는 전체5 및 제외 파일 바이트·선택/제외 사유를 모두 결합한다. capture ID와
-고정 role로 만든 batch anchor와 기존 checkpoint를 session lock 안에서 비교한다.
-선택4의 dataset session lock을 모두 잡고 기존 account/confirmed/label과 source_schemas를
-전부 검사한 뒤, dataset/import_batch/checkpoint 네 role을 한 transaction으로 확정한다.
-이 최초 receipt보다 account 연결 transaction이 먼저 확정되지 않으므로 그 사이에
-종료되어도 같은 capture의 dataset ID나 profile을 전부 바꿔 재개 guard를 피할 수 없다.
-충돌 입력에는 최초 receipt도 생성하지 않는다. ingest 내부의 기존 재검사와 선택4 락은
-파일 발행까지 유지한다. v1/v2의 batch와
-fingerprint는 유지한다. 새 ledger나 migration은 없다. 원본/manifest가 실행 중 바뀌거나
-재개 입력이 기존 checkpoint와 다르면 거부한다. 기존 native hash/LOCAL_ID 충돌도 거부한다.
-
-운영 반입은 writer를 정지한 후 만든 새 capture를 최초 입력으로 사용한다. report/facts는
-기존 native_artifacts 정책으로 중립 파일 보존하며 근거 없는 evaluation/revision을
-만들지 않는다. 제품 package는 공식 packaging 명령으로 재생성한다. 이 변경의 배포에는
-수정 commit 이후의 Garmin plugin release가 필요하며 app-ref 갱신은 별도 release 단계다.
+기존 이관은 완료됐고 해당 명령과 도구는 제거됐다. 원본 및 보존 표는 변경하지 않았으며 당시 상세 계획과 증거는 과거 기록으로 남긴다.
 
 ## 수동 기간 분석
 

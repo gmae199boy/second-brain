@@ -38,9 +38,14 @@ it('모든 공개 CommandSpec은 배포 스킬 본문 또는 사유가 있는 �
 
 it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin 배포 스킬이 덮는다', () => {
   for (const path of ['plugins/garmin/package/manifest.json', 'extensions/garmin/manifest.json']) {
-    const manifest = JSON.parse(read(path)) as { work: { manual?: string }[]; commands: { name: string }[] };
+    const manifest = JSON.parse(read(path)) as { work: { kind: string; manual?: string }[]; commands: { name: string }[]; settings: { key: string }[]; files?: string[] };
     const manual = manifest.work.flatMap(work => work.manual ? [`ext run garmin ${work.manual}`] : []);
     const queries = manifest.commands.map(command => `ext garmin ${command.name}`);
+    for (const removed of ['import', 'import-preflight', 'import-verify']) expect(manual).not.toContain(`ext run garmin ${removed}`);
+    for (const kind of ['garmin.import', 'garmin.import_preflight', 'garmin.import_verify']) expect(manifest.work.map(work => work.kind)).not.toContain(kind);
+    for (const key of ['garmin.capture_manifest', 'garmin.legacy_conversation_id']) expect(manifest.settings.map(setting => setting.key)).not.toContain(key);
+    for (const entry of ['src/import.py', 'src/import_preflight.py', 'src/import_verify.py']) expect(manifest.files ?? []).not.toContain(entry);
+    expect(manual).toContain('ext run garmin collect');
     expect(manual).toContain('ext run garmin report-send');
     expect(manual).toContain('ext run garmin backfill');
     expect(manual).toContain('ext run garmin report-resend');
@@ -89,6 +94,8 @@ it('Codex 실행 경로 설정과 doctor 복구를 배포 설정 스킬이 덮�
 it('Garmin 분석 요청은 일일·기간·주간/월간 리뷰와 완료 후 결과 이벤트 계약을 찾을 수 있다', () => {
   const text=read('plugins/garmin/skills/brain-garmin-operations/SKILL.md');
   const description=text.match(/^description: (.+)$/m)?.[1] ?? '';
+  expect(description).not.toContain('이관');
+  for (const removed of ['import', 'import-preflight', 'import-verify']) expect(mentions(text, `ext run garmin ${removed}`)).toBe(false);
   for (const trigger of ['분석','기간 분석','주간/월간 리뷰']) expect(description).toContain(trigger);
   expect(text).toContain('ext run garmin period-analysis');
   expect(text).toContain('recent-period-evaluations');

@@ -234,7 +234,7 @@ it('separate work and driver wait on the same connection while a different conne
       const work=ids.next(),attempt=ids.next();
       // A different registered Garmin kind bypasses the queue's open-work uniqueness;
       // the real collect entry still receives its normal collect ABI envelope.
-      await fixture.db.query(`insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values ('${work}','garmin.import','extension','${target}',now(),now(),'supervised',now(),now()+interval '1 hour','synthetic');
+      await fixture.db.query(`insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values ('${work}','garmin.report','extension','${target}',now(),now(),'supervised',now(),now()+interval '1 hour','synthetic');
         insert into brain.work_attempts(token,work_item_id,started_at) values ('${attempt}','${work}',now());
         update brain.work_items set current_attempt_token='${attempt}' where id='${work}'`);
       const snapshot=JSON.stringify({version:1,extension:'garmin',user_id:self,values:{'garmin.timezone':'Asia/Seoul','garmin.tokenstore':tokens}});

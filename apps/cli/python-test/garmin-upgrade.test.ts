@@ -19,6 +19,18 @@ it('새 설치는 core 31과 Garmin 22 및 native 표를 적용한다', async ()
  } finally {await fixture.cleanup();}
 });
 
+it('설치된 Garmin은 제거된 이관 명령을 거부한다', async () => {
+ const fixture=await extHome();
+ try {
+  const installed=await fixture.run(['ext','install','garmin','--json']);
+  expect(installed.code,installed.stdout+installed.stderr).toBe(0);
+  for (const job of ['import-preflight','import','import-verify']) {
+   const result=await fixture.run(['ext','run','garmin',job,'--json']);
+   expect(result.code,`${job}: ${result.stdout}${result.stderr}`).not.toBe(0);
+  }
+ } finally {await fixture.cleanup();}
+});
+
 it('Garmin v12 이력과 보존 행을 유지하고 v13에서 옛 경로만 제거한다', async () => {
  const fixture=await extHome(), dir=await mkdtemp(join(tmpdir(),'brain-garmin-v12-'));
  const clock={now:()=>new Date('2026-01-01T00:00:00Z')};
@@ -122,10 +134,6 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
     select gen_random_uuid(),'garmin.${key}','extension:garmin','account','synthetic','cron','0 9 * * *','Asia/Seoul','user','garmin','${key}',id,false,now()+interval '1 day',now() from brain.users where is_self=1`);
   const oldRegistry=await fixture.db.rows("select version,package_digest,plugin_version from brain.extensions where name='garmin'");
   expect(oldRegistry).toEqual([{version:'1.2.0',package_digest:oldDigest,plugin_version:'0.1.2'}]);
-  const { extensionDatabaseUrl }=await import('../src/config/codec.js');
-  const url=await extensionDatabaseUrl(fixture.home,'garmin',fixture.db.appUrl), target=join(fixture.home,'extensions/garmin');
-  const probe=()=>JSON.parse(execFileSync(join(target,'.venv/bin/python'),['-c',"import json,psycopg,sys;sys.path.insert(0,sys.argv[1]);from role_probe import probe_role; c=psycopg.connect(sys.argv[2]); print(json.dumps(probe_role(c))); c.close()",join(target,'src'),url],{encoding:'utf8',env:{...fixture.env,PYTHONDONTWRITEBYTECODE:'1'}}));
-  expect(probe().no_excess_functions).toBe(false);
   await fixture.db.query(`insert into garmin.datasets(dataset,account,account_confirmed) values ('synthetic-existing',null,false);
     insert into garmin.preserved_rows(id,dataset,original_table,original_key,values_json) values ('00000000-0000-4000-8000-000000000001','synthetic-existing','meta','key','{"value":"sample"}');
     insert into brain.schedules(id,kind,hold_group,target_kind,target_id,trigger_kind,cron_expr,time_zone,time_zone_source,extension,schedule_key,user_id,enabled,next_run_at,created_at)
@@ -140,7 +148,6 @@ it('이전 배포 package에서 현재 package로 갱신하며 기존 데이터�
   expect({...after,ledger:after.ledger.slice(0,before.ledger.length)}).toEqual(before);
   expect(after.ledger.map(row=>row.version)).toEqual(Array.from({length:22},(_,i)=>i+1));
   expect(await fixture.db.rows("select data_type,is_nullable from information_schema.columns where table_schema='garmin' and table_name='evaluation_revisions' and column_name='message'")).toEqual([{data_type:'jsonb',is_nullable:'YES'}]);
-  expect(probe()).toMatchObject({no_excess_functions:true,event_emit_execute:true});
-  for(const path of ['src/role_probe.py','src/batch_import.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
+  for(const path of ['src/collect.py','manifest.json','digest']) expect(await readFile(join(fixture.home,'extensions/garmin',path))).toEqual(await readFile(join(current,path)));
  } finally {await store.close();await fixture.cleanup();await rm(temp,{recursive:true,force:true});}
 },120000);

@@ -13,7 +13,6 @@ const rules = [
   { prefix:'plugins/garmin/', reason:'Garmin extension plugin package and launcher' },
   { prefix:'tooling/recall-eval/', reason:'shared recall health integration fixtures' },
   { prefix:'tooling/package-garmin/', reason:'Garmin extension packaging source' },
-  { prefix:'tooling/garmin-import/', reason:'Garmin capture Python implementation and tests' },
   { prefix:'packages/postgres/migrations/0042_drive_connection.sql', reason:'Drive connection and local-delete safety migration' },
   { prefix:'packages/postgres/test/fixtures/drive-delete-barrier-child.mjs', reason:'Drive deletion barrier child-process fixture' },
   { prefix:'packages/postgres/', reason:'Python integration uses the real PostgreSQL store' },
@@ -65,9 +64,6 @@ const exact = [
   'apps/cli/test/ext-fixture.ts','apps/cli/test/extension-commands.test.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
   'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts','.claude-plugin/marketplace.json',
   'apps/cli/python-test/garmin-report-observer.ts',
-  'apps/cli/python-test/fixtures/artifacts-lifecycle.ts',
-  'apps/cli/python-test/fixtures/lifecycle-timeout.fixture.ts',
-  'apps/cli/python-test/fixtures/lifecycle-vitest.config.mjs',
   'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','vitest.config.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';

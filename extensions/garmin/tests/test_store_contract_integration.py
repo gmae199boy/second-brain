@@ -45,7 +45,7 @@ class RealStoreContractTest(unittest.TestCase):
                 connection, identity = uuid4(), 'synthetic-' + uuid4().hex
                 owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)', (user,connection,identity,'UTC'))
                 self.accounts.append((user,connection,identity))
-            owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class) values (%s,'garmin.import','synthetic',%s,now(),now(),'supervised')", (self.work,str(self.work)))
+            owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class) values (%s,'garmin.report','synthetic',%s,now(),now(),'supervised')", (self.work,str(self.work)))
             owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(self.token,self.work))
             owner.execute("update brain.work_items set current_attempt_token=%s,claimed_at=now(),claim_expires_at=now()+interval '1 hour',claimed_by='synthetic' where id=%s",(self.token,self.work))
         with psycopg.connect(self.ext_dsn) as ext:
@@ -109,7 +109,7 @@ class RealStoreContractTest(unittest.TestCase):
             work, token = (self.work, self.token) if index == 0 else (uuid4(), uuid4())
             if index:
                 with psycopg.connect(self.owner_dsn, autocommit=True) as owner:
-                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')", (work,str(account)))
+                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.report','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')", (work,str(account)))
                     owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())', (token,work))
                     owner.execute('update brain.work_items set current_attempt_token=%s where id=%s', (token,work))
             env = environment()
@@ -138,7 +138,7 @@ class RealStoreContractTest(unittest.TestCase):
                     owner.execute("update brain.work_attempts set outcome='succeeded',finished_at=now() where token=%s and work_item_id=%s",(token,work))
                     owner.execute("update brain.work_items set completed_at=now(),outcome='succeeded',current_attempt_token=null,claimed_at=null,claim_expires_at=null,claimed_by=null where id=%s",(work,))
                     # Another work for the same account and date cannot adopt this success.
-                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(other_work,str(account)))
+                    owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.report','extension',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(other_work,str(account)))
                     owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(other_token,other_work))
                     owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(other_token,other_work))
                 env.update(BRAIN_WORK_ID=str(other_work),BRAIN_ATTEMPT_TOKEN=str(other_token))

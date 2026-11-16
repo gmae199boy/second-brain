@@ -200,7 +200,7 @@ class ReportInputIndependentOracleIntegrationTest(unittest.TestCase):
             with psycopg.connect(os.environ['GARMIN_TEST_OWNER_DSN'],autocommit=True) as owner:
                 user = owner.execute('select id from brain.users where is_self=1').fetchone()[0]
                 owner.execute('insert into garmin.account_connections(user_id,connection_id,external_identity,timezone) values (%s,%s,%s,%s)',(user,account,'report-oracle-'+str(account),fixture['timezone']))
-                owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.import','synthetic',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(work,str(work)))
+                owner.execute("insert into brain.work_items(id,kind,target_kind,target_id,created_at,next_attempt_at,execution_class,claimed_at,claim_expires_at,claimed_by) values (%s,'garmin.report','synthetic',%s,now(),now(),'supervised',now(),now()+interval '1 hour','fixture')",(work,str(work)))
                 owner.execute('insert into brain.work_attempts(token,work_item_id,started_at) values (%s,%s,now())',(token,work))
                 owner.execute('update brain.work_items set current_attempt_token=%s where id=%s',(token,work))
                 yesterday = str(date.fromisoformat(fixture['date']) - timedelta(days=1))

@@ -37,7 +37,7 @@ class EnvelopeTest(unittest.TestCase):
 
     def test_invalid_envelopes_fail_before_store(self):
         for key, value in [('BRAIN_TARGET_ID', 'default'), ('BRAIN_USER_ID', 'bad'),
-                           ('BRAIN_ATTEMPT_TOKEN', 'bad'), ('BRAIN_WORK_KIND', 'garmin.import'),
+                           ('BRAIN_ATTEMPT_TOKEN', 'bad'), ('BRAIN_WORK_KIND', 'garmin.synthetic'),
                            ('BRAIN_RUN_GENERATION', '0')]:
             env = environment(); env[key] = value
             with self.subTest(key=key), patch.object(store, 'write_session') as session:

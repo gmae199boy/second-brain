@@ -1333,7 +1333,7 @@ brain channels send-pending --topic garmin.report --id <request-id>
 
 ### 에이전트용 CLI 스킬과 커버리지
 
-core 플러그인은 `brain-recall`, `brain-install`, `brain-login`, `brain-channels`, `brain-config`, `brain-schedules`, `brain-status`, `brain-ext`, `brain-sources`, `brain-files`, `brain-messages`, `brain-sessions`, `brain-setup`, `brain-guide` 스킬을 제공합니다. Garmin 플러그인은 `brain-garmin-install`과 수집·이관·리포트·조회용 `brain-garmin-operations`를 제공합니다. plugin namespace가 없는 Codex 같은 하네스에서도 다른 일반 스킬 이름과 충돌하지 않도록 폴더명과 name에 접두사를 붙입니다. package 내부 분석 스킬 3개는 감독 실행용이며 이름을 유지합니다. 각 기능 스킬은 먼저 `brain guide schema <ns> --json`으로 현재 지원을 확인하고 미지원이면 중단합니다. Codex에서 배포 스킬 전부를 연결하는 절차는 [CONNECTION.md](CONNECTION.md)를 따릅니다.
+core 플러그인은 `brain-recall`, `brain-install`, `brain-login`, `brain-channels`, `brain-config`, `brain-schedules`, `brain-status`, `brain-ext`, `brain-sources`, `brain-files`, `brain-messages`, `brain-sessions`, `brain-setup`, `brain-guide` 스킬을 제공합니다. Garmin 플러그인은 `brain-garmin-install`과 수집·백필·분석·리포트·조회용 `brain-garmin-operations`를 제공합니다. plugin namespace가 없는 Codex 같은 하네스에서도 다른 일반 스킬 이름과 충돌하지 않도록 폴더명과 name에 접두사를 붙입니다. package 내부 분석 스킬 3개는 감독 실행용이며 이름을 유지합니다. 각 기능 스킬은 먼저 `brain guide schema <ns> --json`으로 현재 지원을 확인하고 미지원이면 중단합니다. Codex에서 배포 스킬 전부를 연결하는 절차는 [CONNECTION.md](CONNECTION.md)를 따릅니다.
 
 새 공개 CLI 명령은 배포 스킬 본문에 실제 명령으로 포함해야 합니다. `tooling/bootstrap/test/cli-skill-coverage.test.ts`가 CommandSpec 레지스트리와 Garmin manifest의 manual·조회 진입점을 대조합니다. 내부 전용 예외는 `tooling/skill-coverage/internal.json`에 좁은 범위와 사유를 기록합니다. 단순 인벤토리 등록만으로 통과하지 않습니다.
 

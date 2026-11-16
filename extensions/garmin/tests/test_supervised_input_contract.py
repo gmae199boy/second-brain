@@ -90,7 +90,7 @@ class SupervisedInputContractTest(unittest.TestCase):
     def test_invalid_envelopes_fail_closed(self):
         mutations = [
             ('abi', lambda e: e.update(BRAIN_ABI_VERSION='2')),
-            ('kind', lambda e: e.update(BRAIN_WORK_KIND='garmin.import')),
+            ('kind', lambda e: e.update(BRAIN_WORK_KIND='garmin.synthetic')),
             ('target kind', lambda e: e.update(BRAIN_TARGET_KIND='user')),
             ('database', lambda e: e.update(BRAIN_DATABASE_URL='sqlite:///db')),
             ('generation empty', lambda e: e.update(BRAIN_RUN_GENERATION='')),
@@ -179,7 +179,6 @@ class SupervisedInputContractTest(unittest.TestCase):
 
     def test_each_string_setting_rejects_non_strings(self):
         keys = ('garmin.timezone', 'garmin.connection_id', 'garmin.tokenstore',
-                'garmin.capture_manifest', 'garmin.legacy_conversation_id',
                 'garmin.analysis_agent',
                 'garmin.analysis_model', 'garmin.analysis_reasoning_effort')
         for kind in KINDS:

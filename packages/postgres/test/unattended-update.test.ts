@@ -161,9 +161,5 @@ it('core48 무인 갱신은 기존 배포 Garmin을 교체 대기로 정지하�
     expect(await store.getExtensionInstallProgress('garmin')).toMatchObject({ journal: { progress: { name: 'garmin' } } });
     const progress = await store.getExtensionInstallProgress('garmin');
     expect(progress.ok && progress.journal?.progress.replacement).toBeUndefined();
-    const { extensionDatabaseUrl } = await import('../../../apps/cli/src/config/codec.js');
-    const url = await extensionDatabaseUrl(k.home, 'garmin', k.db.appUrl);
-    const probe = JSON.parse(execFileSync(join(target, '.venv/bin/python'), ['-c', 'import json,psycopg,sys;sys.path.insert(0,sys.argv[1]);from role_probe import probe_role;c=psycopg.connect(sys.argv[2]);print(json.dumps(probe_role(c)));c.close()', join(target, 'src'), url], { encoding: 'utf8', env: { ...k.env, PYTHONDONTWRITEBYTECODE: '1' } }));
-    expect(probe).toMatchObject({ no_excess_functions: true, event_emit_execute: true });
   } finally { await store.close(); }
 }, 180_000);

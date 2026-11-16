@@ -10,7 +10,6 @@ from unittest.mock import patch
 from uuid import UUID
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import report_channel
-import role_probe
 from garmin_pipeline import report
 
 DAY = date(2026, 1, 2)
@@ -156,28 +155,6 @@ class ChannelTest(unittest.TestCase):
                                  {'status': 'noop', 'scopes': 0})
             self.assertEqual(len(conn.requests), expected)
             self.assertEqual(published, ['files-complete'])
-
-    def test_role_probe_requires_event_emit_and_allows_legacy_channel_grants(self):
-        queries = []
-        def safely(conn, query, args=(), default=None):
-            queries.append(query)
-            if 'select exists(select 1 from pg_proc' in query:
-                return [(False,)]
-            if 'has_function_privilege' in query:
-                return [('extension_event_emit' in query,)]
-            return None
-        with patch.object(role_probe, 'safely', side_effect=safely):
-            checks = role_probe.probe_role(object())
-        self.assertTrue(checks['event_emit_execute'])
-        self.assertTrue(checks['no_excess_functions'])
-        self.assertNotIn('send_execute', checks)
-        with patch.object(role_probe, 'safely', side_effect=lambda conn, query, *a: [(False,)] if 'has_function_privilege' in query else None):
-            self.assertFalse(role_probe.probe_role(object())['event_emit_execute'])
-        self.assertNotIn('conversation_execute', checks)
-        self.assertTrue(any('extension_channel_publish' in q for q in queries if 'select exists(select 1 from pg_proc' in q))
-        self.assertTrue(any('extension_channel_conversation_valid' in q for q in queries if 'select exists(select 1 from pg_proc' in q))
-        self.assertFalse(any('extension_channel_conversation_valid' in q for q in queries if 'select exists(select 1 from pg_proc' not in q))
-        self.assertFalse(any('extension_channel_publish' in q for q in queries if 'select exists(select 1 from pg_proc' not in q))
 
     def test_channel_handoff_retry_does_not_regenerate(self):
         with patch.dict(os.environ, ENV), patch('garmin_pipeline.training_measurements.resolve_snapshot_root'), patch.object(report, '_work_revisions', return_value=REVISIONS), patch('report_publish.publish_and_wait'), patch.object(report_channel, 'success', side_effect=RuntimeError('synthetic delivery failure')), patch.object(report.body, 'pending') as intake:

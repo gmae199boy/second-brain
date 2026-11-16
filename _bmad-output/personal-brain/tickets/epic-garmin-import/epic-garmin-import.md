@@ -12,6 +12,8 @@ risk: high
 
 # 기존 Garmin 데이터·분석 이전
 
+> 2026-11-16: Garmin 일회성 이관은 완료됐고 해당 명령과 도구는 제거됐다. 아래 이관 절차·결함은 당시 기록이며 현재 실행 지침이 아니다.
+
 ## Description
 
 Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데이터와 분석을 옮긴다.
