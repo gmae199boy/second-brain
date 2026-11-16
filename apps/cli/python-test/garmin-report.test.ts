@@ -85,8 +85,11 @@ it('resumes 30d/all after 7d commit, skips complete day even with pending photo,
     const sid=t.ids.next(),mid=t.ids.next(),fid=t.ids.next();
     await t.fixture.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${sid}','synthetic','report-memory','${self}','fixture',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${mid}','${sid}','report-memory','user','synthetic memory',now()); insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${fid}','sha256:${'c'.repeat(64)}',0,now())`);
     const memory=()=>t.fixture.db.rows(`select s.id,m.body,f.content_hash from brain.sessions s join brain.messages m on m.session_id=s.id cross join brain.files f where s.id='${sid}' and f.id='${fid}'`);
-    const before=await memory(); await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'hold-all'),'hold');
-    const first=await t.enqueue(); const firstCall=await t.waitCall(first,'30d');
+    const before=await memory(); await writeFile(join(t.control,'hold-day'),'hold'); await writeFile(join(t.control,'hold-7d'),'hold');
+    await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'hold-all'),'hold');
+    const first=await t.enqueue(); await Promise.all([t.waitCall(first,'day'),t.waitCall(first,'7d')]);
+    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'hold-7d'));
+    const firstCall=await t.waitCall(first,'30d');
     await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const processRow=(await t.fixture.db.rows(`select pgid from brain.work_attempts where work_item_id='${first}'`))[0];
     killGroup(Number(processRow?.pgid)); await t.failedAttempt(first,firstCall.attempt,'died');
@@ -122,7 +125,7 @@ it('isolates accounts and leaves no open extension transaction while the model w
     const a=await t.enqueue(t.account), b=await t.enqueue(t.other); await Promise.all([t.waitCall(a,'day'),t.waitCall(b,'day')]);
     expect(await openReportTransactions(sql=>t.fixture.db.rows(sql),'brain_ext_garmin')).toBe(0);
     await unlink(join(t.control,`hold-${t.other}-day`)); await t.outcome(b,'succeeded');
-    expect(await t.revisions(t.account)).toEqual([]); expect(await t.revisions(t.other)).toHaveLength(4);
+    expect((await t.revisions(t.account)).map(row=>row.scope)).not.toContain('day'); expect(await t.revisions(t.other)).toHaveLength(4);
     await unlink(join(t.control,`hold-${t.account}-day`)); await t.outcome(a,'succeeded'); expect(await t.revisions(t.account)).toHaveLength(4);
   } finally {await t.close();}
 },180000);
@@ -322,8 +325,27 @@ it('daemon SIGKILL after 7d commit recovers its group then resumes only 30d and 
   const capture=(call:Call)=>{ownedGroups.add(call.pgid);ownedModels.set(call.pid,call.pgid);return call;};
   const recoveryController=new AbortController();
   try {
+    await writeFile(join(t.control,'hold-day'),'hold'); await writeFile(join(t.control,'hold-7d'),'hold');
     await writeFile(join(t.control,'hold-30d'),'hold'); await writeFile(join(t.control,'hold-all'),'hold'); await writeFile(join(t.control,'grandchild-30d'),'yes');
-    work=await t.enqueue(); const [call,allCall]=await Promise.all([t.waitCall(work,'30d').then(capture),t.waitCall(work,'all').then(capture)]);
+    work=await t.enqueue();
+    // Both first-batch children must be running before either can finish. Otherwise
+    // a held 30d child can join 7d's batch, leaving all queued behind its barrier.
+    await Promise.all([t.waitCall(work,'day'),t.waitCall(work,'7d')]);
+    await unlink(join(t.control,'hold-day')); await unlink(join(t.control,'hold-7d'));
+    let call:Call, allCall:Call;
+    try {
+      [call,allCall]=await Promise.all([t.waitCall(work,'30d').then(capture),t.waitCall(work,'all').then(capture)]);
+    } catch (error) {
+      // Diagnostics must never replace the original wait failure.
+      try {
+        const results=await Promise.allSettled([
+          t.calls().then(rows=>rows.filter(row=>row.work===work).map(row=>row.scope)),
+          t.fixture.db.rows(`select outcome,current_attempt_token is not null as has_attempt from brain.work_items where id='${work}'`),
+          t.fixture.db.rows(`select outcome,error_code from brain.work_attempts where work_item_id='${work}' order by started_at`),
+        ]);
+        console.error('report call wait diagnostics', {scopes:results[0],item:results[1],attempts:results[2],daemonExit:daemon.exitCode,daemonSignal:daemon.signalCode});
+      } finally { throw error; }
+    }
     expect(allCall.pgid).toBe(call.pgid);
     await expect.poll(async()=> (await t.revisions()).map(row=>row.scope).sort()).toEqual(['7d','day']);
     const before=await t.revisions();
