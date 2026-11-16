@@ -56,7 +56,7 @@ describe('Garmin marketplace package', () => {
     }
   });
 
-  it('guides when core is missing and delegates its exact package to the core shim', () => {
+  it('guides when core is missing and delegates the Garmin name to the core shim', () => {
     const home = mkdtempSync(join(tmpdir(), 'garmin-plugin-')); temporary.push(home);
     const brainHome = join(home, 'brain home'), calls = join(home, 'calls');
     const env = { HOME: home, PATH: '/usr/bin:/bin', SECOND_BRAIN_HOME: brainHome, CLAUDE_PLUGIN_ROOT: plugin, CALLS: calls };
@@ -68,7 +68,19 @@ describe('Garmin marketplace package', () => {
     expect(run().stdout).toMatch(/core.*먼저 설치/);
     writeFileSync(join(brainHome, 'installed.json'), '{}');
     expect(run().status).toBe(17);
-    expect(read(calls).split('\n')).toEqual(['ext', 'install', '--package', join(plugin, 'package'), '--json', '']);
+    expect(read(calls).split('\n')).toEqual(['ext', 'install', 'garmin', '--json', '']);
+  });
+
+  it('설치 스킬은 이름 설치와 실제 인증 미지원 상태를 안내한다', () => {
+    const skill = read(join(plugin, 'skills/brain-garmin-install/SKILL.md'));
+    expect(skill).toContain('`brain ext install garmin --json`');
+    expect(skill).toContain('터미널 인증 실행 항목이 없어');
+    expect(skill).toContain('인증을 실행할 수 없다');
+    expect(skill).toContain('로그인 필요를 명시한 상태가 있을 때만 인증 미완료로 보고한다');
+    expect(skill).toContain('인증 상태는 별도 근거가 없으면 미확인으로 둔다');
+    expect(skill).toContain('기존 connected와 login skipped는 그 상태대로 보고한다');
+    expect(skill).not.toContain('--package');
+    expect(json(join(pack, 'manifest.json')).auth).toBeUndefined();
   });
 
   it('registers the marketplace hook and pins an earlier ref with independent versioning', () => {

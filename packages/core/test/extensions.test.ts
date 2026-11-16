@@ -1035,3 +1035,46 @@ it('수동 일감 입력은 선언 schema로 검증하고 열린 일감의 다�
  deps.extensions.installedManifest=async()=>JSON.stringify({...manifest,work:[{...job,input_schema:undefined}]});
  expect(await runExtension(deps,{name:'testext',job:'period',input:{start_date:'2026-01-01'}})).toMatchObject({ok:false});
 });
+
+it.each(['prepare', 'migration', 'activate', 'registry', 'commit', 'release'])('카탈로그 이름 설치의 교체 %s 실패는 같은 검증 패키지로 재개한다', async boundary => {
+  const { deps, owner, setFailure, setDigest } = await replacementWorld();
+  deps.extensions.packages.prepareCatalog = async () => deps.extensions.packages.prepareExternal!('/catalog');
+  setFailure(boundary);
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(false);
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { replacement: { owner }, transition: { owner } } } });
+  setDigest('c'.repeat(64));
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  setDigest('b'.repeat(64));
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  expect(await deps.store.readExtensionQuiesce('testext')).toMatchObject({ ok: true, owner: null });
+  expect(await deps.store.getExtensionInstallProgress('testext')).toMatchObject({ ok: true, journal: { progress: { result: 'installed' } } });
+});
+
+it('카탈로그 이름 snapshot의 오류와 취소, 이름 불일치에서 쓰지 않고 정리한다', async () => {
+  const { deps, writes } = setup({ found: false });
+  let cleaned = 0;
+  deps.extensions.packages.prepareCatalog = async () => { throw Error('digest mismatch'); };
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  const controller = new AbortController(); controller.abort();
+  expect(await installExtension(deps, { name: 'testext', signal: controller.signal })).toMatchObject({ ok: false, code: 'EXTENSION_INSTALL_CANCELLED' });
+  deps.extensions.packages.prepareCatalog = async () => ({ name: 'other', dir: '/stage', manifestText: '{}', digest: 'a'.repeat(64), async cleanup() { cleaned++; } });
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+  expect(cleaned).toBe(1); expect(writes()).toEqual({ placed: 0, migrated: 0 });
+  expect(await installExtension(deps, { name: 'testext', packagePath: '/package' })).toMatchObject({ ok: false, code: 'EXTENSION_NOT_FOUND' });
+});
+
+it('카탈로그 SDK는 설치 registry와 결합하고 읽기 실패를 감추지 않는다', async () => {
+  const { deps } = setup();
+  const { catalogExtensions } = await import('../src/extensions/status.js');
+  const entry = { name: 'testext', version: '0.1.0', description: '시험', login_required: false };
+  deps.extensions.packages.catalog = async () => [entry];
+  expect(await catalogExtensions(deps)).toMatchObject({ ok: true, extensions: [{ ...entry, installed: false }] });
+  await deps.store.recordExtensionInstall({ name: 'testext', version: '0.1.0', now });
+  expect(await catalogExtensions(deps)).toMatchObject({ ok: true, extensions: [{ ...entry, installed: true }] });
+  const unavailable = { ...deps, store: { ...deps.store, listExtensions: async () => ({ ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '데이터베이스 연결 실패' }) } };
+  const failedRegistry = await catalogExtensions(unavailable);
+  expect(failedRegistry).toEqual({ ok: false, code: 'DB_UNAVAILABLE', message: '데이터베이스 연결 실패' });
+  expect(failedRegistry).not.toHaveProperty('extensions');
+  deps.extensions.packages.catalog = async () => { throw Error('digest'); };
+  expect(await catalogExtensions(deps)).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
+});

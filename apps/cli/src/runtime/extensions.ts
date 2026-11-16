@@ -166,6 +166,8 @@ export function extensionRuntime({ home, env, config, clock, settingsStore }: { 
     databaseUrl: async name => { await chmod(envFilePath(home), 0o600); return extensionDatabaseUrl(home, name, await databaseUrl()); }, preparePython: (directory, signal, resetOwnedStage) => prepareExtensionPython(directory, env, signal, resetOwnedStage), validatePreparedPython: (directory, signal) => validatePreparedPython(directory, env, signal), timer: systemTimer, launcher: { start: spec => trackedProcessLauncher(home).start({ ...spec, command: spec.command === 'node' ? process.execPath : spec.command }) }, inspector: systemProcessInspector,
     packages: {
       prepareExternal: prepareExtensionPackage,
+      prepareCatalog: async (name, options) => (await import('./extension-catalog.js')).prepareCatalogCandidate(home, env, name, options?.signal),
+      catalog: async () => (await import('./extension-catalog.js')).readCatalogCandidates(home, env),
       captureRunningCore: async () => { await runningBuildIdentity; },
       checkCore: async manifest => checkPackageCore(home, manifest, await runningBuildIdentity),
       checkInstalledCore: async () => checkInstalledCore(home, await runningBuildIdentity),

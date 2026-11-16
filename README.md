@@ -208,6 +208,16 @@ test "$(cat "$BRAIN_HOME/run/daemon.pid")" = "$FENCE_RECORD" && rm "$BRAIN_HOME/
 npx github:gmae199boy/second-brain
 ```
 
+core 설치 후 설치 가능한 확장을 확인하고 이름으로 설치할 수 있습니다.
+
+```sh
+brain ext catalog --json
+brain ext install garmin --json
+brain ext status garmin --json
+```
+
+카탈로그의 로그인 필요 표시는 사용자 인증 필요 여부이며 현재 로그인 상태는 아닙니다. 현재 Garmin 패키지에는 터미널 인증 실행 항목이 없어 `brain ext login garmin`으로 인증할 수 없습니다. 연결이나 인증이 미완료라면 실제 상태를 확인하고 지원되는 로그인 경로가 마련될 때까지 미완료로 남겨 두세요.
+
 커밋되어 있는 의존성 없는 파일 하나가 실행됩니다. node와 git을 확인하고, 이
 저장소를 `~/.second_brain/app`에 클론하고(다음 실행에서는 fast-forward),
 pnpm이 12보다 오래되었으면 최신 pnpm 설치를 제안하고, 클론을 빌드한 뒤
@@ -858,6 +868,8 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 
 ## 확장 설치와 재개
 
+`brain ext catalog --json`은 설치 가능한 확장의 이름·버전·설명·로그인 필요 여부와 설치 여부를 반환합니다. `brain ext list --json`은 기존처럼 설치된 확장만 반환합니다. 이름을 고른 뒤 `brain ext install <이름> --json`으로 설치하며 패키지를 검증하지 못하면 `EXTENSION_INVALID`를 반환합니다.
+
 `brain ext install <이름>`은 패키지, 환경, role, 마이그레이션, 설정, 로그인, 연결과 기본 예약의 진행 사실을 기록합니다. `brain ext status <이름> --json`의 `install`에는 현재 결과, 단계별 상태·코드·시각, 마지막 실패, 인증 일감과 예약 ID가 있습니다. 설치가 실패한 JSON 응답의 `data`도 같은 저장된 상태를 담으므로 설치 전 실패를 포함해 상태 명령과 대조할 수 있습니다.
 
 `brain ext disable <이름>`은 확장을 비활성화하고 해당 확장의 예약과 일감을 보류합니다. 이미 실행 중인 작업은 감독자가 취소하므로 명령 응답 시 자식 프로세스의 종료가 확정된 것은 아닙니다. `brain ext enable <이름>`은 보류를 풀어 대기 일감을 다시 진행합니다. 설치 파일과 데이터는 유지되며, `brain ext status <이름>`과 `brain doctor run`에서 비활성 여부와 중단 일감·보류 예약 수를 확인할 수 있습니다. SDK에서는 `brain.ext.status({ name })`, `brain.ext.enable({ name })`, `brain.ext.disable({ name })`을 사용합니다.
@@ -868,9 +880,9 @@ shim을 읽거나 해석할 수 없으면 `SHIM_MISSING`, 실행 권한·서명�
 
 ### brain-install 스킬 행동 평가
 
-`pnpm eval:install prepare normal /tmp/brain-install-normal`은 새 격리 디렉터리에 실제 스킬 사본, 평가 지시와 가짜 `brain`을 준비합니다. 사례는 `normal`, `already`, `failure`, `login`, `scheduler`, `unsupported`, `connection`, `secret`, `resume`, `cancel`입니다. 각 사례에 새 디렉터리를 사용하세요. 실제 에이전트에게 그 디렉터리의 `prompt.md`와 `SKILL.md`를 제공하고, 해당 디렉터리의 `bin`을 PATH 앞에 둔 격리 환경에서 실행합니다. 인증 사례에서는 지시된 사용자 응답을 로그인 안내 뒤 전달합니다. 대화 기록에는 실행 명령 줄을 `명령:`, 안내 줄을 `에이전트:`, 주어진 응답 원문을 `사용자 (fixture 응답):` 접두사로 시간순 기록합니다. 실제 홈, DB, 계정이나 외부 서비스는 사용하지 않습니다.
+`pnpm eval:install prepare normal /tmp/brain-install-normal`은 새 격리 디렉터리에 실제 스킬 사본, 평가 지시와 가짜 `brain`을 준비합니다. 사례는 `normal`, `already`, `failure`, `login`, `scheduler`, `unsupported`, `connection`, `secret`, `resume`, `cancel`, `choose`, `choose_wait`입니다. `choose`는 목록 뒤 사용자 선택을 받고, `choose_wait`는 선택 없이 설치하지 않는지 확인합니다. 각 사례에 새 디렉터리를 사용하세요. 실제 에이전트에게 그 디렉터리의 `prompt.md`와 `SKILL.md`를 제공하고, 해당 디렉터리의 `bin`을 PATH 앞에 둔 격리 환경에서 실행합니다. 인증 사례에서는 지시된 사용자 응답을 로그인 안내 뒤 전달합니다. 대화 기록에는 실행 명령 줄을 `명령:`, 안내 줄을 `에이전트:`, 주어진 응답 원문을 `사용자 (fixture 응답):` 접두사로 시간순 기록합니다. 실제 홈, DB, 계정이나 외부 서비스는 사용하지 않습니다.
 
-에이전트의 전체 대화 기록을 `transcript.txt`, 최종 답변을 `report.txt`, 마지막 공개 status의 `data`를 `status-report.json`에 저장한 뒤 (지원이 없으면 JSON `null`) `pnpm eval:install verify /tmp/brain-install-normal`을 실행합니다. `calls.jsonl`의 호출 순서와 구조화 보고를 마지막 공개 응답과 대조하고 `verdict.json`을 생성하며, 실패 시 종료 코드가 0이 아닙니다. 자동 판정은 보고의 모든 의미를 완전히 이해하지 못하므로 대화와 상태를 사람도 검토해야 합니다. 평가가 끝나면 임시 디렉터리를 삭제하세요. 기본 Vitest의 판정기 자기시험은 고정 입력을 사용하므로 실제 에이전트 행동 평가가 아닙니다.
+에이전트의 전체 대화 기록을 `transcript.txt`, 최종 답변을 `report.txt`, 마지막 공개 status의 `data`를 `status-report.json`에 저장한 뒤 (status 조회가 없으면 JSON `null`) `pnpm eval:install verify /tmp/brain-install-normal`을 실행합니다. `calls.jsonl`의 호출 순서와 구조화 보고를 마지막 공개 응답과 대조하고 `verdict.json`을 생성하며, 실패 시 종료 코드가 0이 아닙니다. 자동 판정은 보고의 모든 의미를 완전히 이해하지 못하므로 대화와 상태를 사람도 검토해야 합니다. 평가가 끝나면 임시 디렉터리를 삭제하세요. 기본 Vitest의 판정기 자기시험은 고정 입력을 사용하므로 실제 에이전트 행동 평가가 아닙니다.
 
 ## 종료 코드
 

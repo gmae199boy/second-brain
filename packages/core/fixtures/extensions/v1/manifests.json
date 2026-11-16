@@ -2091,5 +2091,230 @@
         }
       ]
     }
+  },
+  {
+    "name": "catalog metadata",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "건강 정보",
+      "login_required": true
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "catalog login false",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "test",
+      "login_required": false
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "catalog description empty",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "  "
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description control",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "line\nfeed"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog login type",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "login_required": "true"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog reserved command namespace",
+    "manifest": {
+      "name": "catalog",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "commands": [
+        {
+          "name": "echo-stats",
+          "runtime": "node",
+          "entry": "bin/echo.mjs",
+          "description": "통계 조회",
+          "input_schema": {
+            "type": "object"
+          },
+          "output_schema": {
+            "type": "object"
+          },
+          "timeout_ms": 1000,
+          "risk": "read"
+        }
+      ]
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description BOM",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "﻿"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description ECMAScript whitespace",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "       　﻿"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description zero width space",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "​"
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "catalog description BOM with text",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "﻿제목"
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "catalog description control whitespace",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": ""
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description trailing LF",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "제목\n"
+    },
+    "expect": "invalid"
+  },
+  {
+    "name": "catalog description trailing CRLF",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "description": "제목\r\n"
+    },
+    "expect": "invalid"
   }
 ]

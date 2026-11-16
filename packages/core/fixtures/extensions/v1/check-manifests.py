@@ -27,7 +27,7 @@ def _valid(value, schema_adapter=None):
         if tuple(map(int, compat['min'].split('.'))) >= tuple(map(int, compat['max_exclusive'].split('.'))):
             return False
     commands = value.get('commands', [])
-    if commands and ('_' in name or name in ('install', 'run', 'login', 'list', 'status', 'enable', 'disable')):
+    if commands and ('_' in name or name in ('install', 'run', 'login', 'list', 'catalog', 'status', 'enable', 'disable')):
         return False
     names = [command['name'] for command in commands]
     if len(names) != len(set(names)):

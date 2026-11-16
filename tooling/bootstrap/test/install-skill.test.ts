@@ -18,7 +18,7 @@ describe('확장 설치 스킬', () => {
   it('명시한 모든 명령과 옵션을 등록된 CommandSpec과 비교한다', () => {
     const calls = [...skill.matchAll(/`(brain [^`]+)`/g)].map(match => match[1]!.split(/\s+/));
     expect(calls.length).toBeGreaterThan(0);
-    expect(new Set(calls.map(call => call.slice(1, 3).join(' ')))).toEqual(new Set(['guide schema', 'ext status', 'ext install', 'ext login']));
+    expect(new Set(calls.map(call => call.slice(1, 3).join(' ')))).toEqual(new Set(['guide schema', 'ext catalog', 'ext status', 'ext install', 'ext login']));
     for (const [, ns, verb, ...args] of calls) {
       const spec = commands.find(command => command.ns === ns && command.verb === verb);
       expect(spec, `${ns} ${verb}`).toBeDefined();
@@ -31,6 +31,17 @@ describe('확장 설치 스킬', () => {
         expect(flags).toContain(flag);
       }
     }
+  });
+
+  it('이름 없는 요청은 검증된 카탈로그를 제시하고 사용자의 선택을 기다린다', () => {
+    expect(skill).toContain('`brain ext catalog --json`');
+    expect(skill).toContain('사용자가 이름을 선택할 때까지 기다리며 임의로 정하거나 설치하지 않는다');
+    expect(skill).toContain('조회가 실패하거나 목록이 비어 있으면 그대로 보고하고 중단한다');
+    expect(skill).toContain('카탈로그의 `login_required`는 인증 필요 여부이지 현재 로그인 상태가 아니다');
+    expect(skill).toContain('Garmin은 현재 패키지에 인증 실행 항목이 없어');
+    expect(loginSkill).toContain('Garmin은 현재 패키지에 인증 실행 항목이 없으므로');
+    expect(loginSkill).toContain('로그인 필요를 명시한 상태가 있을 때만 인증 미완료로 보고');
+    expect(loginSkill).toContain('기존 connected와 login skipped는 그대로 보고한다');
   });
 
   it('인증 비밀과 우회 설치 및 별도 예약을 금지한다', () => {
