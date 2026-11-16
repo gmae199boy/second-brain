@@ -60,7 +60,7 @@ export type FailuresRetryResult =
   | { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 
 export interface FailuresRetryDependencies {
-  store: Pick<WorkStore, 'listFailures' | 'addWork'> &
+  store: Pick<WorkStore, 'listFailures' | 'addWork' | 'retryExtensionFailure'> &
     /**
      * One lock-free read per failing file, to tell a retry worth asking for
      * from one that cannot go anywhere (`redacted`, `sourceUnreachable`).
@@ -106,24 +106,36 @@ export async function retryFailures(
   let redacted = 0;
   let sourceUnreachable = 0;
   const skipped = new Map<string, number>();
+  const pendingSkipped = new Map<string, string>();
   const seen = new Set<string>();
 
   for (const failure of read.failures) {
-    const kind = failure.stage === FILE_IMPORT_KIND && failure.targetKind === 'file_request'
+    let kind = failure.stage === FILE_IMPORT_KIND && failure.targetKind === 'file_request'
       ? FILE_IMPORT_KIND
       : Object.hasOwn(FAILURE_RETRY_STAGES, failure.stage)
       ? FAILURE_RETRY_STAGES[failure.stage]
-      : Object.hasOwn(FAILURE_RETRY_KINDS, failure.targetKind)
-        ? FAILURE_RETRY_KINDS[failure.targetKind]
-        : undefined;
-    const target = `${kind ?? ''}\n${failure.targetKind}\n${failure.targetId}`;
-    if (seen.has(target)) continue;
-    seen.add(target);
+      : undefined;
 
     if (kind === undefined) {
-      skipped.set(failure.targetKind, (skipped.get(failure.targetKind) ?? 0) + 1);
-      continue;
+      const target = JSON.stringify([failure.stage, failure.targetKind, failure.targetId]);
+      if (seen.has(target)) continue;
+      const queued = await store.retryExtensionFailure({ failureId: failure.id, id: idGen.next(), now: clock.now() });
+      if (!queued.ok) return queued;
+      if (queued.state === 'created' || queued.state === 'open') {
+        if (queued.state === 'created') added += 1; else alreadyOpen += 1;
+        seen.add(target); pendingSkipped.delete(target);
+        continue;
+      }
+      if (queued.state === 'skipped') { pendingSkipped.set(target, failure.targetKind); continue; }
+      // Manifest work kinds are extension-qualified; a removed extension must
+      // never be translated into a legacy core job based on its target alone.
+      if (/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(failure.stage)) { pendingSkipped.set(target, failure.targetKind); continue; }
+      kind = Object.hasOwn(FAILURE_RETRY_KINDS, failure.targetKind) ? FAILURE_RETRY_KINDS[failure.targetKind] : undefined;
+      if (kind === undefined) { pendingSkipped.set(target, failure.targetKind); continue; }
     }
+    const target = JSON.stringify([kind, failure.targetKind, failure.targetId]);
+    if (seen.has(target)) continue;
+    seen.add(target);
 
     if (kind === DOCUMENT_EXTRACT_KIND && failure.targetKind === 'file') {
       // A read and not a write, so a target that is going nowhere costs this
@@ -162,6 +174,7 @@ export async function retryFailures(
     else alreadyOpen += 1;
   }
 
+  for (const targetKind of pendingSkipped.values()) skipped.set(targetKind, (skipped.get(targetKind) ?? 0) + 1);
   return {
     ok: true,
     added,

@@ -1,6 +1,7 @@
 import { attemptUsage } from '@second-brain/core';
 import {
   formatInstant,
+  failureFingerprint,
   dependencyFailedText,
   TABLE_CLEANUP_KIND,
   TABLE_TARGET_KIND,
@@ -196,6 +197,61 @@ export async function ensureFollowup(held: Kysely<PgSchema>, row: WorkItemRow): 
 
 export function postgresWorkStore(connect: PgConnect): WorkStore {
   return {
+    async retryExtensionFailure(input) {
+      const opened = connect();
+      if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
+      const result = await withWrite(opened.connection, async held => {
+        // Lock the registry row against replacement/removal until insertion commits.
+        const failure = (await sql<{stage:string;target_kind:string;target_id:string;occurred_at:string;code:string;message:string;fingerprint:string}>`
+          select f.stage,f.target_kind,f.target_id,f.occurred_at,f.code,f.message,f.fingerprint
+          from brain.failures f join brain.extension_work_kinds k on k.kind=f.stage
+          where f.id=${input.failureId} and f.resolved_at is null for share of k`.execute(held)).rows[0];
+        if (!failure) {
+          const unresolved = await sql`select 1 from brain.failures where id=${input.failureId} and resolved_at is null`.execute(held);
+          return unresolved.rows.length ? 'unregistered' as const : 'skipped' as const;
+        }
+        if (failure.fingerprint !== failureFingerprint({ stage: failure.stage, input: `${failure.target_kind}:${failure.target_id}`, code: failure.code })) return 'skipped' as const;
+        // The terminal supervisor records completion and occurrence at the same
+        // instant. Refuse ambiguous or synthetic records instead of guessing input.
+        const originals = await sql<WorkItemRow>`select w.* from brain.work_items w
+          where w.kind=${failure.stage} and w.target_kind=${failure.target_kind} and w.target_id=${failure.target_id}
+            and w.outcome='failed' and w.completed_at=${failure.occurred_at} and w.last_error=${failure.message}
+            and exists(select 1 from brain.work_attempts a where a.work_item_id=w.id and a.finished_at=${failure.occurred_at}
+              and a.outcome in ('failed','died','stalled') and (a.error_code=${failure.code} or a.error_code is null))
+          limit 2`.execute(held);
+        if (originals.rows.length !== 1) return 'skipped' as const;
+        const original = originals.rows[0]!;
+        if ((await sql`select 1 from brain.schedule_occurrences where work_id=${original.id} limit 1`.execute(held)).rows.length) return 'skipped' as const;
+        // Recheck after obtaining the work lock, in the same order as settlement.
+        const stillOpen = async () => (await sql`select 1 from brain.failures where id=${input.failureId} and resolved_at is null and occurred_at=${failure.occurred_at} and fingerprint=${failure.fingerprint} and message=${failure.message} for update`.execute(held)).rows.length > 0;
+        for (;;) {
+          const inserted = await sql<WorkItemRow>`insert into brain.work_items
+            (id,kind,execution_class,serialization_key,hold_group,target_kind,target_id,created_at,attempts,next_attempt_at)
+            values (${input.id},${original.kind},'supervised',${original.serialization_key},${original.hold_group},${original.target_kind},${original.target_id},${instant(input.now, 'work_items.created_at')},0,${instant(input.now, 'work_items.next_attempt_at')})
+            on conflict (kind,target_kind,target_id) where completed_at is null do nothing returning *`.execute(held);
+          const row = inserted.rows[0];
+          if (row) {
+            if (!await stillOpen()) { await sql`delete from brain.work_items where id=${row.id}`.execute(held); return 'skipped' as const; }
+            await sql`insert into brain.extension_work_inputs(work_id,input) select ${row.id}::uuid,input from brain.extension_work_inputs where work_id=${original.id}`.execute(held);
+            await sql`insert into brain.work_manual_requests(work_id) select ${row.id}::uuid from brain.work_manual_requests where work_id=${original.id}`.execute(held);
+            await sql`insert into brain.work_dependencies(work_item_id,prerequisite_id) select ${row.id}::uuid,prerequisite_id from brain.work_dependencies where work_item_id=${original.id}`.execute(held);
+            await ensureFollowup(held, row);
+            return 'created' as const;
+          }
+          const open = (await sql<WorkItemRow>`select * from brain.work_items where kind=${original.kind} and target_kind=${original.target_kind} and target_id=${original.target_id} and completed_at is null for update`.execute(held)).rows[0];
+          if (!open) continue;
+          if (!await stillOpen()) return 'skipped' as const;
+          const same = await sql<{same:boolean}>`select
+            ${open.cancel_requested_at}::timestamptz is null and ${open.serialization_key}::text is not distinct from ${original.serialization_key}::text and ${open.hold_group}::text is not distinct from ${original.hold_group}::text
+            and (select input from brain.extension_work_inputs where work_id=${open.id}) is not distinct from (select input from brain.extension_work_inputs where work_id=${original.id})
+            and exists(select 1 from brain.work_manual_requests where work_id=${open.id}) = exists(select 1 from brain.work_manual_requests where work_id=${original.id})
+            and not exists(select 1 from brain.schedule_occurrences where work_id=${open.id})
+            and not exists((select prerequisite_id from brain.work_dependencies where work_item_id=${open.id} except select prerequisite_id from brain.work_dependencies where work_item_id=${original.id}) union all (select prerequisite_id from brain.work_dependencies where work_item_id=${original.id} except select prerequisite_id from brain.work_dependencies where work_item_id=${open.id})) as same`.execute(held);
+          return same.rows[0]?.same ? 'open' as const : 'skipped' as const;
+        }
+      });
+      return result.ok ? { ok: true, state: result.value } : result;
+    },
     async holdWorkGroup({ group, now }) {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
@@ -526,7 +582,7 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
         if (changesOf(changed) === 0) return 0;
         if (input.outcome === 'succeeded') {
         await settleScheduledSuccess(held, input.id, now);
-          if (item.kind === 'channel_send') await sql`update brain.failures set resolved_at=${now} where target_kind=${item.target_kind} and target_id=${item.target_id} and stage='channel_send' and resolved_at is null`.execute(held);
+          await sql`update brain.failures set resolved_at=${now} where target_kind=${item.target_kind} and target_id=${item.target_id} and stage=${item.kind} and resolved_at is null`.execute(held);
         }
         if (input.outcome !== 'succeeded') await transitionOccurrences(held, input.id, failure !== undefined || item.cancel_requested_at !== null ? 'failed' : 'pending');
         if (input.outcome !== 'succeeded' && (item.cancel_requested_at !== null || failure !== undefined))

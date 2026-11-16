@@ -71,3 +71,25 @@ it('backfills one dependent for a pending parent when followups are installed', 
     expect(await store.claimSupervisedWork({now,claimedBy:'test',kinds:[kinds[1]!],attemptToken:randomUUID()})).toMatchObject({ok:true,item:{id:children[0].id}});
   } finally { await store.close(); await admin.end(); await db.drop(); }
 });
+
+it('creates a gated followup for a retried failed parent', async () => {
+  const { failureFingerprint } = await import('@second-brain/core');
+  const db=await database(), store=postgresStore({databaseUrl:db.appUrl});
+  const admin=new pg.Client({connectionString:db.url}), now=clock.now(), parent=randomUUID(), token=randomUUID(), failureId=randomUUID(), retryId=randomUUID();
+  const name='retrytest', kind=`${name}.collect`, childKind=`${name}.artifacts`;
+  try {
+    await admin.connect();
+    await store.recordExtensionInstall({name,version:'1',now,workKinds:[kind,childKind],workFollowups:{[kind]:childKind}});
+    await store.addWork({id:parent,kind,targetKind:'extension',targetId:'default',createdAt:now,nextAttemptAt:now});
+    await store.claimSupervisedWork({now,kinds:[kind],claimedBy:'worker',attemptToken:token});
+    await store.finishSupervisedWork({id:parent,attemptToken:token,now,outcome:'failed',errorCode:'BAD',errorRetryable:false,failure:{id:failureId,stage:kind,fingerprint:failureFingerprint({stage:kind,input:'extension:default',code:'BAD'}),code:'BAD',message:'failed',occurredAt:now}});
+    expect(await store.retryExtensionFailure({failureId,id:retryId,now})).toEqual({ok:true,state:'created'});
+    const children=(await admin.query('select w.id from brain.work_items w join brain.work_dependencies d on d.work_item_id=w.id where d.prerequisite_id=$1 and w.kind=$2',[retryId,childKind])).rows;
+    expect(children).toHaveLength(1);
+    expect(await store.claimSupervisedWork({now,kinds:[childKind],claimedBy:'worker',attemptToken:randomUUID()})).toMatchObject({ok:true,item:null});
+    const nextToken=randomUUID();
+    expect(await store.claimSupervisedWork({now,kinds:[kind],claimedBy:'worker',attemptToken:nextToken})).toMatchObject({ok:true,item:{id:retryId}});
+    await store.finishSupervisedWork({id:retryId,attemptToken:nextToken,now,outcome:'succeeded'});
+    expect(await store.claimSupervisedWork({now,kinds:[childKind],claimedBy:'worker',attemptToken:randomUUID()})).toMatchObject({ok:true,item:{id:children[0].id}});
+  } finally { await store.close(); await admin.end(); await db.drop(); }
+});

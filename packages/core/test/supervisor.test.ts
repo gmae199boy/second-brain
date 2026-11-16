@@ -522,3 +522,50 @@ it('Garmin 진단 투영은 endpoint·사유·길이·일감 종류를 제한한
   expect(publicGarminFetchDiagnostic('other.kind', 'garmin.fetch_error:daily_weigh_ins:transient:http_503')).toBeUndefined();
   expect(publicGarminFetchDiagnostic('garmin.collect', 'garmin.fetch_error:daily_weigh_ins:transient:http_503')).toContain('message=http_503');
 });
+
+const protectedCollect: NonNullable<Parameters<typeof runSupervisor>[0]['protectedLaunches']> = {
+  'garmin.collect': { extension: 'garmin', declarations: {}, errorCodes: [], async prepare(item, token) {
+    return { ok: true, spec: { command: 'probe', args: [], env: {
+      BRAIN_ABI_VERSION: '1', BRAIN_DATABASE_URL: 'postgres://localhost/brain', BRAIN_WORK_ID: item.id,
+      BRAIN_ATTEMPT_TOKEN: token, BRAIN_WORK_KIND: item.kind, BRAIN_TARGET_KIND: item.targetKind,
+      BRAIN_TARGET_ID: item.targetId, BRAIN_RUN_GENERATION: String(item.attempts),
+      BRAIN_SETTINGS_SNAPSHOT: '{"version":1,"extension":"garmin","user_id":"019a0000-0000-7000-8000-000000000001","values":{}}',
+    } } };
+  } },
+};
+
+it('records an extension failure, retries its original work and clears doctor on success', async () => {
+  const { runDoctor } = await import('../src/doctor/doctor.js');
+  const { retryFailures } = await import('../src/failures/retry.js');
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const k = await kit({ kind: 'garmin.collect', protectedLaunches: protectedCollect });
+  const health = { async checkHealth() { return { ok: true as const, serverVersion: 'test', source: { location: 'synthetic', probes: [] } }; }, ...memorySchemaStore({ version: 3 }) };
+  const report = () => runDoctor(health, { schemaVersions: { core: 3 }, store: k.store, clock: k.time.clock });
+  try {
+    k.launcher.processes[0]!.exit(0); await flush();
+    expect(k.store.snapshot().failures).toMatchObject([{ stage: 'garmin.collect', targetKind: 'probe', targetId: '700000', code: 'ABI_NO_RESULT', fingerprint: failureFingerprint({ stage: 'garmin.collect', input: 'probe:700000', code: 'ABI_NO_RESULT' }) }]);
+    expect((await report()).checks.find(check => check.id === 'failures')).toMatchObject({ status: 'warn' });
+    expect(await retryFailures({ store: k.store, clock: k.time.clock, idGen: k.idGen })).toMatchObject({ ok: true, added: 1 });
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[1]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[1]!.exit(); await flush();
+    expect((await report()).checks.find(check => check.id === 'failures')).toMatchObject({ status: 'ok', detail: '0건' });
+    expect(k.store.snapshot().failures[0]?.resolvedAt).not.toBeNull();
+  } finally { k.controller.abort(); await k.running; }
+});
+
+it('clears doctor after a fresh extension execution succeeds', async () => {
+  const { runDoctor } = await import('../src/doctor/doctor.js');
+  const k = await kit({ kind: 'garmin.collect', protectedLaunches: protectedCollect });
+  const health = { async checkHealth() { return { ok: true as const, serverVersion: 'test', source: { location: 'synthetic', probes: [] } }; }, ...memorySchemaStore({ version: 3 }) };
+  const report = () => runDoctor(health, { schemaVersions: { core: 3 }, store: k.store, clock: k.time.clock });
+  try {
+    k.launcher.processes[0]!.exit(0); await flush();
+    expect((await report()).checks.find(check => check.id === 'failures')).toMatchObject({ status: 'warn' });
+    await k.store.addWork({ id: k.idGen.next(), kind: 'garmin.collect', targetKind: 'probe', targetId: '700000', createdAt: now, nextAttemptAt: now });
+    k.time.advance(5000); await flush();
+    expect(k.launcher.processes).toHaveLength(2);
+    k.launcher.processes[1]!.push('{"abi":1,"type":"result"}'); k.launcher.processes[1]!.exit(); await flush();
+    expect((await report()).checks.find(check => check.id === 'failures')).toMatchObject({ status: 'ok', detail: '0건' });
+  } finally { k.controller.abort(); await k.running; }
+});

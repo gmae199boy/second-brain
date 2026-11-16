@@ -35,6 +35,7 @@ const calls = {
   recordExtensionConnection: (s: PostgresStore) => s.recordExtensionConnection({ name: 'testext', status: 'connected', checkedAt: now, code: null, message: null }),
   getExtension: (s: PostgresStore) => s.getExtension('testext'),
   listExtensions: (s: PostgresStore) => s.listExtensions(),
+  retryExtensionFailure: (s: PostgresStore) => s.retryExtensionFailure({ failureId: id, id, now }),
   holdWorkGroup: (s: PostgresStore) => s.holdWorkGroup({ group: 'group', now }),
   releaseWorkGroup: (s: PostgresStore) => s.releaseWorkGroup({ group: 'group' }),
   listWork: (s) => s.listWork({ includeClosed: false, limit: 50 }),

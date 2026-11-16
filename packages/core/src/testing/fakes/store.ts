@@ -1,4 +1,14 @@
 import { channelBundleItems } from '../../channels/store.js';
+import { failureFingerprint } from '../../domain/failure.js';
+// Inputs are JSON objects; key ordering is irrelevant just as for PostgreSQL jsonb.
+function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, i) => jsonEqual(value, b[i]));
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+  const keys = Object.keys(left).sort(), other = Object.keys(right).sort();
+  return keys.length === other.length && keys.every((key, i) => key === other[i] && jsonEqual(left[key], right[key]));
+}
 import { driveSourceUrl } from '../../recall/documents.js';
 import { isExternalLocator } from '../../domain/file.js';
 import { extensionPublicProjection } from '../../extensions/public-projection.js';
@@ -185,6 +195,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
 
   const installProgress = new Map<string, import('../../extensions/install-progress.js').StoredExtensionInstallProgress>();
   const extensionWorkInputs = new Map<string, unknown>();
+  const manualRequests = new Set<string>();
   const extensionWorkKinds = new Map<string, readonly string[]>();
   const extensionMissedPolicies = new Map<string, Readonly<Record<string, 'latest' | 'coalesce' | 'skip'>>>();
   const extensionFollowups = new Map<string, Readonly<Record<string, string>>>();
@@ -824,10 +835,33 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       const result = addWork(parent ? { ...work, targetId: parent.id } : work);
       if (result.ok && input !== undefined) {
         if (result.created) extensionWorkInputs.set(result.item.id, structuredClone(input));
-        else if (JSON.stringify(extensionWorkInputs.get(result.item.id)) !== JSON.stringify(input)) return { ok: true, state: 'changed' };
+        else if (!jsonEqual(extensionWorkInputs.get(result.item.id), input)) return { ok: true, state: 'changed' };
       }
+      if (result.ok) manualRequests.add(result.item.id);
       if (result.ok && parent && !workDependencies.some(edge => edge.workItemId === result.item.id && edge.prerequisiteId === parent.id)) workDependencies.push({ workItemId: result.item.id, prerequisiteId: parent.id });
       return result.ok ? { ok: true, state: 'queued', workId: result.item.id, created: result.created } : result;
+    },
+    async retryExtensionFailure(input) {
+      const failure = failures.find(f => f.id === input.failureId && f.resolvedAt === null);
+      if (!failure) return { ok: true, state: 'skipped' };
+      if (![...extensionWorkKinds.values()].some(kinds => kinds.includes(failure.stage))) return { ok: true, state: 'unregistered' };
+      if (failure.fingerprint !== failureFingerprint({ stage: failure.stage, input: `${failure.targetKind}:${failure.targetId}`, code: failure.code })) return { ok: true, state: 'skipped' };
+      const originals = workItems.filter(item => item.kind === failure.stage && item.targetKind === failure.targetKind && item.targetId === failure.targetId && item.outcome === 'failed' && item.completedAt?.getTime() === failure.occurredAt.getTime() && item.lastError === failure.message && workAttempts.some(a => a.workItemId === item.id && a.finishedAt?.getTime() === failure.occurredAt.getTime() && ['failed','died','stalled'].includes(a.outcome ?? '') && (a.errorCode === failure.code || a.errorCode === null)));
+      if (originals.length !== 1) return { ok: true, state: 'skipped' };
+      const original = originals[0]!;
+      if ([...occurrences.values()].some(row => row.workId === original.id)) return { ok: true, state: 'skipped' };
+      const existing = workItems.find(item => item.kind === original.kind && item.targetKind === original.targetKind && item.targetId === original.targetId && item.completedAt === null);
+      const dependencies = (id: string) => workDependencies.filter(edge => edge.workItemId === id).map(edge => edge.prerequisiteId).sort();
+      if (existing) {
+        const same = existing.cancelRequestedAt === null && existing.serializationKey === original.serializationKey && existing.holdGroup === original.holdGroup && jsonEqual(extensionWorkInputs.get(existing.id), extensionWorkInputs.get(original.id)) && manualRequests.has(existing.id) === manualRequests.has(original.id) && jsonEqual(dependencies(existing.id), dependencies(original.id)) && ![...occurrences.values()].some(row => row.workId === existing.id);
+        return { ok: true, state: same ? 'open' : 'skipped' };
+      }
+      const queued = addWork({ id: input.id, kind: original.kind, targetKind: original.targetKind, targetId: original.targetId, serializationKey: original.serializationKey, holdGroup: original.holdGroup, createdAt: input.now, nextAttemptAt: input.now });
+      if (!queued.ok) return queued;
+      if (extensionWorkInputs.has(original.id)) extensionWorkInputs.set(queued.item.id, structuredClone(extensionWorkInputs.get(original.id)));
+      if (manualRequests.has(original.id)) manualRequests.add(queued.item.id);
+      for (const prerequisiteId of dependencies(original.id)) workDependencies.push({ workItemId: queued.item.id, prerequisiteId });
+      return { ok: true, state: 'created' };
     },
     async getExtension(name) { return { ok: true, extension: structuredClone(extensions.get(name) ?? null) }; },
     async listExtensions() { return { ok: true, extensions: structuredClone([...extensions.values()].sort((a, b) => a.name < b.name ? -1 : 1)) }; },
@@ -1778,7 +1812,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
       attempt.elapsedMs = input.elapsedMs ?? null; attempt.stderr = input.stderr ?? null;
       attempt.errorCode = input.errorCode ?? null; attempt.errorRetryable = input.errorRetryable ?? null;
       attempt.inputTokens = input.usage?.inputTokens ?? null; attempt.cachedInputTokens = input.usage?.cachedInputTokens ?? null; attempt.outputTokens = input.usage?.outputTokens ?? null;
-      if (input.outcome === 'succeeded') { settleSuccess(item, input.now); if (item.kind === 'channel_send') for (const failure of failures) if (failure.targetKind === item.targetKind && failure.targetId === item.targetId && failure.stage === item.kind && failure.resolvedAt === null) failure.resolvedAt = input.now; }
+      if (input.outcome === 'succeeded') { settleSuccess(item, input.now); for (const failure of failures) if (failure.targetKind === item.targetKind && failure.targetId === item.targetId && failure.stage === item.kind && failure.resolvedAt === null) failure.resolvedAt = input.now; }
       else if (item.cancelRequestedAt !== null) { item.completedAt = input.now; item.outcome = 'cancelled'; }
       else if (input.failure !== undefined) { item.completedAt = input.now; item.outcome = 'failed'; }
       if (input.outcome !== 'succeeded') {

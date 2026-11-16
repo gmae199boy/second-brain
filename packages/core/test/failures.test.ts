@@ -433,3 +433,95 @@ it('retries a failed Drive recovery as Drive recovery even for a redacted file',
   expect(await retryFailures(retryDependencies(store),{targetKind:'file'})).toMatchObject({ok:true,added:1,redacted:0});
   expect(store.snapshot().workItems).toEqual(expect.arrayContaining([expect.objectContaining({kind:'drive_migrate',targetKind:'file',targetId:'redacted-file'})]));
 });
+
+it('keeps core retries independent from extension retry errors and deduplicates unknown stages', async () => {
+  const store = await holding(failure());
+  store.retryExtensionFailure = async () => ({ ok: false, code: 'DB_LOCKED', message: 'registry locked' });
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 1 });
+  const unknown = await holding(
+    failure({ targetKind: 'extension', targetId: 'default', stage: 'garmin.collect' }),
+    failure({ id: '01940000-0000-7000-8000-0000000000d2', targetKind: 'extension', targetId: 'default', stage: 'garmin.collect', fingerprint: 'second' }),
+  );
+  let calls = 0;
+  unknown.retryExtensionFailure = async () => { calls++; return { ok: true, state: 'skipped' }; };
+  expect(await retryFailures(retryDependencies(unknown))).toMatchObject({ ok: true, skipped: [{ targetKind: 'extension', count: 1 }] });
+  expect(calls).toBe(2);
+  unknown.retryExtensionFailure = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'failed' });
+  expect(await retryFailures(retryDependencies(unknown))).toEqual({ ok: false, code: 'DB_UNAVAILABLE', message: 'failed' });
+});
+
+it('retries distinct registered stages for file and session targets after an unsafe candidate', async () => {
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const store = memoryStore();
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: NOW, workKinds: ['garmin.collect', 'garmin.report'] });
+  for (const [n, kind, targetKind] of [[1, 'garmin.collect', 'file'], [2, 'garmin.report', 'session']] as const) {
+    const id = `01940000-0000-7000-8000-${String(n).padStart(12,'0')}`;
+    const token = `01940000-0000-7000-8001-${String(n).padStart(12,'0')}`;
+    await store.addWork({ id, kind, targetKind, targetId: 'same', createdAt: NOW, nextAttemptAt: NOW });
+    await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+    await store.finishSupervisedWork({ id, attemptToken: token, now: NOW, outcome: 'failed', errorCode: 'BAD', errorRetryable: false, failure: { id: `01940000-0000-7000-8002-${String(n).padStart(12,'0')}`, stage: kind, fingerprint: failureFingerprint({ stage: kind, input: `${targetKind}:same`, code: 'BAD' }), code: 'BAD', message: 'failed', occurredAt: NOW } });
+  }
+  await store.recordFailure(failure({ id: '01940000-0000-7000-8000-000000000099', targetKind: 'file', targetId: 'same', stage: 'garmin.collect', fingerprint: 'unsafe', occurredAt: new Date(NOW.getTime()+1000) }));
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 2, skipped: [] });
+  expect(store.snapshot().workItems.filter(item => item.completedAt === null).map(item => item.kind).sort()).toEqual(['garmin.collect','garmin.report']);
+});
+
+it('treats reordered nested input as equal when reusing extension work', async () => {
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const store = memoryStore(), kind = 'garmin.collect', id = '01940000-0000-7000-8000-000000000201', token = '01940000-0000-7000-8000-000000000202';
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: NOW, workKinds: [kind] });
+  const work = { id, kind, targetKind: 'extension', targetId: 'default', createdAt: NOW, nextAttemptAt: NOW };
+  await store.enqueueExtensionWork({ name: 'garmin', version: '1', input: { a: 1, nested: { x: 1, y: 2 } }, work });
+  await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+  await store.finishSupervisedWork({ id, attemptToken: token, now: NOW, outcome: 'failed', errorCode: 'BAD', errorRetryable: false, failure: { id: '01940000-0000-7000-8000-000000000203', stage: kind, fingerprint: failureFingerprint({ stage: kind, input: 'extension:default', code: 'BAD' }), code: 'BAD', message: 'failed', occurredAt: NOW } });
+  await store.enqueueExtensionWork({ name: 'garmin', version: '1', input: { nested: { y: 2, x: 1 }, a: 1 }, work: { ...work, id: '01940000-0000-7000-8000-000000000204' } });
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, alreadyOpen: 1, skipped: [] });
+});
+
+it('queues two extension stages once each for one target', async () => {
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const store = memoryStore();
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: NOW, workKinds: ['garmin.collect','garmin.report'] });
+  for (const [n, kind] of [[1,'garmin.collect'],[2,'garmin.report']] as const) {
+    const id = `01940000-0000-7000-8003-${String(n).padStart(12,'0')}`, token = `01940000-0000-7000-8004-${String(n).padStart(12,'0')}`;
+    await store.addWork({ id, kind, targetKind: 'extension', targetId: 'default', createdAt: NOW, nextAttemptAt: NOW });
+    await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+    await store.finishSupervisedWork({ id, attemptToken: token, now: NOW, outcome: 'failed', errorCode: 'BAD', errorRetryable: false, failure: { id: `01940000-0000-7000-8005-${String(n).padStart(12,'0')}`, stage: kind, fingerprint: failureFingerprint({ stage: kind, input: 'extension:default', code: 'BAD' }), code: 'BAD', message: 'failed', occurredAt: NOW } });
+  }
+  await store.recordFailure(failure({ id:'01940000-0000-7000-8005-000000000003', targetKind:'extension',targetId:'default',stage:'garmin.collect',fingerprint:'other' }));
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok:true,added:2,skipped:[] });
+  expect(store.snapshot().workItems.filter(item => item.completedAt === null).map(item => item.kind).sort()).toEqual(['garmin.collect','garmin.report']);
+});
+
+it.each(['file', 'session'] as const)('does not route a removed extension stage for %s to legacy core work', async targetKind => {
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const store = memoryStore(), kind = 'garmin.collect';
+  const workId = '01940000-0000-7000-8000-000000000301', token = '01940000-0000-7000-8000-000000000302';
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: NOW, workKinds: [kind] });
+  await store.addWork({ id: workId, kind, targetKind, targetId: 'synthetic', createdAt: NOW, nextAttemptAt: NOW });
+  await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+  await store.finishSupervisedWork({ id: workId, attemptToken: token, now: NOW, outcome: 'failed', errorCode: 'BAD', errorRetryable: false, failure: { id: '01940000-0000-7000-8000-000000000303', stage: kind, fingerprint: failureFingerprint({ stage: kind, input: `${targetKind}:synthetic`, code: 'BAD' }), code: 'BAD', message: 'failed', occurredAt: NOW } });
+  await store.recordExtensionInstall({ name: 'garmin', version: '2', now: NOW, workKinds: [] });
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 0, alreadyOpen: 0, skipped: [{ targetKind, count: 1 }] });
+  expect(store.snapshot().workItems.filter(row => row.completedAt === null)).toEqual([]);
+});
+
+it('skips cancelling equivalent work and distinguishes missing, resolved and unregistered failures in memory', async () => {
+  const { failureFingerprint } = await import('../src/domain/failure.js');
+  const store = memoryStore(), kind = 'garmin.collect', workId = '01940000-0000-7000-8000-000000000311', token = '01940000-0000-7000-8000-000000000312', failureId = '01940000-0000-7000-8000-000000000313';
+  const retry = (id: string) => store.retryExtensionFailure({ failureId: id, id: '01940000-0000-7000-8000-000000000319', now: NOW });
+  expect(await retry('01940000-0000-7000-8000-000000000318')).toEqual({ ok: true, state: 'skipped' });
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now: NOW, workKinds: [kind] });
+  await store.addWork({ id: workId, kind, targetKind: 'extension', targetId: 'default', createdAt: NOW, nextAttemptAt: NOW });
+  await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+  await store.finishSupervisedWork({ id: workId, attemptToken: token, now: NOW, outcome: 'failed', errorCode: 'BAD', errorRetryable: false, failure: { id: failureId, stage: kind, fingerprint: failureFingerprint({ stage: kind, input: 'extension:default', code: 'BAD' }), code: 'BAD', message: 'failed', occurredAt: NOW } });
+  expect(await retry(failureId)).toEqual({ ok: true, state: 'created' });
+  await store.claimSupervisedWork({ now: NOW, kinds: [kind], claimedBy: 'worker', attemptToken: '01940000-0000-7000-8000-000000000314' });
+  expect(await store.requestWorkCancel({ id: '01940000-0000-7000-8000-000000000319', now: NOW })).toMatchObject({ ok: true, state: 'requested' });
+  expect(await store.retryExtensionFailure({ failureId, id: '01940000-0000-7000-8000-000000000315', now: NOW })).toEqual({ ok: true, state: 'skipped' });
+  expect(await retryFailures(retryDependencies(store))).toMatchObject({ ok: true, added: 0, alreadyOpen: 0, skipped: [{ targetKind: 'extension', count: 1 }] });
+  await store.recordExtensionInstall({ name: 'garmin', version: '2', now: NOW, workKinds: [] });
+  expect(await retry(failureId)).toEqual({ ok: true, state: 'unregistered' });
+  await store.resolveFailures({ targetKind: 'extension', targetId: 'default', stage: kind, now: NOW });
+  expect(await retry(failureId)).toEqual({ ok: true, state: 'skipped' });
+});

@@ -9,7 +9,7 @@ import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { createPool, type PgSchema } from '../src/connect.js';
 import { postgresWorkStore } from '../src/work.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures, runSupervisor } from '@second-brain/core';
+import { dependencyFailedText, enqueueWorkGraph, tickSchedules, failureFingerprint, failureText, FAILURE_MESSAGE_MAX_BYTES, truncateUtf8, retryFailures, runSupervisor } from '@second-brain/core';
 import { fakeCron, workStoreContract, scheduleStoreContract, sequenceIdGen, manualTime, fakeProcessInspector, fakeProcessLauncher } from '@second-brain/core/testing';
 import { EXPECTED_SCHEMA_VERSIONS, postgresStore } from '../src/index.js';
 import { database, subject, clock } from './fixture.js';
@@ -1002,4 +1002,206 @@ it('closes a tenth recovered supervised death with one PROCESS_DIED failure', as
     ]);
     expect(await store.claimSupervisedWork({ now, claimedBy: 'next', kinds: ['process_probe'], attemptToken: id(102) })).toMatchObject({ ok: true, item: null });
   } finally { controller.abort(); await running; }
+});
+
+it('retries a failed extension with its original input, manual marker and predecessor atomically', async () => {
+  const { db, store } = await fixture();
+  const kind = 'garmin.backfill', token = id(701), originalId = id(700), failureId = id(702);
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now, workKinds: [kind, 'garmin.prepare'] });
+  await store.addWork({ ...work(703), kind: 'garmin.prepare' });
+  await store.claimSupervisedWork({ now, kinds: ['garmin.prepare'], claimedBy: 'worker', attemptToken: id(704) });
+  await store.finishSupervisedWork({ id: id(703), attemptToken: id(704), now, outcome: 'succeeded', resultSummary: { status: 'success' } });
+  expect(await store.enqueueExtensionWork({ name: 'garmin', version: '1', input: { dry_run: true, from: '2026-01-01' }, work: { ...work(700), kind, targetKind: 'extension', targetId: 'default', serializationKey: 'garmin:serial', holdGroup: 'extension:garmin' } })).toMatchObject({ ok: true, state: 'queued' });
+  await db.query(`insert into brain.work_dependencies(work_item_id,prerequisite_id) values ('${originalId}','${id(703)}')`);
+  await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'worker', attemptToken: token });
+  const failure = { id: failureId, stage: kind, fingerprint: failureFingerprint({ stage: kind, input: 'extension:default', code: 'INVALID' }), code: 'INVALID', message: 'failed', occurredAt: now };
+  expect(await store.finishSupervisedWork({ id: originalId, attemptToken: token, now, outcome: 'failed', errorCode: 'INVALID', errorRetryable: false, failure })).toMatchObject({ ok: true, outcome: 'done' });
+  await store.enqueueExtensionWork({ name: 'garmin', version: '1', input: { dry_run: false }, work: { ...work(708), kind, targetKind: 'extension', targetId: 'default' } });
+  expect(await store.retryExtensionFailure({ failureId, id: id(709), now: next })).toEqual({ ok: true, state: 'skipped' });
+  await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'other', attemptToken: id(709) });
+  await store.finishSupervisedWork({ id: id(708), attemptToken: id(709), now, outcome: 'failed', nextAttemptAt: next });
+  // Close this unrelated open item without resolving the original failure.
+  await db.query(`update brain.work_items set completed_at='${now.toISOString()}',outcome='cancelled' where id='${id(708)}'`);
+  const result = await store.retryExtensionFailure({ failureId, id: id(705), now: next });
+  expect(result).toEqual({ ok: true, state: 'created' });
+  expect(await db.rows(`select input from brain.extension_work_inputs where work_id='${id(705)}'`)).toEqual([{ input: { dry_run: true, from: '2026-01-01' } }]);
+  expect(await db.rows(`select work_id from brain.work_manual_requests where work_id='${id(705)}'`)).toEqual([{ work_id: id(705) }]);
+  expect(await db.rows(`select prerequisite_id from brain.work_dependencies where work_item_id='${id(705)}'`)).toEqual([{ prerequisite_id: id(703) }]);
+  expect(await db.rows(`select a.result_summary from brain.work_dependencies d join brain.work_items p on p.id=d.prerequisite_id join brain.extension_work_kinds k on k.kind=p.kind join brain.work_attempts a on a.work_item_id=p.id and a.outcome='succeeded' where d.work_item_id='${id(705)}' and p.outcome='succeeded' and k.extension_name='garmin'`)).toEqual([{ result_summary: { status: 'success' } }]);
+  expect(await db.rows(`select execution_class,serialization_key,hold_group from brain.work_items where id='${id(705)}'`)).toEqual([{ execution_class: 'supervised', serialization_key: 'garmin:serial', hold_group: 'extension:garmin' }]);
+  expect(await store.retryExtensionFailure({ failureId, id: id(706), now: next })).toEqual({ ok: true, state: 'open' });
+  await store.claimSupervisedWork({ now: next, kinds: [kind], claimedBy: 'retry', attemptToken: id(707) });
+  expect(await store.finishSupervisedWork({ id: id(705), attemptToken: id(707), now: next, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows(`select resolved_at from brain.failures where id='${failureId}'`)).toEqual([{ resolved_at: next }]);
+});
+
+it('skips synthetic failures and serializes retry with a registry removal', async () => {
+  const { db, store, blocker } = await fixture();
+  const kind = 'garmin.collect', failureId = id(711);
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now, workKinds: [kind] });
+  await store.recordFailure({ id: id(710), targetKind: 'extension', targetId: 'synthetic', stage: kind, fingerprint: 'x', harness: null, sessionId: null, code: 'INVALID', message: 'failed', occurredAt: now });
+  expect(await store.retryExtensionFailure({ failureId: id(710), id: id(712), now })).toEqual({ ok: true, state: 'skipped' });
+  await store.addWork({ ...work(713), kind, targetKind: 'extension', targetId: 'default' });
+  await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'worker', attemptToken: id(714) });
+  await store.finishSupervisedWork({ id: id(713), attemptToken: id(714), now, outcome: 'failed', errorCode: 'INVALID', errorRetryable: false,
+    failure: { id: failureId, stage: kind, fingerprint: failureFingerprint({ stage: kind, input: 'extension:default', code: 'INVALID' }), code: 'INVALID', message: 'failed', occurredAt: now } });
+  await blocker.query('begin');
+  await blocker.query('delete from brain.extension_work_kinds where kind=$1', [kind]);
+  const pending = store.retryExtensionFailure({ failureId, id: id(715), now: next });
+  await expect.poll(async () => (await db.rows<{n:number}>(`select count(*)::int as n from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%extension_work_kinds%'`))[0]?.n).toBeGreaterThan(0);
+  await blocker.query('commit');
+  expect(await pending).toEqual({ ok: true, state: 'unregistered' });
+  expect(await db.rows(`select id from brain.work_items where id='${id(715)}'`)).toEqual([]);
+  expect(await store.retryExtensionFailure({ failureId, id: id(716), now: next })).toEqual({ ok: true, state: 'unregistered' });
+});
+
+it('settles matching supervised failures only, preserving other targets, stages and previous resolution times', async () => {
+  const { db, store } = await fixture(); const kind = 'garmin.collect';
+  await store.recordExtensionInstall({ name: 'garmin', version: '1', now, workKinds: [kind, 'garmin.report'] });
+  const failure = { id: id(720), targetKind: 'extension', targetId: 'default', stage: kind, fingerprint: 'x', harness: null, sessionId: null, code: 'BAD', message: 'failed', occurredAt: now };
+  for (const f of [failure, { ...failure, id: id(721), targetKind: 'other' }, { ...failure, id: id(722), targetId: 'other' }, { ...failure, id: id(723), stage: 'garmin.report' }, { ...failure, id: id(724), fingerprint: 'old' }]) await store.recordFailure(f);
+  await db.query(`update brain.failures set resolved_at='${now.toISOString()}' where id='${id(724)}'`);
+  for (const [n, workKind, targetKind, targetId] of [[725, 'garmin.report', 'extension', 'default'], [727, kind, 'other', 'other']] as const) {
+    await store.addWork({ ...work(n), kind: workKind, targetKind, targetId });
+    await store.claimSupervisedWork({ now, kinds: [workKind], claimedBy: 'worker', attemptToken: id(n+1) });
+    await store.finishSupervisedWork({ id: id(n), attemptToken: id(n+1), now: next, outcome: 'succeeded' });
+    expect((await db.rows<{resolved_at:Date|null}>(`select resolved_at from brain.failures where id='${id(720)}'`))[0]?.resolved_at).toBeNull();
+  }
+  await store.addWork({ ...work(730), kind, targetKind: 'extension', targetId: 'default' });
+  await store.claimSupervisedWork({ now, kinds: [kind], claimedBy: 'worker', attemptToken: id(731) });
+  const before = { items: await db.rows('select * from brain.work_items order by id'), attempts: await db.rows('select * from brain.work_attempts order by token'), failures: await db.rows('select * from brain.failures order by id') };
+  expect(await store.finishSupervisedWork({ id: id(730), attemptToken: id(732), now: next, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'lost' });
+  await db.query(`create function brain.refuse_test_resolution() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger refuse_test_resolution before update on brain.failures for each row execute function brain.refuse_test_resolution()`);
+  expect(await store.finishSupervisedWork({ id: id(730), attemptToken: id(731), now: next, outcome: 'succeeded' })).toMatchObject({ ok: false });
+  expect(await db.rows('select * from brain.work_items order by id')).toEqual(before.items);
+  expect(await db.rows('select * from brain.work_attempts order by token')).toEqual(before.attempts);
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(before.failures);
+  await db.query('drop trigger refuse_test_resolution on brain.failures');
+  expect(await store.finishSupervisedWork({ id: id(730), attemptToken: id(731), now: next, outcome: 'succeeded' })).toEqual({ ok: true, outcome: 'done' });
+  expect(await db.rows('select * from brain.failures order by id')).toEqual(before.failures.map(row => row.id === id(720) ? { ...row, resolved_at: next } : row));
+  await store.recordFailure({ ...failure, id: id(733), occurredAt: next });
+  expect(await db.rows(`select resolved_at,occurrences,first_occurred_at from brain.failures where id='${id(720)}'`)).toEqual([{ resolved_at: null, occurrences: 2, first_occurred_at: now }]);
+});
+
+async function retryFixture() {
+  const f = await fixture(); const kind = 'garmin.collect', original = id(800), failureId = id(802), predecessor = id(803);
+  await f.store.recordExtensionInstall({ name:'garmin', version:'1', now, workKinds:[kind] });
+  await f.store.addWork({ ...work(803), kind:'process_probe' });
+  await f.store.claimSupervisedWork({ now, kinds:['process_probe'], claimedBy:'worker', attemptToken:id(804) });
+  await f.store.finishSupervisedWork({ id:predecessor, attemptToken:id(804), now, outcome:'succeeded' });
+  await f.store.enqueueExtensionWork({ name:'garmin', version:'1', input:{a:1,nested:{x:1,y:2}}, work:{...work(800),kind,targetKind:'extension',targetId:'default',serializationKey:'serial',holdGroup:'extension:garmin'} });
+  await f.db.query(`insert into brain.work_dependencies values ('${original}','${predecessor}')`);
+  await f.store.claimSupervisedWork({ now, kinds:[kind], claimedBy:'worker', attemptToken:id(801) });
+  await f.store.finishSupervisedWork({ id:original, attemptToken:id(801), now, outcome:'failed', errorCode:'BAD', errorRetryable:false, failure:{id:failureId,stage:kind,fingerprint:failureFingerprint({stage:kind,input:'extension:default',code:'BAD'}),code:'BAD',message:'failed',occurredAt:now} });
+  return {...f,kind,original,failureId,predecessor};
+}
+
+it.each(['input','serialization','hold','manual','dependency','occurrence'] as const)('rejects an open retry with only %s different', async field => {
+  const {db,store,failureId} = await retryFixture(); const open=id(810);
+  expect(await store.retryExtensionFailure({failureId,id:open,now:next})).toEqual({ok:true,state:'created'});
+  if(field==='input') await db.query(`update brain.extension_work_inputs set input='{"a":2,"nested":{"x":1,"y":2}}' where work_id='${open}'`);
+  if(field==='serialization') await db.query(`update brain.work_items set serialization_key='other' where id='${open}'`);
+  if(field==='hold') await db.query(`update brain.work_items set hold_group='other' where id='${open}'`);
+  if(field==='manual') await db.query(`delete from brain.work_manual_requests where work_id='${open}'`);
+  if(field==='dependency') await db.query(`delete from brain.work_dependencies where work_item_id='${open}'`);
+  if(field==='occurrence') {
+    await store.addSchedule(schedule);
+    await db.query(`insert into brain.schedule_occurrences(schedule_id,occurrence_at,status,work_id,user_id,recorded_at) values ('${schedule.id}','${now.toISOString()}','pending','${open}','${schedule.userId}','${now.toISOString()}')`);
+  }
+  const before = await db.rows(`select * from brain.work_items where id='${open}'`);
+  expect(await store.retryExtensionFailure({failureId,id:id(811),now:next})).toEqual({ok:true,state:'skipped'});
+  expect(await db.rows(`select * from brain.work_items where id='${open}'`)).toEqual(before);
+  expect(await db.rows(`select id from brain.work_items where id='${id(811)}'`)).toEqual([]);
+});
+
+it('accepts JSON input with reordered nested object keys in PostgreSQL', async () => {
+  const {db,store,failureId} = await retryFixture();
+  expect(await store.retryExtensionFailure({failureId,id:id(810),now:next})).toEqual({ok:true,state:'created'});
+  await db.query(`update brain.extension_work_inputs set input='{"nested":{"y":2,"x":1},"a":1}' where work_id='${id(810)}'`);
+  expect(await store.retryExtensionFailure({failureId,id:id(811),now:next})).toEqual({ok:true,state:'open'});
+});
+
+it('skips scheduled failed work rather than inventing occurrence context', async () => {
+  const {db,store,failureId,original} = await retryFixture();
+  await store.addSchedule(schedule);
+  await db.query(`insert into brain.schedule_occurrences(schedule_id,occurrence_at,status,work_id,user_id,recorded_at) values ('${schedule.id}','${now.toISOString()}','failed','${original}','${schedule.userId}','${now.toISOString()}')`);
+  expect(await store.retryExtensionFailure({failureId,id:id(810),now:next})).toEqual({ok:true,state:'skipped'});
+  expect(await db.rows(`select id from brain.work_items where id='${id(810)}'`)).toEqual([]);
+});
+
+it('rejects a valid fingerprint with zero or two possible original executions', async () => {
+  const {db,store,failureId,kind} = await retryFixture();
+  const synthetic=id(820);
+  await store.recordFailure({id:synthetic,targetKind:'extension',targetId:'missing',stage:kind,fingerprint:failureFingerprint({stage:kind,input:'extension:missing',code:'BAD'}),harness:null,sessionId:null,code:'BAD',message:'failed',occurredAt:now});
+  expect(await store.retryExtensionFailure({failureId:synthetic,id:id(821),now:next})).toEqual({ok:true,state:'skipped'});
+  await store.enqueueExtensionWork({name:'garmin',version:'1',input:{different:true},work:{...work(822),kind,targetKind:'extension',targetId:'default'}});
+  await store.claimSupervisedWork({now,kinds:[kind],claimedBy:'worker',attemptToken:id(823)});
+  await store.finishSupervisedWork({id:id(822),attemptToken:id(823),now,outcome:'failed',errorCode:'BAD',errorRetryable:false,failure:{id:id(824),stage:kind,fingerprint:failureFingerprint({stage:kind,input:'extension:default',code:'BAD'}),code:'BAD',message:'failed',occurredAt:now}});
+  expect(await store.retryExtensionFailure({failureId,id:id(825),now:next})).toEqual({ok:true,state:'skipped'});
+  expect(await db.rows(`select id from brain.work_items where id in ('${id(821)}','${id(825)}')`)).toEqual([]);
+});
+
+it('rolls back retry input and manual copies when dependency copying fails', async () => {
+  const {db,store,failureId,kind} = await retryFixture();
+  await store.recordExtensionInstall({name:'garmin',version:'2',now,workKinds:[kind,'garmin.report'],workFollowups:{[kind]:'garmin.report'}});
+  await db.query(`create function brain.refuse_retry_dependency() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger refuse_retry_dependency before insert on brain.work_dependencies for each row execute function brain.refuse_retry_dependency()`);
+  expect(await store.retryExtensionFailure({failureId,id:id(810),now:next})).toMatchObject({ok:false});
+  for (const table of ['work_items','extension_work_inputs','work_manual_requests','work_dependencies']) {
+    const column = table==='work_items' ? 'id' : table==='work_dependencies' ? 'work_item_id' : 'work_id';
+    expect(await db.rows(`select ${column} from brain.${table} where ${column}='${id(810)}'`)).toEqual([]);
+  }
+  expect(await db.rows(`select resolved_at from brain.failures where id='${failureId}'`)).toEqual([{resolved_at:null}]);
+  expect(await db.rows(`select id from brain.work_items where kind='garmin.report'`)).toEqual([]);
+});
+
+it('allows successful settlement and retry to contend without inverse failure-work locks', async () => {
+  const {db,store,blocker,kind,failureId} = await retryFixture();
+  // Each store has a single-connection pool; use another pool to reach SQL
+  // while settlement is blocked holding the first connection.
+  const retryStore = postgresStore({databaseUrl:db.appUrl}); cleanup.push(() => retryStore.close());
+  await store.enqueueExtensionWork({name:'garmin',version:'1',input:{a:1,nested:{x:1,y:2}},work:{...work(830),kind,targetKind:'extension',targetId:'default',serializationKey:'serial',holdGroup:'extension:garmin'}});
+  await store.claimSupervisedWork({now,kinds:[kind],claimedBy:'worker',attemptToken:id(831)});
+  await blocker.query('begin');
+  await blocker.query('select id from brain.failures where id=$1 for update',[failureId]);
+  const completing = store.finishSupervisedWork({id:id(830),attemptToken:id(831),now:next,outcome:'succeeded'});
+  await expect.poll(async () => (await db.rows<{n:number}>(`select count(*)::int n from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%update brain.failures set resolved_at%'`))[0]?.n).toBeGreaterThan(0);
+  const retrying = retryStore.retryExtensionFailure({failureId,id:id(832),now:next});
+  await expect.poll(async () => (await db.rows<{n:number}>(`select count(*)::int n from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%insert into brain.work_items%'`))[0]?.n).toBeGreaterThan(0);
+  await blocker.query('commit');
+  expect(await completing).toEqual({ok:true,outcome:'done'});
+  expect(await retrying).toEqual({ok:true,state:'skipped'});
+  expect(await db.rows(`select id from brain.work_items where id='${id(832)}'`)).toEqual([]);
+});
+
+it('skips cancelling equivalent work and distinguishes missing, resolved and unregistered failures', async () => {
+  const {db,store,kind,failureId} = await retryFixture();
+  const retry = (failure: string, workId = id(850)) => store.retryExtensionFailure({failureId:failure,id:workId,now:next});
+  expect(await retry(id(849))).toEqual({ok:true,state:'skipped'});
+  expect(await retry(failureId)).toEqual({ok:true,state:'created'});
+  await store.claimSupervisedWork({now:next,kinds:[kind],claimedBy:'worker',attemptToken:id(851)});
+  expect(await store.requestWorkCancel({id:id(850),now:next})).toMatchObject({ok:true,state:'requested'});
+  expect(await retry(failureId,id(852))).toEqual({ok:true,state:'skipped'});
+  expect(await retryFailures({store,clock,idGen:sequenceIdGen({timestampMs:now.getTime(),start:1000})})).toMatchObject({ok:true,added:0,alreadyOpen:0,skipped:[{targetKind:'extension',count:1}]});
+  expect(await db.rows(`select id from brain.work_items where id='${id(852)}'`)).toEqual([]);
+  await store.recordExtensionInstall({name:'garmin',version:'2',now,workKinds:[]});
+  expect(await retry(failureId,id(853))).toEqual({ok:true,state:'unregistered'});
+  await store.resolveFailures({targetKind:'extension',targetId:'default',stage:kind,now:next});
+  expect(await retry(failureId,id(854))).toEqual({ok:true,state:'skipped'});
+});
+
+it.each([
+  ['died','PROCESS_DIED',null,'created'],
+  ['stalled','PROCESS_STALLED',null,'created'],
+  ['failed','PROCESS_DIED','OTHER','skipped'],
+] as const)('checks %s extension retry with attempt code %s / %s', async (outcome, code, errorCode, expected) => {
+  const {db,store} = await fixture();
+  const kind='garmin.collect', original=id(860), token=id(861), failureId=id(862), retryId=id(863);
+  await store.recordExtensionInstall({name:'garmin',version:'1',now,workKinds:[kind]});
+  await store.enqueueExtensionWork({name:'garmin',version:'1',input:{dry_run:true,detail:{days:7}},work:{...work(860),kind,targetKind:'extension',targetId:'default'}});
+  await store.claimSupervisedWork({now,kinds:[kind],claimedBy:'worker',attemptToken:token});
+  expect(await store.finishSupervisedWork({id:original,attemptToken:token,now,outcome,...(errorCode === null ? {} : {errorCode}),failure:{id:failureId,stage:kind,fingerprint:failureFingerprint({stage:kind,input:'extension:default',code}),code,message:'failed',occurredAt:now}})).toEqual({ok:true,outcome:'done'});
+  expect(await db.rows(`select outcome,error_code from brain.work_attempts where token='${token}'`)).toEqual([{outcome,error_code:errorCode}]);
+  expect(await store.retryExtensionFailure({failureId,id:retryId,now:next})).toEqual({ok:true,state:expected});
+  const rows=await db.rows(`select input from brain.extension_work_inputs where work_id='${retryId}'`);
+  expect(rows).toEqual(expected==='created' ? [{input:{dry_run:true,detail:{days:7}}}] : []);
 });

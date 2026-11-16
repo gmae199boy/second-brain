@@ -687,6 +687,8 @@ export interface ModelWorkUsage {
   latest: { workItemId: string; kind: string; at: Date; elapsedMs: number | null; usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null } | null;
 }
 export interface WorkStore {
+  /** Atomically retry a registered extension failure only when its original work is unambiguous. */
+  retryExtensionFailure(input: { failureId: string; id: string; now: Date }): Promise<{ ok: true; state: 'created' | 'open' | 'skipped' | 'unregistered' } | ScheduleStoreFailure>;
   /** 일감 ID로 현재 상태와 마지막 감독 시도를 제한 없이 조회한다. */
   getWork(id: string): Promise<{ ok: true; entry: { item: WorkItem; latestAttempt: import('../domain/work-item.js').WorkAttempt | null } | null } | ScheduleStoreFailure>;
   holdWorkGroup(input: { group: string; now: Date }): Promise<{ ok: true; held: boolean } | ScheduleStoreFailure>;
