@@ -28,7 +28,7 @@ it.each([
   try {
     const before = await f.producer(); await f.store.createChannelRequest(f.input); await f.start();
     await failed(f, 1);
-    expect((await attempts(f))[0]).toMatchObject({ outcome, error_code: code });
+    expect((await attempts(f))[0], `fake server requests: ${f.requests.length}`).toMatchObject({ outcome, error_code: code });
     expect(f.requests).toHaveLength(1); await checkProducer(f, before);
     f.setMode('success');
     if (mode === '429') { f.advance(6999); await new Promise(resolve => setTimeout(resolve, 200)); expect(f.requests).toHaveLength(1); f.advance(1); }
