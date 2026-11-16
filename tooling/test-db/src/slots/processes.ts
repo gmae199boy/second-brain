@@ -1,17 +1,15 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { fixedProcessSnapshot } from './internal-ps.js';
 import type { Identity } from './ledger.js';
-export interface ProcessSample extends Identity { ppid: number; pgid: number; cpu: number; time: string }
+export interface ProcessSample extends Identity { ppid: number; pgid: number; cpu: number; time: string; status?: string }
 export type Sampler = () => Promise<ProcessSample[]>;
-const exec = promisify(execFile);
 export function parseProcesses(output: string): ProcessSample[] {
   return output.split('\n').filter(line => line.trim()).map(line => {
-    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+([\d.]+)\s+(\S+)$/);
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+([\d.]+)\s+(\S+)(?:\s+(\S+))?$/);
     if (!m) throw new Error(`invalid ps row: ${line}`);
-    return { pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), started: m[4]!, cpu: Number(m[5]), time: m[6]! };
+    return { pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), started: m[4]!, cpu: Number(m[5]), time: m[6]!, ...(m[7] ? { status: m[7] } : {}) };
   });
 }
-export const sampleProcesses: Sampler = async () => parseProcesses((await exec('ps', ['-A', '-o', 'pid=,ppid=,pgid=,lstart=,%cpu=,time='], { env: { ...process.env, LC_ALL: 'C' } })).stdout);
+export const sampleProcesses: Sampler = async () => parseProcesses(await fixedProcessSnapshot());
 const key = (p: Identity) => `${p.pid}:${p.started}`;
 export class ProcessTracker {
   readonly descendants = new Map<string, ProcessSample>();

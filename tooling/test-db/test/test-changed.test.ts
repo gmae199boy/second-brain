@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyChanges } from '../../test-changed/rules.mjs';
+import { classifyChanges, explicitTestsForChanges } from '../../test-changed/rules.mjs';
 
 describe('changed test path rules', () => {
   it('exempts only proven independent test files from the broad Python rules', () => {
@@ -51,6 +51,40 @@ describe('changed test path rules', () => {
       .toMatchObject({pythonAll:false,pythonFiles:[direct],postgresAll:false});
     expect(classifyChanges([independent[0]!, direct, 'tooling/test-db/src/index.ts']))
       .toMatchObject({pythonAll:true,pythonFiles:[direct],postgresAll:false});
+  });
+  it('selects explicit consumer tests for the dynamically launched owned process gate', () => {
+    expect(explicitTestsForChanges(['apps/cli/test/owned-process-gate.mjs'])).toEqual([
+      'apps/cli/test/owned-processes.test.ts', 'apps/cli/test/ext-package.test.ts',
+    ]);
+    expect(explicitTestsForChanges(['apps/cli/test/owned-process-gate.mjs.bak'])).toEqual([]);
+  });
+  it('runs the explicit consumer files when only the gate changes', () => {
+    const root = fileURLToPath(new URL('../../../', import.meta.url)), dir = mkdtempSync(join(tmpdir(), 'gate-changed-route-')), log = join(dir, 'commands');
+    try {
+      writeFileSync(join(dir, 'git'), `#!/bin/sh
+case "$1" in
+  diff) case "$*" in *...HEAD*) printf '%s\\0' 'apps/cli/test/owned-process-gate.mjs';; esac;;
+  rev-parse) printf '%s\\n' '0000000000000000000000000000000000000000';;
+esac
+`, { mode: 0o755 });
+      writeFileSync(join(dir, 'pnpm'), `#!/bin/sh
+printf 'pnpm %s\\n' "$*" >> "$COMMAND_LOG"
+case "$*" in
+  *'vitest list'*'owned-processes.test.ts'*) printf '[{"file":"%s/apps/cli/test/owned-processes.test.ts"},{"file":"%s/apps/cli/test/ext-package.test.ts"}]' "$PWD" "$PWD";;
+  *'vitest list'*) printf '[]';;
+esac
+`, { mode: 0o755 });
+      const result = spawnSync(process.execPath, ['tooling/test-changed/run.mjs', 'HEAD'], { cwd: root, env: { ...process.env, PATH: dir + delimiter + process.env.PATH, COMMAND_LOG: log }, encoding: 'utf8', timeout: 30000 });
+      expect(result.status, result.stderr).toBe(0);
+      const commands = readFileSync(log, 'utf8');
+      expect(commands).toContain('vitest run apps/cli/test/owned-processes.test.ts apps/cli/test/ext-package.test.ts --passWithNoTests');
+      expect(commands).not.toContain('python-slots.js');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 45000);
+  it('classifies the owned Python setup wrapper as a Python integration input', () => {
+    const result = classifyChanges(['apps/cli/python-test/owned-global-setup.ts']);
+    expect(result.pythonAll).toBe(true);
+    expect(result.reasons.map(reason => reason.prefix)).toContain('apps/cli/python-test/owned-global-setup.ts');
   });
   it('keeps the complete hook file exclusively in the Python config', () => {
     const root = fileURLToPath(new URL('../../../', import.meta.url));

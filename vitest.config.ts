@@ -32,7 +32,8 @@ const projects = roots.flatMap((root) =>
           ...(root === roots[2] && entry.name === 'bootstrap' ? { exclude: ['test/hook.test.ts'] } : {}),
           testTimeout: 30_000,
           hookTimeout: 60_000,
-          ...(existsSync(globalSetup) ? { globalSetup } : {}),
+          setupFiles: [join(import.meta.dirname, 'tooling/test-db/test/typescript-file-setup.ts')],
+          globalSetup: [join(import.meta.dirname, 'tooling/test-db/test/typescript-global-setup.ts'), ...(existsSync(globalSetup) ? [globalSetup] : [])],
         },
       };
     }),

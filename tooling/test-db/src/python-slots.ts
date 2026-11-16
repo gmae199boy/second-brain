@@ -10,15 +10,26 @@ import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { finished } from 'node:stream/promises';
 import pg from 'pg';
-import { checkClusterBoundary, createCluster, docker, inspectPort, isNoSuchObject, recoverCluster, removeCluster, type Cluster, type Docker } from './slots/cluster.js';
-import { cleanupHookResources } from './slots/hook-compose.js';
-import { ledgerPath, liveness, lookupProcess, readLedger, writeLedger, type Ledger, type Liveness, type Lookup } from './slots/ledger.js';
+import { checkClusterBoundary, createCluster, docker, inspectPort, isNoSuchObject, recoverCluster, removeCluster, removeOwnedCluster, type Cluster, type Docker } from './slots/cluster.js';
+import { cleanupHookResources, hookResourcesAbsent } from './slots/hook-compose.js';
+import { ledgerPath, liveness, lookupProcess, readLedger, writeLedger, type Ledger, type Liveness, type Lookup, type Identity } from './slots/ledger.js';
+import { assertUnprotected } from './slots/protected.js';
 import { ProcessTracker, SharedProcessSampler, terminateGroup, type ProcessSample } from './slots/processes.js';
 
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const defaultConfig = 'apps/cli/python-test/vitest.config.ts';
 const hook = 'tooling/bootstrap/test/hook.test.ts';
+const fileOwnershipKeys = ['BRAIN_TEST_RUN_ID', 'BRAIN_TEST_FILE_ID', 'BRAIN_TEST_SLOT_ID', 'BRAIN_TEST_SLOT_LEASE', 'BRAIN_TEST_FILE_DIR', 'BRAIN_TEST_PG_RESOURCE_LOG', 'BRAIN_TEST_HOOK_RESOURCE_LOG', 'BRAIN_TEST_PROCESS_LOG', 'BRAIN_TEST_METRICS_LOG', 'BRAIN_TEST_CASE_ID'] as const;
+/** The coordinator and discovery processes do not own their caller's file. */
+export function withoutFileOwnership(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...input };
+  for (const key of fileOwnershipKeys) delete env[key];
+  return env;
+}
+export function coordinatorFileEnv(input: NodeJS.ProcessEnv, runId: string, fileId: string, slotId: string, fileDir: string): NodeJS.ProcessEnv {
+  return { ...withoutFileOwnership(input), TMPDIR: fileDir, BRAIN_TEST_RUN_ID: runId, BRAIN_TEST_FILE_ID: fileId, BRAIN_TEST_SLOT_ID: slotId, BRAIN_TEST_FILE_DIR: fileDir, BRAIN_TEST_PG_RESOURCE_LOG: join(fileDir, 'resources.jsonl'), BRAIN_TEST_HOOK_RESOURCE_LOG: join(fileDir, 'hook-resources.jsonl'), BRAIN_TEST_PROCESS_LOG: join(fileDir, 'processes.jsonl'), BRAIN_TEST_METRICS_LOG: join(fileDir, 'fixture-events.jsonl') };
+}
 export interface Options { config: string; slots: number; files?: string[]; timeout: number; report?: string; metrics: boolean; recover: boolean; runId?: string; order?: string; shardAllowlist?: string }
 export function parseArgs(args: string[]): Options {
   const out: Options = { config: defaultConfig, slots: 4, timeout: 1_800_000, metrics: false, recover: false };
@@ -159,21 +170,115 @@ async function listIds(runId: string, fileId?: string, run: Docker = docker): Pr
   if (ids.some(id => !/^[a-f0-9]{64}$/.test(id))) throw new Error('docker returned invalid full ID');
   return ids;
 }
-export async function recoverRuns(root: string, run: Docker = docker, lookup: Lookup = lookupProcess): Promise<unknown[]> {
+// Missing journal means no shared acquisition; every existing journal must be complete
+// and contain exactly one acquisition and release per fixture to prove absence.
+function sharedResourcesRemain(contents: string): boolean {
+  if (!contents || !contents.endsWith('\n')) return true;
+  const leases = new Map<string, boolean>();
+  try {
+    for (const line of contents.slice(0, -1).split('\n')) {
+      const row = JSON.parse(line) as { state?: unknown; fixtureId?: unknown };
+      if (!row || typeof row !== 'object' || typeof row.fixtureId !== 'string' || !/^[a-f0-9]{24}$/.test(row.fixtureId)) return true;
+      if (row.state === 'acquired' && !leases.has(row.fixtureId)) leases.set(row.fixtureId, false);
+      else if (row.state === 'released' && leases.get(row.fixtureId) === false) leases.set(row.fixtureId, true);
+      else return true;
+    }
+  } catch { return true; }
+  return [...leases.values()].some(released => !released);
+}
+
+export async function recoverRuns(root: string, run: Docker = docker, lookup: Lookup = lookupProcess, onlyRunId?: string, currentOwner?: Identity): Promise<unknown[]> {
   const dir = join(root, '.brain-test-runs'), events: unknown[] = [];
   let entries: string[];
   try { entries = await readdir(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return events; throw error; }
   for (const entry of entries.filter(e => /^[a-zA-Z0-9_-]+\.json$/.test(e))) {
     const id = entry.slice(0, -5);
+    if (onlyRunId && id !== onlyRunId) continue;
     try {
       const ledger = await readLedger(root, id);
       if (ledger.runId !== id || !ledger.coordinator || !Number.isInteger(ledger.coordinator.pid) || typeof ledger.coordinator.started !== 'string') throw new Error('invalid ledger identity');
-      if (ledger.kind !== undefined && ledger.kind !== 'direct' && ledger.kind !== 'coordinator') throw new Error('invalid ledger kind');
+      if (ledger.kind !== undefined && ledger.kind !== 'direct' && ledger.kind !== 'coordinator' && ledger.kind !== 'typescript') throw new Error('invalid ledger kind');
       if (ledger.state !== undefined && ledger.state !== 'running' && ledger.state !== 'completed') throw new Error('invalid ledger state');
       if (ledger.state === 'completed') { events.push({ runId: id, state: 'completed', removed: [] }); continue; }
       const state = await liveness(ledger.coordinator, lookup);
       const event: { runId: string; state: string; removed: string[]; remaining?: string[]; hookCleanup?: unknown[] } = { runId: id, state, removed: [] }; events.push(event);
-      if (!mayRecover(state)) continue;
+      const ownsCurrentRun = Boolean(currentOwner && currentOwner.pid === process.pid && ledger.coordinator.pid === currentOwner.pid && ledger.coordinator.started === currentOwner.started && state === 'alive');
+      if (!mayRecover(state) && !ownsCurrentRun) continue;
+      const quarantinedFiles = new Set<string>(), cleanupErrors: string[] = [];
+      if (ledger.kind === 'typescript') {
+        const registrationDir = join(dir, id, 'files');
+        let registrations: string[];
+        try { registrations = await readdir(registrationDir); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') registrations = []; else throw error; }
+        for (const entry of registrations) {
+          if (!/^[a-f0-9]{20}\.json$/.test(entry)) { cleanupErrors.push('invalid file registration'); continue; }
+          const fileId = entry.slice(0, -5), fileDir = join(dir, id, fileId);
+          try {
+            const registration = JSON.parse(await readFile(join(registrationDir, entry), 'utf8')) as { fileId?: unknown; worker?: { pid?: unknown; started?: unknown } };
+            if (registration.fileId !== fileId || !Number.isInteger(registration.worker?.pid) || typeof registration.worker?.started !== 'string' || !registration.worker.started) throw new Error('file registration mismatch');
+            if (await liveness({ pid: registration.worker.pid as number, started: registration.worker.started }, lookup) !== 'dead') throw new Error('test worker termination unconfirmed');
+            if (!ledger.files.some(file => (file as { fileId?: unknown })?.fileId === fileId)) ledger.files.push({ fileId, slotId: 'hook', resourceLog: join(fileDir, 'resources.jsonl'), hookResourceLog: join(fileDir, 'hook-resources.jsonl') });
+          } catch (error) { quarantinedFiles.add(fileId); cleanupErrors.push(`file ${fileId}: ${String(error)}`); }
+        }
+        let pendingResources = false;
+        for (const file of ledger.files) {
+          const record = file as { fileId?: unknown; resourceLog?: unknown; hookResourceLog?: unknown }, fileId = record?.fileId;
+          if (typeof fileId !== 'string' || !/^[a-f0-9]{20}$/.test(fileId)) { cleanupErrors.push('invalid recorded file identity'); continue; }
+          if (!registrations.includes(`${fileId}.json`)) { quarantinedFiles.add(fileId); cleanupErrors.push(`file ${fileId}: registration missing`); continue; }
+          if (quarantinedFiles.has(fileId)) continue;
+          try {
+            const fileDir = join(dir, id, fileId);
+            let hasFixtures = false, hasHooks = false, hasShared = false;
+            try { hasShared = sharedResourcesRemain(await readFile(join(fileDir, 'shared-db.jsonl'), 'utf8')); }
+            catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            for (const name of ['resources.jsonl', 'hook-resources.jsonl']) {
+              try { if ((await readFile(join(fileDir, name), 'utf8')).trim()) { if (name === 'resources.jsonl') hasFixtures = true; else hasHooks = true; } }
+              catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            }
+            if (hasHooks && await hookResourcesAbsent(join(fileDir, 'hook-resources.jsonl'), fileDir, run)) hasHooks = false;
+            if (!hasShared && !hasHooks && (!hasFixtures || !(await listIds(id, fileId, run)).length)) continue;
+            pendingResources = true;
+            const guard = (await readFile(join(fileDir, 'children.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line) as { state?: unknown; token?: unknown; pid?: unknown; tool?: unknown });
+            if (guard[0]?.state !== 'begin') throw new Error('untracked child safety unconfirmed');
+            let contents = '';
+            try { contents = await readFile(join(fileDir, 'processes.jsonl'), 'utf8'); }
+            catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+            const groups = new Map<string, { pid: number; gone: boolean }>();
+            for (const line of contents.split('\n').filter(Boolean)) {
+              const row = JSON.parse(line) as { token?: unknown; pid?: unknown; state?: unknown };
+              if (typeof row.token !== 'string' || !/^[a-f0-9]{24}$/.test(row.token) || !Number.isInteger(row.pid) || (row.pid as number) <= 0) throw new Error('invalid child process journal');
+              if (row.state === 'active' && !groups.has(row.token)) groups.set(row.token, { pid: row.pid as number, gone: false });
+              else if (row.state === 'gone' && groups.get(row.token)?.pid === row.pid && !groups.get(row.token)?.gone) groups.get(row.token)!.gone = true;
+              else throw new Error('invalid child process journal transition');
+            }
+            if ([...groups.values()].some(group => !group.gone)) throw new Error('child process termination unconfirmed');
+            const children = new Map<string, { tool: boolean; pid?: number; completed: boolean }>();
+            for (const row of guard.slice(1)) {
+              if (row.state === 'sealed') continue;
+              if (typeof row.token !== 'string' || !/^[a-f0-9]{24}$/.test(row.token)) throw new Error('untracked child safety unconfirmed');
+              if (row.state === 'spawned' && typeof row.tool === 'boolean' && !children.has(row.token)) children.set(row.token, { tool: row.tool, completed: false });
+              else if (row.state === 'pid' && Number.isInteger(row.pid) && (row.pid as number) > 0 && children.has(row.token) && !children.get(row.token)!.pid) children.get(row.token)!.pid = row.pid as number;
+              else if (row.state === 'completed' && children.get(row.token)?.tool && !children.get(row.token)?.completed) children.get(row.token)!.completed = true;
+              else throw new Error('invalid child guard journal');
+            }
+            for (const [token, child] of children) {
+              if (child.tool && child.completed) continue;
+              const group = groups.get(token);
+              if (child.pid && group?.pid === child.pid && group.gone) continue;
+              throw new Error('untracked child safety unconfirmed');
+            }
+          } catch (error) { quarantinedFiles.add(fileId); cleanupErrors.push(`file ${fileId}: ${String(error)}`); }
+        }
+        if (!pendingResources && !ledger.resources.length && !cleanupErrors.length) {
+          event.remaining = []; ledger.state = 'completed';
+          ledger.cleanup.push({ recovery: event, at: new Date().toISOString() }); await writeLedger(root, ledger);
+          continue;
+        }
+        if (!ledger.files.length && !ledger.resources.length && cleanupErrors.length) {
+          ledger.cleanup.push({ recovery: event, errors: cleanupErrors, at: new Date().toISOString() }); await writeLedger(root, ledger);
+          events.push({ runId: id, state: 'error', error: cleanupErrors.join('; ') });
+          continue;
+        }
+      }
       for (const slot of ledger.slots) {
         if (!slot || typeof slot !== 'object') continue;
         const recorded = slot as { name?: unknown; slotId?: unknown };
@@ -187,7 +292,9 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
       for (const file of ledger.files) {
         if (!file || typeof file !== 'object') continue;
         const record = file as { fileId?: unknown; resourceLog?: unknown };
+        if (typeof record.fileId === 'string' && quarantinedFiles.has(record.fileId)) continue;
         if (typeof record.fileId !== 'string' || !/^[a-f0-9]{20}$/.test(record.fileId) || typeof record.resourceLog !== 'string') continue;
+        try {
         const expected = join(root, '.brain-test-runs', id, record.fileId, 'resources.jsonl');
         if (record.resourceLog !== expected) continue;
         let lines: string;
@@ -199,6 +306,7 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
           if (!candidate && item.fixturePostgres === 'creating' && typeof item.name === 'string' && /^brain-fixture-[a-f0-9]{24}$/.test(item.name)) {
             try {
               const inspected = JSON.parse((await run(['inspect', '--format', '{{json .}}', item.name])).stdout) as { Id?: string; Name?: string; Config?: { Labels?: Record<string, string> } };
+              assertUnprotected(inspected.Name, inspected.Config?.Labels);
               if (inspected.Name?.replace(/^\//, '') !== item.name || inspected.Config?.Labels?.['brain.test-run'] !== id || inspected.Config?.Labels?.['brain.test-file'] !== record.fileId || inspected.Config?.Labels?.['brain.fixture'] !== item.name.slice('brain-fixture-'.length)) throw new Error('fixture recovery ownership mismatch');
               candidate = inspected.Id;
             } catch (error) { if (!isNoSuchObject(error, item.name)) throw error; }
@@ -207,8 +315,9 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
           if (!ledger.resources.some(resource => !!resource && typeof resource === 'object' && (resource as { id?: unknown }).id === candidate)) ledger.resources.push({ type: 'fixture-container', id: candidate, fileId: record.fileId });
         }
         await writeLedger(root, ledger);
+        } catch (error) { quarantinedFiles.add(record.fileId); cleanupErrors.push(`file ${record.fileId}: ${String(error)}`); }
       }
-      for (const file of ledger.kind === 'direct' ? [] : ledger.files) {
+      for (const file of ledger.kind === 'direct' || ledger.kind === 'typescript' ? [] : ledger.files) {
         if (!file || typeof file !== 'object') throw new Error('invalid recorded child');
         const child = file as { pid?: unknown; pgid?: unknown; started?: unknown; processState?: unknown; descendants?: ProcessSample[] };
         if (child.processState === 'gone' || child.processState === 'notStarted') continue;
@@ -223,43 +332,53 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
       }
       for (const file of ledger.files) {
         const record = file as { fileId?: unknown; slotId?: unknown; hookResourceLog?: unknown };
-        if (record?.slotId !== 'hook') continue;
+        if (record?.slotId !== 'hook' || (typeof record.fileId === 'string' && quarantinedFiles.has(record.fileId))) continue;
         if (record.hookResourceLog === undefined) continue;
-        if (typeof record.fileId !== 'string' || !/^[a-f0-9]{20}$/.test(record.fileId)) throw new Error('invalid hook file identity');
-        const fileDir = join(root, '.brain-test-runs', id, record.fileId), path = join(fileDir, 'hook-resources.jsonl');
-        if (record.hookResourceLog !== path) throw new Error('invalid hook resource log path');
-        const hookCleanup = await cleanupHookResources(path, fileDir, run);
-        (event.hookCleanup ??= []).push({ fileId: record.fileId, hookCleanup });
-        ledger.cleanup.push({ hookCleanup, recovery: true }); await writeLedger(root, ledger);
+        if (typeof record.fileId !== 'string' || !/^[a-f0-9]{20}$/.test(record.fileId)) { cleanupErrors.push('invalid hook file identity'); continue; }
+        try {
+          const fileDir = join(root, '.brain-test-runs', id, record.fileId), path = join(fileDir, 'hook-resources.jsonl');
+          if (record.hookResourceLog !== path) throw new Error('invalid hook resource log path');
+          const hookCleanup = await cleanupHookResources(path, fileDir, run);
+          (event.hookCleanup ??= []).push({ fileId: record.fileId, hookCleanup });
+          ledger.cleanup.push({ hookCleanup, recovery: true }); await writeLedger(root, ledger);
+        } catch (error) {
+          quarantinedFiles.add(record.fileId);
+          cleanupErrors.push(`hook ${record.fileId}: ${String(error)}`);
+        }
       }
       const ids = await listIds(id, undefined, run);
       const owned = new Set(ledger.resources.flatMap(resource => {
         if (!resource || typeof resource !== 'object') return [];
         const value = (resource as { id?: unknown }).id; return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) ? [value] : [];
       }));
-      if (ledger.kind === 'direct') {
-        const fixtures = (await run(['ps', '-aq', '--no-trunc', '--filter', `label=brain.test-run=${id}`, '--filter', 'label=brain.fixture'])).stdout.split(/\s+/).filter(Boolean);
-        for (const fixture of fixtures) {
-          if (!/^[a-f0-9]{64}$/.test(fixture) || !ids.includes(fixture)) throw new Error('invalid direct fixture ID');
-          const info = JSON.parse((await run(['inspect', '--format', '{{json .}}', fixture])).stdout) as { Id?: string; Config?: { Labels?: Record<string, string> } };
-          if (info.Id !== fixture || info.Config?.Labels?.['brain.test-run'] !== id || !info.Config?.Labels?.['brain.fixture']) throw new Error('direct fixture ownership mismatch');
-          owned.add(fixture);
+      for (const container of ids) if (owned.has(container)) {
+        const recorded = ledger.resources.find(resource => !!resource && typeof resource === 'object' && (resource as { id?: unknown }).id === container) as { fileId?: string } | undefined;
+        if (recorded?.fileId && quarantinedFiles.has(recorded.fileId)) continue;
+        try {
+        const info = JSON.parse((await run(['inspect', '--format', '{{json .}}', container])).stdout) as { Id?: string; Name?: string; Config?: { Labels?: Record<string, string> } };
+        assertUnprotected(info.Name, info.Config?.Labels);
+        if (info.Id !== container || info.Config?.Labels?.['brain.test-run'] !== id) throw new Error('container ownership mismatch');
+        if (ledger.kind === 'typescript') {
+          const item = ledger.resources.find(resource => !!resource && typeof resource === 'object' && (resource as { id?: unknown }).id === container) as { fileId?: string } | undefined;
+          const name = info.Name?.replace(/^\//, '');
+          if (!item?.fileId || info.Config?.Labels?.['brain.test-file'] !== item.fileId || !name || !/^brain-fixture-[a-f0-9]{24}$/.test(name) || info.Config?.Labels?.['brain.fixture'] !== name.slice('brain-fixture-'.length)) throw new Error('fixture ownership mismatch');
         }
+        await removeCluster(container, run); event.removed.push(container);
+        } catch (error) { cleanupErrors.push(`container ${container}: ${String(error)}`); }
       }
-      for (const container of ids) if (owned.has(container)) { await removeCluster(container, run); event.removed.push(container); }
       event.remaining = await listIds(id, undefined, run);
-      if (!event.remaining.length) {
+      if (!event.remaining.length && !cleanupErrors.length && !quarantinedFiles.size) {
         if (ledger.kind === 'direct') await rm(join(dir, `${id}.lease.json`), { force: true });
         ledger.state = 'completed';
       }
-      ledger.cleanup.push({ recovery: event, at: new Date().toISOString() }); await writeLedger(root, ledger);
+      ledger.cleanup.push({ recovery: event, errors: cleanupErrors, at: new Date().toISOString() }); await writeLedger(root, ledger);
+      if (cleanupErrors.length) throw new Error(`cleanup incomplete: ${cleanupErrors.join('; ')}`);
     } catch (error) { events.push({ runId: id, state: 'error', error: String(error) }); }
   }
   return events;
 }
 async function manifest(config: string, signal: AbortSignal): Promise<string[]> {
-  const env: NodeJS.ProcessEnv = { ...process.env, BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres' };
-  delete env.BRAIN_TEST_SLOT_LEASE; delete env.BRAIN_TEST_RUN_ID; delete env.BRAIN_TEST_SLOT_ID; delete env.BRAIN_TEST_FILE_ID;
+  const env: NodeJS.ProcessEnv = { ...withoutFileOwnership(process.env), BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres' };
   const { stdout } = await exec('pnpm', ['exec', 'vitest', 'list', '--config', config, '--filesOnly', '--json'], { cwd: repo, env, maxBuffer: 20_000_000, timeout: 120_000, signal });
   let parsed: unknown;
   try { parsed = JSON.parse(stdout); } catch { throw new Error('invalid manifest JSON'); }
@@ -349,7 +468,7 @@ async function runCoordinator(options: Options): Promise<number> {
   const dispose = async (slot: Slot) => {
     if (!slot.cluster) return;
     const id = slot.cluster.id;
-    try { await removeCluster(id); ledger.cleanup.push({ id, result: 'removed' }); slot.cluster = undefined; await save(); }
+    try { await removeOwnedCluster(slot.cluster); ledger.cleanup.push({ id, result: 'removed' }); slot.cluster = undefined; await save(); }
     catch (e) { slot.quarantined = true; report.quarantine.push(slot.id); error(`remove ${id}`, e); ledger.cleanup.push({ id, error: String(e) }); await save().catch(() => {}); }
   };
   const shardCases = new Map<string, CaseName[]>();
@@ -363,8 +482,7 @@ async function runCoordinator(options: Options): Promise<number> {
     const startMs = performance.now(); let timedOut = false, tracker: ProcessTracker | undefined, pid: number | undefined, unsubscribe: (() => void) | undefined, log: ReturnType<typeof createWriteStream> | undefined;
     try {
       await mkdir(fileDir, { recursive: false });
-      const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: fileDir, BRAIN_TEST_PG_RESOURCE_LOG: resourceLog, BRAIN_TEST_RUN_ID: runId, BRAIN_TEST_SLOT_ID: lane, BRAIN_TEST_FILE_ID: fileId };
-      delete env.BRAIN_TEST_SLOT_LEASE; delete env.BRAIN_TEST_HOOK_RESOURCE_LOG;
+      const env = coordinatorFileEnv(process.env, runId, fileId, lane, fileDir);
       if (slot?.cluster) {
         env.BRAIN_TEST_DATABASE_URL = slot.cluster.url; env.BRAIN_TEST_SLOT_LEASE = leasePath;
         await writeFile(leasePath, JSON.stringify({ runId, slotId: lane, fileId, url: slot.cluster.url, containerId: slot.cluster.id, port: slot.cluster.port }), { flag: 'wx', mode: 0o600 });
@@ -466,8 +584,7 @@ async function runCoordinator(options: Options): Promise<number> {
           }
           const id = randomBytes(10).toString('hex'), output = join(runDir, `collect-${id}.json`), log = join(runDir, `collect-${id}.log`), tmp = join(runDir, `collect-${id}`, 'tmp');
           await mkdir(tmp, { recursive: true });
-          const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: tmp, BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres' };
-          delete env.BRAIN_TEST_SLOT_LEASE; delete env.BRAIN_TEST_RUN_ID; delete env.BRAIN_TEST_SLOT_ID; delete env.BRAIN_TEST_FILE_ID;
+          const env: NodeJS.ProcessEnv = { ...withoutFileOwnership(process.env), TMPDIR: tmp, BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres' };
           try {
             const result = await exec('pnpm', ['exec', 'vitest', 'run', '--config', options.config, file, '-t', '(?!)', '--reporter=json', `--outputFile=${output}`], { cwd: repo, env, timeout: 120_000, signal: manifestAbort.signal, maxBuffer: 20_000_000 });
             await writeFile(log, result.stdout + result.stderr);
@@ -557,4 +674,7 @@ export async function main(args: string[]): Promise<number> {
   try { options = parseArgs(args); } catch (e) { process.stderr.write(`${String(e)}\n`); return 2; }
   try { return await runCoordinator(options); } catch (e) { process.stderr.write(`${String(e)}\n`); return 1; }
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) void main(process.argv.slice(2)).then(code => { process.exitCode = code; });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  for (const key of fileOwnershipKeys) delete process.env[key];
+  void main(process.argv.slice(2)).then(code => { process.exitCode = code; });
+}

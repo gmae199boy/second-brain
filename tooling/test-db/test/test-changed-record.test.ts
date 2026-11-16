@@ -34,6 +34,9 @@ if (name === 'pnpm' && args[2] === 'list') {
 function fixture(options: Options, writable = true, baseline = false) {
   const dir = mkdtempSync(join(tmpdir(), 'changed-record-'));
   const root = join(dir, 'repo'); const bin = join(dir, 'bin');
+  // The shared test TMPDIR can be inside an ESM package; these extensionless
+  // fake executables use require and must retain their own CommonJS scope.
+  writeFileSync(join(dir, 'package.json'), '{"type":"commonjs"}\n');
   mkdirSync(join(root, 'tooling/test-changed'), { recursive: true }); mkdirSync(bin);
   for (const name of ['run.mjs', 'record.mjs', 'rules.mjs']) copyFileSync(join(sourceRoot, 'tooling/test-changed', name), join(root, 'tooling/test-changed', name));
   if (baseline) copyFileSync(join(sourceRoot, 'tooling/test-db/test/fixtures/test-changed/run-baseline.mjs'), join(root, 'tooling/test-changed/run.mjs'));
@@ -52,7 +55,9 @@ function execute(options: Options, writable: boolean, ref = 'origin/main') {
   try {
     f.args[1] = ref;
     const result = spawnSync(process.execPath, f.args, { cwd: f.root, env: f.env, encoding: 'utf8', timeout: 30000 });
-    return { status: result.status, signal: result.signal, records: f.records(), commands: f.commands() };
+    const stderr = result.stderr ?? '';
+    const failure = /does not provide an export named/.test(stderr) ? 'missing-export' : /require is not defined in ES module scope/.test(stderr) ? 'commonjs-in-esm' : result.error ? 'spawn-error' : result.status ? 'child-failure' : 'none';
+    return { status: result.status, signal: result.signal, records: f.records(), commands: f.commands(), diagnostic: `failure=${failure} status=${result.status} signal=${result.signal} stderr=[redacted:${stderr.length}]` };
   } finally { f.clean(); }
 }
 async function until(predicate: () => boolean) {
@@ -76,7 +81,7 @@ const cases: [string, Options][] = [
 describe('test:changed structured records', () => {
   it.each(cases)('preserves command order and exit with recording unavailable: %s', (_name, options) => {
     const enabled = execute(options, true); const blocked = execute(options, false);
-    expect(enabled.status).toBe(options.fail ? 1 : 0);
+    expect(enabled.status, enabled.diagnostic).toBe(options.fail ? 1 : 0);
     expect({ status: blocked.status, signal: blocked.signal, commands: blocked.commands }).toEqual({ status: enabled.status, signal: enabled.signal, commands: enabled.commands });
     expect(enabled.commands[0]).toEqual(['pnpm', 'build']);
     expect(enabled.records).toHaveLength(1);
@@ -85,6 +90,8 @@ describe('test:changed structured records', () => {
   it('records empty selections, deduplicated full selections and reasons', () => {
     const docs = execute(cases[0]![1], true).records[0];
     expect(docs.inputs).toEqual(['docs/readme.md']); expect(docs.selection).toMatchObject({ default: [], python: [], pythonMode: 'none', postgresAll: false });
+    expect(docs.stages.some((stage: {name:string}) => stage.name.startsWith('default-explicit-'))).toBe(false);
+    expect(docs.selection).not.toHaveProperty('default-explicit');
     expect(docs.stages).toContainEqual(expect.objectContaining({ name: 'postgres-run', status: 'skipped', reason: 'no-migration-change' }));
     const all = execute(cases[1]![1], true); const r = all.records[0];
     expect(r.selection.default).toEqual(['apps/cli/test/drive-source-tracer.test.ts']);
@@ -105,6 +112,22 @@ describe('test:changed structured records', () => {
     ]);
     expect(all.commands).toContainEqual(['pnpm','exec','vitest','run','--project','postgres','--passWithNoTests']);
     for (const stage of r.stages.filter((s: {status:string}) => s.status === 'completed')) expect(stage).toMatchObject({startedAt:expect.any(String), endedAt:expect.any(String), elapsedMs:expect.any(Number), exitCode:0, signal:null});
+  });
+  it('records explicit consumer stages only for a gate change', () => {
+    const gate = 'apps/cli/test/owned-process-gate.mjs';
+    const consumer = 'apps/cli/test/owned-processes.test.ts';
+    const f = fixture({ paths: [gate], defaultFiles: [consumer] });
+    try {
+      mkdirSync(join(f.root, 'apps/cli/test'), { recursive: true });
+      writeFileSync(join(f.root, consumer), '');
+      const result = spawnSync(process.execPath, f.args, { cwd: f.root, env: f.env, encoding: 'utf8', timeout: 30000 });
+      expect(result.status).toBe(0);
+      expect(f.records()[0].stages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'default-explicit-list', status: 'completed' }),
+        expect.objectContaining({ name: 'default-explicit-run', status: 'completed' }),
+      ]));
+      expect(f.commands()).toContainEqual(['pnpm', 'exec', 'vitest', 'run', consumer, '--passWithNoTests']);
+    } finally { f.clean(); }
   });
   it('uses only existing direct Python files and records missing files', () => {
     const options = { paths: ['apps/cli/python-test/exists.test.ts', 'apps/cli/python-test/deleted.test.ts'] };

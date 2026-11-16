@@ -39,8 +39,61 @@ it('removes the exact created ID when starting a container fails', async () => {
   const calls: string[][] = [];
   const run: Docker = async args => { calls.push(args); if (args[0] === 'create') return { stdout: id }; if (args[0] === 'start') throw new Error('start failed'); if (args[0] === 'rm') return { stdout: '' }; throw absent(id); };
   await expect(createCluster('r', 's', 'g', { docker: run })).rejects.toThrow('start failed');
-  expect(calls.some(args => args[0] === 'rm' && args[2] === id)).toBe(true);
+  expect(calls).toContainEqual(['rm', '-fv', id]);
+  expect(calls.find(args => args[0] === 'create')).toContain('--tmpfs');
 });
 it('propagates a boundary query failure', async () => {
   await expect(checkClusterBoundary('', async () => { throw new Error('query failed'); })).rejects.toThrow('query failed');
+});
+it('preserves the last authentication error code without its message', async () => {
+  const { waitForAuthentication } = await import('../src/slots/cluster.js');
+  let now = 0, tries = 0;
+  const error = await waitForAuthentication('postgres://private', 3, {
+    now: () => now, sleep: async () => { now++; },
+    probe: async () => { tries++; throw Object.assign(new Error('SECRET token and SQL'), { code: tries === 3 ? 'ECONNRESET' : 'ECONNREFUSED' }); },
+  }).then(() => undefined, reason => reason);
+  expect(error.code).toBe('ECONNRESET'); expect(error.message).not.toContain('SECRET'); expect(tries).toBe(3);
+});
+it('diagnoses an owned slot start failure before cleanup and retains the original error', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'slot-start-diagnostic-')), log = join(dir, 'events'), old = process.env.BRAIN_TEST_METRICS_LOG, calls: string[][] = [];
+  process.env.BRAIN_TEST_METRICS_LOG = log;
+  const failure = Object.assign(new Error('synthetic start failure'), { code: 'ECONNRESET' });
+  const run: Docker = async args => {
+    calls.push(args);
+    if (args[0] === 'create') return { stdout: id };
+    if (args[0] === 'start') throw failure;
+    if (args[0] === 'inspect' && args[2] === '{{json .}}') return { stdout: JSON.stringify({ Id: id, Name: '/brain-slot-r-s-g', Config: { Labels: { 'brain.test-run': 'r', 'brain.test-slot': 's' } }, State: { Status: 'created', Running: false, ExitCode: 0 } }) };
+    if (args[0] === 'logs') return { stdout: 'FATAL: synthetic secret token\n' };
+    if (args[0] === 'rm') return { stdout: '' };
+    throw absent(id);
+  };
+  try {
+    const caught = await createCluster('r', 's', 'g', { docker: run }).then(() => undefined, reason => reason);
+    expect(caught).toBe(failure);
+    const events = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { fixtureId: string; phase: string; errorCode: string; diagnostic?: unknown });
+    const diagnostic = events.find(event => event.phase === 'readiness-diagnostic');
+    expect(diagnostic?.errorCode).toBe('ECONNRESET'); expect(JSON.stringify(diagnostic)).not.toMatch(/secret|token/i);
+    expect(new Set(events.map(event => event.fixtureId)).size).toBe(1);
+    expect(calls.findIndex(args => args[0] === 'logs')).toBeLessThan(calls.findIndex(args => args[0] === 'rm'));
+  } finally { if (old === undefined) delete process.env.BRAIN_TEST_METRICS_LOG; else process.env.BRAIN_TEST_METRICS_LOG = old; await rm(dir, { recursive: true, force: true }); }
+});
+it('diagnoses a slot removal failure before returning the original error', async () => {
+  const { removeOwnedCluster } = await import('../src/slots/cluster.js');
+  const { FixtureTelemetry } = await import('../src/fixture-observability.js');
+  const events: { phase: string; diagnostic?: unknown }[] = [], calls: string[][] = [];
+  const telemetry = new FixtureTelemetry('shared', event => events.push(event)), failure = new Error('synthetic removal failure');
+  const run: Docker = async args => {
+    calls.push(args);
+    if (args[0] === 'inspect') return { stdout: JSON.stringify({ Id: id, Name: '/brain-slot-r-s-g', Config: { Labels: { 'brain.test-run': 'r', 'brain.test-slot': 's' } }, State: { Status: 'running', Running: true, ExitCode: 0 }, NetworkSettings: { Ports: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '32111' }] } } }) };
+    if (args[0] === 'logs') return { stdout: 'ERROR: token=SECRET\n' };
+    if (args[0] === 'rm') throw failure;
+    throw new Error('unexpected');
+  };
+  const caught = await removeOwnedCluster({ id, name: 'brain-slot-r-s-g', runId: 'r', slotId: 's', port: 32111, url: 'postgres://unused', telemetry }, run, async () => []).then(() => undefined, error => error);
+  expect(caught).toBe(failure);
+  expect(events.map(event => event.phase)).toEqual(['pre-drop-diagnostic', 'container-drop', 'readiness-diagnostic']);
+  expect(calls.filter(args => args[0] === 'logs')).toHaveLength(2);
+  expect(JSON.stringify(events)).not.toMatch(/token|SECRET|postgres:/i);
 });

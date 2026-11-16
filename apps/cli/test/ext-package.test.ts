@@ -4,12 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { comparePackagePaths } from 'second_brain';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { OwnedProcesses, closeTestScope } from './owned-processes.js';
 import { prepareExtensionPackage, compareRelease, readPackageObservation } from '../src/runtime/extension-package.js';
 import { extHome } from './ext-fixture.js';
 
 const cleanup: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
+let processes: OwnedProcesses;
+beforeEach(() => { processes = new OwnedProcesses(); });
+afterEach(async () => { await closeTestScope(processes, cleanup); });
+async function worldFixture() {
+  const scope = processes;
+  const pending = extHome({ spawn: (command, args, options) => scope.spawn(command, args, options) });
+  cleanup.push(async () => { const world = await pending; await world.cleanup(); });
+  return pending;
+}
 async function packageFixture() {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'package-fixture-')));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
@@ -62,7 +71,7 @@ it.each(['digest', 'missing', 'extra', 'symlink', 'escape', 'duplicate', 'partia
   await expect(prepareExtensionPackage(f.dir)).rejects.toThrow();
 });
 it('실제 CLI --package가 합성 core 신원에서 설치하고 불일치는 거부한다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const f = await packageFixture(), world = await worldFixture();
   const build = JSON.parse(await readFile(new URL('../dist/build.json', import.meta.url), 'utf8'));
   expect(build.version).toBe('0.0.0'); expect(build.commit).toMatch(/^[a-f0-9]{40}$/);
   await writeFile(join(world.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: build.schema_version, node: process.execPath, plugin_root: null, installed_at: new Date().toISOString() }));
@@ -78,7 +87,7 @@ it('실제 CLI --package가 합성 core 신원에서 설치하고 불일치는 �
 });
 
 it('상위 package 신원과 재설치 충돌 및 낮은 버전의 무변경을 관찰한다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
+  const f = await packageFixture(), world = await worldFixture(); await doctorFixture(world);
   const build = JSON.parse(await readFile(new URL('../dist/build.json', import.meta.url), 'utf8'));
   await writeFile(join(world.home, 'installed.json'), JSON.stringify({ commit: build.commit, schema_version: build.schema_version, node: process.execPath, plugin_root: null, installed_at: new Date().toISOString() }));
   const first = await world.run(['ext', 'install', '--package', f.dir, '--json']);
@@ -130,7 +139,7 @@ it('상위 package 신원과 재설치 충돌 및 낮은 버전의 무변경을 
 });
 
 it('비교할 수 없는 설치 version은 package 갱신을 거부하고 doctor가 경고한다', async () => {
-  const f=await packageFixture(), world=await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
+  const f=await packageFixture(), world=await worldFixture(); await doctorFixture(world);
   const installed=await world.run(['ext','install','--package',f.dir,'--json']); expect(installed.code,installed.stdout+installed.stderr).toBe(0);
   const schedule=await world.run(['schedules','add','--kind','schedule_probe','--target-kind','probe','--target-id','synthetic','--cron','0 9 * * 5','--tz','UTC','--json']); expect(schedule.code,schedule.stdout+schedule.stderr).toBe(0);
   await world.db.query("insert into testext.checks values (7,'2026-01-01T00:00:00Z'); update brain.extensions set version='legacy-version' where name='testext'");
@@ -147,7 +156,7 @@ it('비교할 수 없는 설치 version은 package 갱신을 거부하고 doctor
 });
 
 it('실제 CLI 상태와 doctor는 소유자를 숨기고 정지와 복구를 읽기 전용으로 알린다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup); await doctorFixture(world);
+  const f = await packageFixture(), world = await worldFixture(); await doctorFixture(world);
   expect((await world.run(['ext', 'install', '--package', f.dir, '--json'])).code).toBe(0);
   const owner = '00000000-0000-7000-8000-000000000090';
   await world.db.query(`insert into brain.extension_quiesce(name,owner,started_at) values ('testext','${owner}',now())`);
@@ -167,15 +176,16 @@ it('실제 CLI 상태와 doctor는 소유자를 숨기고 정지와 복구를 �
 });
 
 it('외부 package 이행 중 프로세스 종료 후 같은 패키지로 정지를 해제하고 재개한다', async () => {
-  const { spawn } = await import('node:child_process'); const { default: pg } = await import('pg');
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const scope = processes;
+  const { default: pg } = await import('pg');
+  const f = await packageFixture(), world = await worldFixture();
   const initial = await world.run(['ext', 'install', '--package', f.dir, '--json']); expect(initial.code, initial.stdout + initial.stderr).toBe(0);
   f.manifest.version = '0.2.0'; f.manifest.files.push('migrations/0002_more.sql'); f.manifest.files.sort();
   await writeFile(join(f.dir, 'migrations/0002_more.sql'), 'select 1;\n'); await f.seal();
-  const blocker = new pg.Client({ connectionString: world.db.url }); let child: ReturnType<typeof spawn> | undefined;
+  const blocker = new pg.Client({ connectionString: world.db.url }); let child: ReturnType<OwnedProcesses['spawn']> | undefined;
   try {
     await blocker.connect(); await blocker.query('begin'); await blocker.query('select pg_advisory_xact_lock($1)', [4919270911]);
-    child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', '--package', f.dir, '--json'], { env: world.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = scope.spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', '--package', f.dir, '--json'], { env: world.env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout!.resume(); child.stderr!.resume(); const exited = new Promise<void>(resolve => child!.once('close', () => resolve()));
     await expect.poll(async () => { try { return JSON.parse(await readFile(join(world.home, 'extensions/.transition-testext.json'), 'utf8')).phase; } catch { return ''; } }, { timeout: 10000 }).toBe('prepared');
     // prepared는 역할 준비 전에도 보인다. 실제 migration 잠금 대기를 확인한 뒤 중단한다.
@@ -191,14 +201,15 @@ it('외부 package 이행 중 프로세스 종료 후 같은 패키지로 정지
 });
 
 it('marketplace fixture entrypoint delegates its bundled package to the installed CLI', async () => {
-  const { spawn } = await import('node:child_process'); const { chmod, mkdir } = await import('node:fs/promises');
-  const world = await extHome(); cleanup.push(world.cleanup);
+  const scope = processes;
+  const { chmod, mkdir } = await import('node:fs/promises');
+  const world = await worldFixture();
   const plugin = fileURLToPath(new URL('../../../plugins/testext/', import.meta.url));
   const cli = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
   const shim = join(world.home, 'bin', 'brain'); await mkdir(join(world.home, 'bin'), { recursive: true });
   await writeFile(shim, '#!/bin/sh\nexec "$TEST_NODE" "$TEST_CLI" "$@"\n'); await chmod(shim, 0o700);
   const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn('sh', [join(plugin, 'bin/install.sh'), '--json'], { env: { ...world.env, CLAUDE_PLUGIN_ROOT: plugin, TEST_NODE: process.execPath, TEST_CLI: cli }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = scope.spawn('sh', [join(plugin, 'bin/install.sh'), '--json'], { env: { ...world.env, CLAUDE_PLUGIN_ROOT: plugin, TEST_NODE: process.execPath, TEST_CLI: cli }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = ''; child.stdout!.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr!.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
     child.once('error', reject); child.once('close', code => resolve({ code, stdout, stderr }));
   });
@@ -208,7 +219,7 @@ it('marketplace fixture entrypoint delegates its bundled package to the installe
 
 it.each(['migration-gap', 'migration-duplicate', 'migration-filename', 'reports', 'staging', 'tokenstore', 'python-pin-missing', 'python-pin-invalid', 'python-pin-old', 'python-project-missing', 'python-lock-missing', 'python-venv-file', 'python-venv-entry', 'hex-digest-mismatch'] as const)(
   '외부 패키지 사전검사 %s 오류는 실제 CLI에서 거부하고 기존 상태를 보존한다', async kind => {
-    const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+    const f = await packageFixture(), world = await worldFixture();
     const first = await world.run(['ext', 'install', '--package', f.dir, '--json']); expect(first.code, first.stdout + first.stderr).toBe(0);
     const target = join(world.home, 'extensions/testext');
     const installed = await readFile(join(target, 'manifest.json'), 'utf8');
@@ -257,7 +268,7 @@ it.each(['migration-gap', 'migration-duplicate', 'migration-filename', 'reports'
 );
 
 it('유효한 Python 외부 패키지는 정적 검사를 통과해 격리 환경에서 설치한다', async () => {
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const f = await packageFixture(), world = await worldFixture();
   f.manifest.connection_check = { runtime: 'python', entry: 'check.py' };
   for (const [path, content] of Object.entries({ 'check.py': 'print("synthetic")\n', '.python-version': '3.12.13\n', 'pyproject.toml': '', 'uv.lock': '' })) { await writeFile(join(f.dir, path), content); f.manifest.files.push(path); }
   f.manifest.files.sort(); await f.seal();
@@ -306,8 +317,9 @@ it('보충 평면 파일 목록과 digest를 Unicode 코드 포인트 순서로 
 });
 
 it('대기 중 디스크 build와 installed 신원이 함께 바뀌면 실행 중인 CLI는 무변경으로 거부한다', async () => {
-  const { spawn } = await import('node:child_process'); const { withHomeInstallLock } = await import('../src/runtime/install-lock.js');
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const scope = processes;
+  const { withHomeInstallLock } = await import('../src/runtime/install-lock.js');
+  const f = await packageFixture(), world = await worldFixture();
   const sandbox = await realpath(await mkdtemp(join(tmpdir(), 'isolated-cli-'))); cleanup.push(() => rm(sandbox, { recursive: true, force: true }));
   const app = join(sandbox, 'app'), dist = join(app, 'dist'); await mkdir(app);
   await cp(fileURLToPath(new URL('../dist/', import.meta.url)), dist, { recursive: true });
@@ -319,9 +331,9 @@ it('대기 중 디스크 build와 installed 신원이 함께 바뀌면 실행 �
   let unlock!: () => void, acquired!: () => void;
   const locked = new Promise<void>(resolve => { acquired = resolve; });
   const holding = withHomeInstallLock(world.home, async () => { acquired(); await new Promise<void>(resolve => { unlock = resolve; }); }); await locked;
-  let child: ReturnType<typeof spawn> | undefined;
+  let child: ReturnType<OwnedProcesses['spawn']> | undefined;
   try {
-    child = spawn(process.execPath, [join(dist, 'bin.js'), 'ext', 'install', '--package', f.dir, '--json'], { env: { ...world.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, TEST_BUILD_PATH: buildPath, TEST_CAPTURED: marker }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = scope.spawn(process.execPath, [join(dist, 'bin.js'), 'ext', 'install', '--package', f.dir, '--json'], { env: { ...world.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, TEST_BUILD_PATH: buildPath, TEST_CAPTURED: marker }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = ''; child.stdout!.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr!.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
     const done = new Promise<number | null>(resolve => child!.once('close', resolve));
     await expect.poll(async () => readFile(marker, 'utf8').catch(() => ''), { timeout: 10000 }).toBe('captured');
@@ -337,7 +349,7 @@ it('대기 중 디스크 build와 installed 신원이 함께 바뀌면 실행 �
 });
 
 it.each(['digest', 'symlink', 'escape'] as const)('실제 CLI는 %s 패키지를 거부하고 기존 설치 상태를 보존한다', async kind => {
-  const f=await packageFixture(), world=await extHome(); cleanup.push(world.cleanup);
+  const f=await packageFixture(), world=await worldFixture();
   expect((await world.run(['ext','install','--package',f.dir,'--json'])).code).toBe(0);
   const snapshot=async()=>({registry:await world.db.rows("select * from brain.extensions where name='testext'"),progress:await world.db.rows("select * from brain.extension_install_progress where name='testext'"),gate:await world.db.rows('select * from brain.extension_quiesce'),ledger:await world.ledger('testext'),manifest:await readFile(join(world.home,'extensions/testext/manifest.json'),'utf8')});
   const before=await snapshot();
@@ -373,14 +385,15 @@ it('일반 파일을 lstat 직후 writer 없는 FIFO로 바꾸면 비차단으�
 }, 10000);
 
 it('실제 CLI는 snapshot 중 SIGINT를 전달해 자식을 종료하고 임시 snapshot을 정리한다', async () => {
-  const { spawn } = await import('node:child_process'); const { access, readdir } = await import('node:fs/promises');
-  const f = await packageFixture(), world = await extHome(); cleanup.push(world.cleanup);
+  const scope = processes;
+  const { access, readdir } = await import('node:fs/promises');
+  const f = await packageFixture(), world = await worldFixture();
   const temp = join(world.home, 'snapshot-tmp'), marker = join(world.home, 'worker-pid'), preload = join(world.home, 'snapshot-preload.mjs'); await mkdir(temp);
   await writeFile(preload, `import fs from 'node:fs/promises'; import {syncBuiltinESMExports} from 'node:module';
 if (process.argv[1]?.endsWith('extension-package-worker.js')) { const original=fs.lstat; fs.lstat=async function(path,...args) { const value=await original.call(this,path,...args); if(path==='check.mjs') { await fs.writeFile(process.env.SNAPSHOT_MARKER,String(process.pid)); await new Promise(()=>{}); } return value; }; syncBuiltinESMExports(); }
 `);
   const before = { registry: await world.db.rows('select * from brain.extensions'), gates: await world.db.rows('select * from brain.extension_quiesce'), ledger: await world.ledger('testext') };
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', '--package', f.dir, '--json'], { env: { ...world.env, TMPDIR: temp, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, SNAPSHOT_MARKER: marker }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = scope.spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), 'ext', 'install', '--package', f.dir, '--json'], { env: { ...world.env, TMPDIR: temp, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, SNAPSHOT_MARKER: marker }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = ''; child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; }); child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
   const done = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
   try {

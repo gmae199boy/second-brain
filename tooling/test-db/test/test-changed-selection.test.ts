@@ -34,9 +34,17 @@ function execute(options: Options, baseline: boolean, writable = true) {
   const dir = mkdtempSync(join(tmpdir(), 'selection-compare-'));
   const root = join(dir, 'repo'), bin = join(dir, 'bin'), log = join(dir, 'commands');
   try {
+    // The common test TMPDIR may be nested inside the repository's ESM scope.
+    writeFileSync(join(dir, 'package.json'), '{"type":"commonjs"}\n');
     mkdirSync(join(root, 'tooling/test-changed'), {recursive:true}); mkdirSync(bin);
     for (const name of ['run.mjs', 'record.mjs', 'rules.mjs']) copyFileSync(join(repo, 'tooling/test-changed', name), join(root, 'tooling/test-changed', name));
-    if (baseline) copyFileSync(join(fixtures, 'baseline-rules.mjs'), join(root, 'tooling/test-changed/rules.mjs'));
+    if (baseline) {
+      copyFileSync(join(root, 'tooling/test-changed/rules.mjs'), join(root, 'tooling/test-changed/current-rules.mjs'));
+      copyFileSync(join(fixtures, 'baseline-rules.mjs'), join(root, 'tooling/test-changed/baseline-rules.mjs'));
+      // Keep the pinned classifier unchanged while supplying the current runner's
+      // independent explicit-consumer API to both comparison sides.
+      writeFileSync(join(root, 'tooling/test-changed/rules.mjs'), "export { classifyChanges } from './baseline-rules.mjs';\nexport { explicitTestsForChanges } from './current-rules.mjs';\n");
+    }
     mkdirSync(join(root, '.git')); writeFileSync(join(root, '.git/HEAD'), (options.headSha ?? 'b'.repeat(40)) + '\n');
     for (const path of options.existing ?? []) { mkdirSync(dirname(join(root,path)), {recursive:true}); writeFileSync(join(root,path), ''); }
     for (const name of ['git','pnpm','node']) writeFileSync(join(bin,name), fake, {mode:0o755});
@@ -46,7 +54,8 @@ function execute(options: Options, baseline: boolean, writable = true) {
     });
     const records = writable && existsSync(join(root,'.brain-test-changed')) ? readdirSync(join(root,'.brain-test-changed')).filter(n=>n.endsWith('.json')).map(n=>JSON.parse(readFileSync(join(root,'.brain-test-changed',n),'utf8'))) : [];
     const commands = existsSync(log) ? readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line) as string[]) : [];
-    const diagnostic = `baseline=${baseline} sources=${Object.keys(options.sources).join(',')} status=${result.status} signal=${result.signal} error=${result.error?.name ?? 'none'} stdout=[redacted:${result.stdout?.length ?? 0}] stderr=[redacted:${result.stderr?.length ?? 0}]`;
+    const failure = /does not provide an export named/.test(result.stderr ?? '') ? 'missing-export' : /require is not defined in ES module scope/.test(result.stderr ?? '') ? 'commonjs-in-esm' : result.error ? 'spawn-error' : result.status ? 'child-failure' : 'none';
+    const diagnostic = `baseline=${baseline} sources=${Object.keys(options.sources).join(',')} status=${result.status} signal=${result.signal} failure=${failure} stdout=[redacted:${result.stdout?.length ?? 0}] stderr=[redacted:${result.stderr?.length ?? 0}]`;
     return {status:result.status, signal:result.signal, records, commands, diagnostic};
   } finally { rmSync(dir,{recursive:true,force:true}); }
 }

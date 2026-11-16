@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, relative } from 'node:path';
-import { classifyChanges } from './rules.mjs';
+import { classifyChanges, explicitTestsForChanges } from './rules.mjs';
 import { createRecord, safePath } from './record.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -60,6 +60,8 @@ try {
     ...filesFromGit('git-untracked', ['ls-files','--others','--exclude-standard','-z']),
   ])];
   const selected = classifyChanges(paths);
+  const explicitCandidates = explicitTestsForChanges(paths);
+  if (explicitCandidates.length) stageNames.splice(stageNames.indexOf('postgres-list'), 0, 'default-explicit-list', 'default-explicit-run');
   record.data.inputs = paths.map(path => safePath(root, path));
   record.data.selection = {
     default: null, postgres: null, python: null,
@@ -73,6 +75,11 @@ try {
   console.log(`기준 ${ref}: 변경 파일 ${paths.length}개 (커밋·작업 트리·미추적 포함)`);
   for (const reason of selected.reasons) console.log(`경로 규칙 ${reason.prefix}: ${reason.reason}`);
   run([],true,'기본 --changed','default');
+  if (explicitCandidates.length) {
+    const explicit = explicitCandidates.filter(path => existsSync(resolve(root, path)));
+    if (explicit.length) run(explicit, false, '명시적 subprocess 소비 시험', 'default-explicit');
+    else { record.data.selection['default-explicit'] = []; record.skip('default-explicit-list', 'no-explicit-tests'); record.skip('default-explicit-run', 'no-explicit-tests'); }
+  }
   if (selected.postgresAll) run(['--project','postgres'],false,'Postgres migration 전체','postgres');
   else { record.skip('postgres-list', 'no-migration-change'); record.skip('postgres-run', 'no-migration-change'); console.log('Postgres 전체: migration 변경 없음'); }
   const python = ['--config','apps/cli/python-test/vitest.config.ts'];

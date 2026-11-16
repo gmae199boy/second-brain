@@ -64,7 +64,7 @@ const exact = [
   'apps/cli/test/ext-fixture.ts','apps/cli/test/extension-commands.test.ts','apps/cli/test/install-lock.test.ts','apps/cli/test/ext-package.test.ts','apps/cli/test/ext-install-resume.test.ts','apps/cli/test/global-setup.ts','apps/cli/test/pg-home.ts',
   'apps/cli/test/temp-home.ts','apps/cli/test/environment.ts','.claude-plugin/marketplace.json',
   'apps/cli/python-test/garmin-report-observer.ts',
-  'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','vitest.config.ts','package.json','pnpm-lock.yaml',
+  'apps/cli/python-test/vitest.config.ts','apps/cli/python-test/global-setup.ts','apps/cli/python-test/owned-global-setup.ts','vitest.config.ts','package.json','pnpm-lock.yaml',
 ];
 const hook = 'tooling/bootstrap/test/hook.test.ts';
 // These independent Vitest files are not Python runtime inputs. Keep this
@@ -93,4 +93,11 @@ export function classifyChanges(paths) {
       ...(bootstrapChanged ? [{prefix:'tooling/bootstrap/',reason:'bootstrap runtime'}] : []),
     ],
   };
+}
+
+// This executable is launched by filename and is invisible to Vitest's import graph.
+export function explicitTestsForChanges(paths) {
+  return paths.includes('apps/cli/test/owned-process-gate.mjs')
+    ? ['apps/cli/test/owned-processes.test.ts', 'apps/cli/test/ext-package.test.ts']
+    : [];
 }

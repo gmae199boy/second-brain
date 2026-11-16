@@ -1,16 +1,21 @@
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions, type ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import { appendFile, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
-import { pgHome } from './pg-home.js';
+import { dropPgHome, hasPgHome, pgHome } from './pg-home.js';
 import { withoutHarnessFolders } from './environment.js';
 import { acquireTestDatabase } from '@second-brain/test-db';
-export async function extHome(options: { realGarminAuth?: boolean; self?: boolean } = {}) {
+export async function extHome(options: { realGarminAuth?: boolean; self?: boolean; spawn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcessByStdio<null, Readable, Readable> } = {}) {
   const homes = tempHomes(), home = await homes.create('brain-ext-');
   let db: Awaited<ReturnType<typeof pgHome>>;
   try { db = await pgHome(home, options.self ?? true, acquireTestDatabase); }
-  catch (error) { await homes.cleanup(); throw error; }
+  catch (error) {
+    try { await homes.cleanup({ skip: hasPgHome(home) ? new Set([home]) : undefined }); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'fixture setup and cleanup failed'); }
+    throw error;
+  }
   try {
   const { readBuildIdentity } = await import('../src/install/installed.js');
   const build = await readBuildIdentity(); if (!build?.commit) throw new Error('시험 build 신원이 없습니다');
@@ -25,7 +30,8 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
   const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fileURLToPath(new URL('./fixtures/extensions/', import.meta.url)), BRAIN_DATABASE_URL: db.appUrl };
   async function runRaw(args: readonly string[]) {
     return new Promise<{ code: number | null; stdout: string; stderr: string; body: any }>((resolve, reject) => {
-      const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/bin.js', import.meta.url)), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const command = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
+      const child = options.spawn ? options.spawn(process.execPath, [command, ...args], { env }) : spawn(process.execPath, [command, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
       child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
       child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
@@ -107,13 +113,12 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
               if (owned.length) await db.query(`drop owned by "${role}"; drop role "${role}"`);
             }
             rolesCleaned = true;
-          } catch (error) { errors.push(error); }
+          } catch (error) { rolesCleaned = true; errors.push(error); }
         }
-        if (!db.fixtureContainerRemoved) {
-          try { await db.drop(); } catch (error) { errors.push(error); }
-        }
+        let dropFailed = false;
+        try { await dropPgHome(home); } catch (error) { dropFailed = true; errors.push(error); }
         if (!homeCleaned) {
-          try { await homes.cleanup(); homeCleaned = true; } catch (error) { errors.push(error); }
+          try { await homes.cleanup({ skip: dropFailed ? new Set([home]) : undefined }); if (!dropFailed) homeCleaned = true; } catch (error) { errors.push(error); }
         }
         if (errors.length === 1) throw errors[0];
         if (errors.length > 1) throw new AggregateError(errors, 'fixture cleanup failed');
@@ -122,5 +127,12 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
       return cleaning;
     },
   };
-  } catch (error) { try { await db.drop(); } finally { await homes.cleanup(); } throw error; }
+  } catch (error) {
+    const errors: unknown[] = [error];
+    let dropFailed = false;
+    try { await dropPgHome(home); } catch (cleanupError) { dropFailed = true; errors.push(cleanupError); }
+    try { await homes.cleanup({ skip: dropFailed ? new Set([home]) : undefined }); } catch (cleanupError) { errors.push(cleanupError); }
+    if (errors.length > 1) throw new AggregateError(errors, 'fixture setup and cleanup failed');
+    throw error;
+  }
 }

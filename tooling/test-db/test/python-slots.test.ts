@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,30 @@ function launch(runId: string, report: string, files: string[], slots = 1, timeo
   const done = new Promise<{ code: number | null; signal: NodeJS.Signals | null; output: string }>((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal, output })); });
   return { child, done };
 }
+it('records shared database use under the coordinator child, not the parent file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'slot-file-ownership-')), runId = id(), reportPath = join(dir, 'report.json'), observation = join(dir, 'observation.json');
+  const parentDir = process.env.BRAIN_TEST_FILE_DIR ?? join(dir, 'parent');
+  await mkdir(parentDir, { recursive: true });
+  const parentMarker = join(parentDir, 'shared-db.jsonl');
+  const readOptional = async (path: string) => { try { return await readFile(path, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; } };
+  const before = await readOptional(parentMarker);
+  const proc = launch(runId, reportPath, ['pass-a'], 1, 120_000, { BRAIN_SLOT_OWNERSHIP_OBSERVATION: observation, BRAIN_TEST_FILE_DIR: parentDir, BRAIN_TEST_PG_RESOURCE_LOG: join(parentDir, 'resources.jsonl'), BRAIN_TEST_HOOK_RESOURCE_LOG: join(parentDir, 'hook-resources.jsonl'), BRAIN_TEST_PROCESS_LOG: join(parentDir, 'processes.jsonl'), BRAIN_TEST_METRICS_LOG: join(parentDir, 'fixture-events.jsonl'), BRAIN_TEST_CASE_ID: 'a'.repeat(20) });
+  try {
+    const result = await proc.done; expect(result.code, result.output).toBe(0);
+    const seen = JSON.parse(await readFile(observation, 'utf8')) as { fileDir: string; runId: string; fileId: string; resource: string; hook: string; process: string; metrics: string; marker: string };
+    const expected = join(root, '.brain-test-runs', runId, seen.fileId);
+    expect(seen.runId).toBe(runId); expect(seen.fileDir).toBe(expected); expect(seen.fileDir).not.toBe(parentDir);
+    expect(seen.resource).toBe(join(expected, 'resources.jsonl')); expect(seen.hook).toBe(join(expected, 'hook-resources.jsonl')); expect(seen.process).toBe(join(expected, 'processes.jsonl')); expect(seen.metrics).toBe(join(expected, 'fixture-events.jsonl'));
+    expect(seen.marker).toContain('"acquired"'); expect(await readOptional(parentMarker)).toBe(before);
+    const ledger = JSON.parse(await readFile(join(root, '.brain-test-runs', `${runId}.json`), 'utf8')) as { state: string; files: { fileId: string; processState: string }[] };
+    expect(ledger.state).toBe('completed'); expect(ledger.files).toContainEqual(expect.objectContaining({ fileId: seen.fileId, processState: 'gone' }));
+    expect(await containers(runId)).toEqual([]);
+  } finally {
+    if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 600_000);
 it('reports metrics for a held database connection and cleans the run', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'slot-metrics-')), runId = id(), path = join(dir, 'report.json');
   try {

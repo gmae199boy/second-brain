@@ -6,8 +6,8 @@ export interface SlotLease { runId: string; slotId: string; fileId: string; url:
 export interface LeaseDependencies {
   docker?: Docker;
   read?: (path: string) => Promise<string>;
-  boundary: (url: string) => Promise<{ clean: boolean }>;
-  create: (url: string) => Promise<TestDatabase>;
+  boundary: (url: string, lease?: SlotLease) => Promise<{ clean: boolean }>;
+  create: (url: string, lease?: SlotLease) => Promise<TestDatabase>;
   isolated: () => Promise<TestDatabase>;
 }
 const occupied = new Set<string>();
@@ -31,8 +31,8 @@ export async function acquireSlotDatabase(path: string | undefined, deps: LeaseD
   occupied.add(lease.containerId);
   let db: TestDatabase;
   try {
-    if (!(await deps.boundary(lease.url)).clean) { occupied.delete(lease.containerId); return deps.isolated(); }
-    db = await deps.create(lease.url);
+    if (!(await deps.boundary(lease.url, lease)).clean) { occupied.delete(lease.containerId); return deps.isolated(); }
+    db = await deps.create(lease.url, lease);
   } catch (error) { occupied.delete(lease.containerId); throw error; }
   let dropped = false;
   return { ...db, get fixtureDatabaseDropped() { return dropped; }, get fixtureContainerRemoved() { return undefined; }, async drop() {

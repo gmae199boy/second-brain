@@ -3,7 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeLedger } from '../src/slots/ledger.js';
-import { aggregateVitest, fileReason, reasonWithCases, parseManifest, selectFiles, summarizeShard, exitStatus, mayRecover, recoverRuns, orderedFiles, parseArgs, takeNext } from '../src/python-slots.js';
+import { aggregateVitest, fileReason, reasonWithCases, parseManifest, selectFiles, summarizeShard, exitStatus, mayRecover, recoverRuns, orderedFiles, parseArgs, takeNext, withoutFileOwnership, coordinatorFileEnv } from '../src/python-slots.js';
+it('isolates discovery and coordinator child file environments from their parent', () => {
+  const parent = { BRAIN_TEST_RUN_ID: 'parent', BRAIN_TEST_FILE_ID: 'parent', BRAIN_TEST_SLOT_ID: 'parent', BRAIN_TEST_SLOT_LEASE: '/parent/lease', BRAIN_TEST_FILE_DIR: '/parent', BRAIN_TEST_PG_RESOURCE_LOG: '/parent/resources', BRAIN_TEST_HOOK_RESOURCE_LOG: '/parent/hook', BRAIN_TEST_PROCESS_LOG: '/parent/processes', BRAIN_TEST_METRICS_LOG: '/parent/metrics', BRAIN_TEST_CASE_ID: 'parent', KEEP: 'yes' };
+  expect(withoutFileOwnership(parent)).toEqual({ KEEP: 'yes' });
+  const child = coordinatorFileEnv(parent, 'run', 'file', 'slot', '/child');
+  expect(child).toEqual({ KEEP: 'yes', TMPDIR: '/child', BRAIN_TEST_RUN_ID: 'run', BRAIN_TEST_FILE_ID: 'file', BRAIN_TEST_SLOT_ID: 'slot', BRAIN_TEST_FILE_DIR: '/child', BRAIN_TEST_PG_RESOURCE_LOG: '/child/resources.jsonl', BRAIN_TEST_HOOK_RESOURCE_LOG: '/child/hook-resources.jsonl', BRAIN_TEST_PROCESS_LOG: '/child/processes.jsonl', BRAIN_TEST_METRICS_LOG: '/child/fixture-events.jsonl' });
+  expect(parent.BRAIN_TEST_FILE_DIR).toBe('/parent');
+});
 it('parses the Vitest files-only JSON manifest', () => {
   expect(parseManifest([{ file: '/repo/apps/a.test.ts', projectName: 'python' }, { file: './b.test.ts' }, 'c.test.ts'], '/repo/')).toEqual(['apps/a.test.ts', 'b.test.ts', 'c.test.ts']);
   for (const invalid of [{ file: 1 }, {}, null, 5, '']) expect(() => parseManifest([invalid], '/repo/')).toThrow('invalid manifest');
@@ -40,7 +47,7 @@ it('recovers only recorded IDs with matching run label for a dead coordinator', 
   try {
     await writeLedger(root, { runId: 'dead', coordinator: { pid: 40, started: 'old' }, slots: [], files: [], resources: [{ id }], cleanup: [] });
     await writeLedger(root, { runId: 'live', coordinator: { pid: 41, started: 'live' }, slots: [], files: [], resources: [{ id: foreign }], cleanup: [] });
-    const run = async (args: string[]) => { calls.push(args); if (args[0] === 'ps') return { stdout: present ? `${id}\n${foreign}\n` : `${foreign}\n` }; if (args[0] === 'rm') { present = false; return { stdout: '' }; } if (args[0] === 'inspect') throw { code: 1, stderr: `Error: No such object: ${id}` }; throw new Error('unexpected docker'); };
+    const run = async (args: string[]) => { calls.push(args); if (args[0] === 'ps') return { stdout: present ? `${id}\n${foreign}\n` : `${foreign}\n` }; if (args[0] === 'rm') { present = false; return { stdout: '' }; } if (args[0] === 'inspect' && args[2] === '{{json .}}') return { stdout: JSON.stringify({ Id: id, Name: '/test', Config: { Labels: { 'brain.test-run': 'dead' } } }) }; if (args[0] === 'inspect') throw { code: 1, stderr: `Error: No such object: ${id}` }; throw new Error('unexpected docker'); };
     const result = await recoverRuns(root, run, async pid => pid === 40 ? null : 'live');
     expect(calls.filter(c => c[0] === 'rm').map(c => c[2])).toEqual([id]);
     expect(JSON.stringify(result)).toContain('alive'); expect(JSON.stringify(result)).toContain(foreign);

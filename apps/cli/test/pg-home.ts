@@ -7,7 +7,9 @@ import { join } from 'node:path';
 
 /** One isolated database and home, shared by CLI integration fixtures. */
 export async function pgHome(home: string, self = true, createDatabase = createTestDatabase): Promise<TestDatabase & { env: NodeJS.ProcessEnv }> {
+  if (homes.get(home)) throw new Error('test home already owns a database');
   const db = await createDatabase();
+  homes.set(home, db);
   try {
     const prepared = await prepareDatabase({ databaseUrl: db.url, databaseName: new URL(db.url).pathname.slice(1), appPassword: 'brain-test-app', maintenancePassword: 'brain-test-maintenance' });
     if (!prepared.ok) throw new Error(prepared.message);
@@ -25,10 +27,27 @@ export async function pgHome(home: string, self = true, createDatabase = createT
     if (!written.ok) throw new Error(written.message);
     await writeFile(join(home, '.env'), `BRAIN_DATABASE_URL=${db.appUrl}\n`, { mode: 0o600 });
     return { ...db, get fixtureContainerRemoved() { return db.fixtureContainerRemoved; }, get fixtureDatabaseDropped() { return db.fixtureDatabaseDropped; }, env: { BRAIN_DATABASE_URL: db.appUrl } };
-  } catch (error) { await db.drop(); throw error; }
+  } catch (error) {
+    try { await homes.drop(home); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'database setup and cleanup failed'); }
+    throw error;
+  }
 }
 
-const homes = new Map<string, TestDatabase>();
+export function createPgHomeRegistry() {
+  const entries = new Map<string, TestDatabase>(), pending = new Map<string, Promise<void>>();
+  return {
+    get: (home: string) => entries.get(home),
+    set: (home: string, db: TestDatabase) => { entries.set(home, db); },
+    drop(home: string): Promise<void> {
+      const running = pending.get(home); if (running) return running;
+      const db = entries.get(home); if (!db) return Promise.resolve();
+      const cleanup = (async () => { await db.drop(); if (entries.get(home) === db) entries.delete(home); })().finally(() => { pending.delete(home); });
+      pending.set(home, cleanup); return cleanup;
+    },
+  };
+}
+const homes = createPgHomeRegistry();
+export function hasPgHome(home: string): boolean { return Boolean(homes.get(home)); }
 export async function preparePgHome(home: string, self = true): Promise<TestDatabase> {
   const current = homes.get(home);
   if (current) return current;
@@ -48,8 +67,7 @@ export function pgAppUrl(homeOrPath: string): string {
   url.username = 'brain_app'; url.password = 'brain-test-app'; return url.toString();
 }
 export async function dropPgHome(home: string): Promise<void> {
-  const db = homes.get(home);
-  if (db) { homes.delete(home); await db.drop(); }
+  await homes.drop(home);
 }
 
 /** Machine probes are deterministic; ordinary command tests never inspect this Mac's containers. */

@@ -47,7 +47,7 @@ it('cleans the created cluster if writing the lease fails', async () => {
   await expect(preparePythonTestDatabase(h.deps)).rejects.toThrow('write failed'); expect(h.calls).toContain(`remove:${id}`);
 });
 
-it('skips a completed direct ledger and recovers a dead direct container', async () => {
+it('recovers a dead direct slot while quarantining an unrecorded fixture', async () => {
   const { access, mkdtemp, rm, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -71,14 +71,15 @@ it('skips a completed direct ledger and recovers a dead direct container', async
       if (args[0] === 'ps') return { stdout: args.includes('label=brain.fixture') ? (present.has(fixtureId) ? fixtureId : '') : [...present].join('\n') };
       if (args[0] === 'rm') { removed.push(args[2]!); present.delete(args[2]!); return { stdout: '' }; }
       if (args[0] === 'inspect' && args.at(-1) === 'brain-slot-dead-direct-0') return { stdout: JSON.stringify({ Id: id, Name: '/brain-slot-dead-direct-0', Config: { Labels: { 'brain.test-run': 'dead', 'brain.test-slot': 'direct' } } }) };
+      if (args[0] === 'inspect' && args[2] === '{{json .}}' && args.at(-1) === id) return { stdout: JSON.stringify({ Id: id, Name: '/brain-slot-dead-direct-0', Config: { Labels: { 'brain.test-run': 'dead', 'brain.test-slot': 'direct' } } }) };
       if (args[0] === 'inspect' && args[2] === '{{json .}}' && args.at(-1) === fixtureId) return { stdout: JSON.stringify({ Id: fixtureId, Config: { Labels: { 'brain.test-run': 'dead', 'brain.fixture': 'fixture' } } }) };
       throw { code: 1, stderr: `Error: No such object: ${args.at(-1)}` };
     };
     const events = await recoverRuns(root, docker, async () => null);
     expect(events.some(event => (event as { state: string }).state === 'error')).toBe(false);
-    expect(removed).toEqual([id, fixtureId]);
-    expect((await readLedger(root, 'dead')).state).toBe('completed');
-    await expect(access(leasePath)).rejects.toMatchObject({ code: 'ENOENT' });
-    expect((await recoverRuns(root, noDocker, async () => null)).every(event => (event as { state: string }).state === 'completed')).toBe(true);
+    expect(removed).toEqual([id]);
+    expect((await readLedger(root, 'dead')).state).toBe('running');
+    await expect(access(leasePath)).resolves.toBeUndefined();
+    expect(JSON.stringify(events)).toContain(fixtureId);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

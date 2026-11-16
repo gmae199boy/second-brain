@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { link, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCluster, removeCluster, type Cluster } from '../../../tooling/test-db/src/slots/cluster.js';
+import { createCluster, removeOwnedCluster, type Cluster } from '../../../tooling/test-db/src/slots/cluster.js';
 import { lookupProcess, writeLedger, type Ledger } from '../../../tooling/test-db/src/slots/ledger.js';
 import { validateSlotLease, type SlotLease } from '../../../tooling/test-db/src/slots/lease.js';
 
@@ -14,7 +14,7 @@ export interface PythonSetupDependencies {
   lookup: (pid: number) => Promise<string | null>;
   validate: (path: string) => Promise<SlotLease>;
   create: (runId: string, slotId: string, generation: string) => Promise<Cluster>;
-  remove: (id: string) => Promise<void>;
+  remove: (id: string, cluster: Cluster) => Promise<void>;
   writeLedger: (repo: string, ledger: Ledger) => Promise<void>;
   writeLease: (path: string, lease: SlotLease) => Promise<void>;
   removeLease: (path: string) => Promise<void>;
@@ -27,7 +27,7 @@ const defaults: PythonSetupDependencies = {
   lookup: lookupProcess,
   validate: validateSlotLease,
   create: createCluster,
-  remove: removeCluster,
+  remove: (_id, cluster) => removeOwnedCluster(cluster),
   writeLedger,
   writeLease: async (path, lease) => {
     const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`;
@@ -58,7 +58,7 @@ export async function preparePythonTestDatabase(overrides: Partial<PythonSetupDe
   const cleanup = async (complete = true) => {
     const errors: unknown[] = [];
     if (cluster) {
-      try { await deps.remove(cluster.id); ledger.cleanup.push({ resource: cluster.id, result: 'removed' }); }
+      try { await deps.remove(cluster.id, cluster); ledger.cleanup.push({ resource: cluster.id, result: 'removed' }); }
       catch (error) { ledger.cleanup.push({ resource: cluster.id, result: 'error', error: String(error) }); errors.push(error); }
     }
     if (leaseWritten) {

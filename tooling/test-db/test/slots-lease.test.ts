@@ -37,3 +37,11 @@ it('retains the lease when database drop fails', async () => {
   await acquireSlotDatabase('x', deps); expect(fallback).toBe(1);
   await first.drop(); expect(first.fixtureDatabaseDropped).toBe(true);
 });
+it('passes the validated owned slot identity to readiness and fixture creation', async () => {
+  const seen: unknown[] = [];
+  const fixture = await acquireSlotDatabase('x', { read: async () => JSON.stringify(lease), docker,
+    boundary: async (_url, identity) => { seen.push(identity); return { clean: true }; },
+    create: async (_url, identity) => { seen.push(identity); return db(); }, isolated: async () => { throw new Error('unexpected fallback'); },
+  });
+  expect(seen).toEqual([lease, lease]); await fixture.drop();
+});

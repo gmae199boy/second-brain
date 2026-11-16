@@ -14,6 +14,7 @@ async function withDockerWrapper(run: (dir: string) => Promise<void>) {
   const realDocker = execFileSync('which', ['docker'], { encoding: 'utf8' }).trim();
   await writeFile(join(dir, 'docker'), `#!/bin/sh
 echo "$*" >> "$BRAIN_WRAPPER_DIR/calls"
+if [ "$1" = logs ] && [ -f "$BRAIN_WRAPPER_DIR/fail-logs" ]; then echo 'synthetic secret must not appear' >&2; exit 73; fi
 if [ "$1" = inspect ] && [ "$2" = --format ] && [ "$3" = '{{json .NetworkSettings.Ports}}' ]; then
   echo "$4" >> "$BRAIN_WRAPPER_DIR/ids"
   if [ -f "$BRAIN_WRAPPER_DIR/fail-inspect" ]; then exit 71; fi
@@ -58,7 +59,18 @@ it('removes a started cluster when port inspection fails while another fixture s
     const survivor = await extHome();
     try {
       await writeFile(join(dir, 'fail-inspect'), '');
-      await expect(createIsolatedTestDatabase()).rejects.toThrow();
+      await writeFile(join(dir, 'fail-logs'), '');
+      const previousMetrics = process.env.BRAIN_TEST_METRICS_LOG, metrics = join(dir, 'failure-events.jsonl');
+      process.env.BRAIN_TEST_METRICS_LOG = metrics;
+      try { await expect(createIsolatedTestDatabase()).rejects.toMatchObject({ code: 71 }); }
+      finally { if (previousMetrics === undefined) delete process.env.BRAIN_TEST_METRICS_LOG; else process.env.BRAIN_TEST_METRICS_LOG = previousMetrics; }
+      const events = (await readFile(metrics, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { phase: string; fixtureId: string; diagnostic?: unknown });
+      const diagnostic = events.find(event => event.phase === 'readiness-diagnostic');
+      expect(diagnostic).toBeDefined(); expect(JSON.stringify(diagnostic)).toContain('logs-unavailable');
+      expect(events.find(event => event.phase === 'container-drop')?.fixtureId).toBe(diagnostic?.fixtureId);
+      expect(JSON.stringify(diagnostic)).not.toMatch(/postgres:\/\/|password|SELECT |token/i);
+      const calls = (await readFile(join(dir, 'calls'), 'utf8')).split('\n');
+      expect(calls.findIndex(line => line.startsWith('inspect --format {{json .}}'))).toBeLessThan(calls.findLastIndex(line => line.startsWith('rm -fv ')));
       const ids = (await readFile(join(dir, 'ids'), 'utf8')).trim().split('\n');
       const failedId = ids.at(-1)!;
       expect(failedId).not.toBe(survivor.db.fixtureContainer!.id);
@@ -72,19 +84,26 @@ it('removes a started cluster when port inspection fails while another fixture s
 it('retries a failed removal and shares concurrent cleanup', async () => {
   await withDockerWrapper(async dir => {
     const fixture = await extHome();
-    const id = fixture.db.fixtureContainer!.id;
+    const id = fixture.db.fixtureContainer!.id, oldMetrics = process.env.BRAIN_TEST_METRICS_LOG, metrics = join(dir, 'drop-failure-events.jsonl');
+    process.env.BRAIN_TEST_METRICS_LOG = metrics;
     try {
       await writeFile(join(dir, 'fail-rm'), '');
       await expect(fixture.cleanup()).rejects.toThrow();
+      const events = (await readFile(metrics, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { fixtureId: string; phase: string; diagnostic?: unknown });
+      const drop = events.findIndex(event => event.phase === 'container-drop');
+      const diagnostic = events.findIndex((event, index) => index > drop && event.phase === 'readiness-diagnostic');
+      expect(drop).toBeGreaterThanOrEqual(0); expect(diagnostic).toBeGreaterThan(drop);
+      expect(events[drop]?.fixtureId).toBe(events[diagnostic]?.fixtureId);
+      expect(JSON.stringify(events[diagnostic])).not.toMatch(/postgres:\/\/|password|select |token/i);
       expect(execFileSync('docker', ['inspect', id], { encoding: 'utf8' })).toContain(id);
       const first = fixture.cleanup(), second = fixture.cleanup();
       expect(first).toBe(second);
       await Promise.all([first, second]);
       expect(() => execFileSync('docker', ['inspect', id], { stdio: 'ignore' })).toThrow();
-      const calls = (await readFile(join(dir, 'calls'), 'utf8')).split('\n').filter(line => line === `rm -f ${id}`);
+      const calls = (await readFile(join(dir, 'calls'), 'utf8')).split('\n').filter(line => line === `rm -fv ${id}`);
       expect(calls).toHaveLength(2);
       console.log(`removal retried and shared for ${id}: ${calls.length} attempts, container absent`);
-    } finally { await fixture.cleanup(); }
+    } finally { try { await fixture.cleanup(); } finally { if (oldMetrics === undefined) delete process.env.BRAIN_TEST_METRICS_LOG; else process.env.BRAIN_TEST_METRICS_LOG = oldMetrics; } }
   });
 });
 
@@ -98,7 +117,7 @@ it('confirms exact owned ID is absent after a successful removal reports an erro
       expect(absent.stderr.trim().toLowerCase()).toBe(`error: no such object: ${id}`);
       console.log(`inspect confirmed ${absent.stderr.trim()}`);
       const calls = (await readFile(join(dir, 'calls'), 'utf8')).split('\n');
-      expect(calls.filter(line => line === `rm -f ${id}`)).toHaveLength(1);
+      expect(calls.filter(line => line === `rm -fv ${id}`)).toHaveLength(1);
       expect(calls).toContain(`inspect --format {{.Id}} ${id}`);
       await expect(stat(fixture.home)).rejects.toThrow(); await fixture.cleanup();
       expect(await survivor.db.rows('select 1 as value')).toEqual([{ value: 1 }]);
@@ -139,9 +158,10 @@ it.each([false, true])('role SQL failure removes owned resources and retains rem
         expect(String(error)).toContain('injected role SQL failure');
         expect(() => execFileSync('docker', ['inspect', id], { stdio: 'ignore' })).toThrow();
       }
-      await expect(stat(fixture.home)).rejects.toThrow();
+      if (failRemoval) await expect(stat(fixture.home)).resolves.toBeDefined();
+      else await expect(stat(fixture.home)).rejects.toThrow();
       expect(await survivor.db.rows('select 1 as value')).toEqual([{ value: 1 }]);
-      await fixture.cleanup(); expect(queries).toBe(1);
+      await fixture.cleanup(); expect(queries).toBe(1); await expect(stat(fixture.home)).rejects.toThrow();
       expect(() => execFileSync('docker', ['inspect', id], { stdio: 'ignore' })).toThrow();
       console.log(`role failure cleanup ${id}; survivor ${survivor.db.fixtureContainer!.id} answered SQL`);
     } finally { await fixture.cleanup(); await survivor.cleanup(); }
