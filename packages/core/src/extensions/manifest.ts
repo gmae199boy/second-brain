@@ -6,6 +6,7 @@ export function isExtensionName(value: string): boolean {
 }
 export interface ExtensionManifest {
   name: string; version: string; core: 1; abi: 1; migrations: string;
+  description?: string; login_required?: boolean;
   files?: string[]; core_compat?: { min: string; max_exclusive: string }; plugin_version?: string;
   connection_check: { runtime: 'node' | 'python'; entry: string };
   settings?: ExtensionSettingDeclaration[];
@@ -45,7 +46,8 @@ const inside = (value: unknown): value is string => typeof value === 'string' &&
 function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<string, unknown>) => boolean): { ok: true; manifest: ExtensionManifest } | { ok: false; code: 'EXTENSION_INVALID'; message: string } {
   const invalid = { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 manifest의 필드나 패키지 상대 경로가 올바르지 않습니다' };
   let v: unknown; try { v = JSON.parse(text); } catch { return invalid; }
-  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'requires', 'raw_views', 'commands', 'files', 'core_compat', 'plugin_version'].includes(k))) return invalid;
+  if (!object(v) || !['name', 'version', 'core', 'abi', 'migrations', 'connection_check'].every(k => Object.hasOwn(v, k)) || !Object.keys(v).every(k => ['name', 'version', 'description', 'login_required', 'core', 'abi', 'migrations', 'connection_check', 'settings', 'error_codes', 'work', 'auth', 'default_schedules', 'requires', 'raw_views', 'commands', 'files', 'core_compat', 'plugin_version'].includes(k))) return invalid;
+  if ((v['description'] !== undefined && (typeof v['description'] !== 'string' || !v['description'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['description']))) || (v['login_required'] !== undefined && typeof v['login_required'] !== 'boolean')) return invalid;
   const check = v['connection_check'];
   if (typeof v['name'] !== 'string' || !isExtensionName(v['name']) || typeof v['version'] !== 'string' || !v['version'].trim() || /[\u0000-\u001f\u007f-\u009f]/.test(v['version']) || v['core'] !== EXTENSION_CORE_VERSION || v['abi'] !== 1 || !inside(v['migrations']) || !object(check) || !keys(check, ['runtime', 'entry']) || !['node', 'python'].includes(check['runtime'] as string) || !inside(check['entry'])) return invalid;
   const semver = (x: unknown): x is string => typeof x === 'string' && /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(x);
@@ -59,7 +61,7 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
     if (compare(compat['min'], compat['max_exclusive']) >= 0) return invalid;
   }
   if (v['commands'] !== undefined) {
-    if (!Array.isArray(v['commands']) || (v['commands'].length > 0 && (v['name'].includes('_') || ['install', 'run', 'login', 'list', 'status', 'enable', 'disable'].includes(v['name'])))) return invalid;
+    if (!Array.isArray(v['commands']) || (v['commands'].length > 0 && (v['name'].includes('_') || ['install', 'run', 'login', 'list', 'catalog', 'status', 'enable', 'disable'].includes(v['name'])))) return invalid;
     const seen = new Set<string>();
     for (const command of v['commands']) {
       if (!object(command) || !['name', 'runtime', 'entry', 'description', 'input_schema', 'output_schema', 'timeout_ms', 'risk'].every(k => Object.hasOwn(command, k)) ||

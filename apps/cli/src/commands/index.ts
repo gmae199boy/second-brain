@@ -15,6 +15,7 @@ import { extLoginCommand } from './ext-login.js';
 import { extRunCommand } from './ext-run.js';
 import { extInstallCommand } from './ext-install.js';
 import { extListCommand } from './ext-list.js';
+import { extCatalogCommand } from './ext-catalog.js';
 import { extStatusCommand } from './ext-status.js';
 import { queueListCommand } from './queue-list.js';
 import { schedulesAddCommand } from './schedules-add.js';
@@ -70,6 +71,7 @@ export const commands: readonly CommandSpec[] = [
   extRunCommand,
   extLoginCommand,
   extListCommand,
+  extCatalogCommand,
   extStatusCommand,
   extEnableCommand,
   extDisableCommand,

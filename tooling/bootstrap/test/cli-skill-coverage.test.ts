@@ -36,6 +36,12 @@ it('모든 공개 CommandSpec은 배포 스킬 본문 또는 사유가 있는 �
   expect(mentions('`brain channels send-pending --json`', 'channels send')).toBe(false);
 });
 
+it('설치 가능한 확장 목록은 공개 설치 스킬이 직접 덮는다', () => {
+  expect(names).toContain('ext catalog');
+  expect(mentions(body('plugin/skills/brain-install/SKILL.md'), 'ext catalog')).toBe(true);
+  expect(internal.some(entry => entry.command === 'ext catalog')).toBe(false);
+});
+
 it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin 배포 스킬이 덮는다', () => {
   for (const path of ['plugins/garmin/package/manifest.json', 'extensions/garmin/manifest.json']) {
     const manifest = JSON.parse(read(path)) as { work: { kind: string; manual?: string }[]; commands: { name: string }[]; settings: { key: string }[]; files?: string[] };

@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.13",
+  "version": "1.2.14",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -995,6 +995,8 @@
       "after_schedule": "collect"
     }
   ],
+  "description": "Garmin 건강 및 운동 데이터를 수집하고 분석합니다.",
+  "login_required": true,
   "files": [
     ".python-version",
     "MANIFEST.in",

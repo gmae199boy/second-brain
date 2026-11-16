@@ -16,9 +16,9 @@ followup_review_recommended: true
 context: []
 warnings: [oversized]
 deferred: []
-operator_actions: ["격리 Claude 세션의 brain-install 실제 호출·testext 로그인 재개·연결·예약 결과 및 세션 원본을 확보한다. 기존 tooling/mac-install/operator-actions.md의 소유 자원 정리 절차를 따른다."]
+operator_actions: ["13.11 뒤 격리 실제 에이전트 세션의 brain-install 발견·카탈로그→선택→이름 설치·testext 로그인 재개·연결·예약 결과 및 세션 원본을 확보한다. 기존 tooling/mac-install/operator-actions.md의 소유 자원 정리 절차를 따른다."]
 blocked_at: "2026-11-16"
-blocked_reason: "실제 새 Claude 세션의 brain-install 발견→testext 시험 로그인 재개→연결·예약 완료와 세션 원본 증거가 없음. 직접 CLI·운영 Garmin 설치 성공은 이 조건의 대체 증거가 아님."
+blocked_reason: "13.11 카탈로그 구현 뒤 실제 새 에이전트 세션의 brain-install 발견→카탈로그→선택→이름 설치→testext 시험 로그인 재개→연결·예약 완료와 세션 원본 증거가 필요함. 직접 CLI·운영 Garmin 설치 성공은 이 조건의 대체 증거가 아님."
 ---
 
 <intent-contract>
@@ -65,7 +65,7 @@ blocked_reason: "실제 새 Claude 세션의 brain-install 발견→testext 시�
 
 **인수 조건:**
 - Given 이 Mac의 실제 플러그인 등록, when 출처·버전·스킬 발견을 조회하면, then 로컬/원격 캐시 여부와 운영 설치본 ref·버전·install 스킬 유무가 별도 증거로 남고 운영 상태는 바뀌지 않는다.
-- Given 격리 홈·DB·Label과 설치본과 같은 앱·스킬, when 새 `claude -p`가 testext 설치를 실행하고 시험용 로그인 완료 뒤 재개하면, then 실제 재조회 상태로 설치·로그인·연결·공통 예약 단계가 완료되고 세션 기록과 단계 결과가 남는다.
+- Given 격리 홈·DB·Label과 설치본과 같은 앱·스킬, when 새 실제 에이전트 세션이 brain-install을 발견하고 카탈로그 조회→사용자 선택→이름으로 testext 설치·시험용 로그인 완료 뒤 재개하면, then 실제 재조회 상태로 설치·로그인·연결·공통 예약 단계가 완료되고 세션 기록과 단계 결과가 남는다.
 - Given 위 설치 완료 상태, when 다시 설치하고 disable/enable을 실행하면, then 기존 auth·DDL·예약이 중복되지 않고 활성 상태가 실제로 꺼지고 켜지며 파일·데이터는 남는다.
 - Given Python·uv가 차단되고 확장이 없는 격리 설치본, when doctor를 실행하면, then Python·uv 탐색·실행 없이 기본 상태 검사가 통과하고 extensions 폴더가 생기지 않는다.
 - Given 설치한 testext 파일·설정·DDL·데이터·상태, when 플러그인 ref를 바꿔 bootstrap 갱신하면, then 확장 상태와 증거가 남으며 필요한 원격 단계는 operator_actions로 구분한다.
@@ -168,3 +168,11 @@ Orca 정리:
 | 소유 격리 자원 정리·재실행 절차 | 기존 동일 절의 소유 자원 부재 확인 및 tooling/mac-install 문서로 충족. 새 Claude 시나리오 실행 시 그 실행의 원본 보존·소유 자원 정리 증거가 추가로 필요하다. |
 
 원격 push/marketplace 구버전 0.1.12 확인 요청은 이후 main 릴리스와 rollout10으로 대체되어 차단 목록에서 제거했다. 남은 조건은 실제 Claude 시나리오와 그 증거뿐이다. 상태는 blocked이며 done으로 바꾸지 않는다. 과거 Auto Run Result는 당시 이력이다.
+
+
+## 2026-11-16 수락조건 재정의 — 13.11 후행
+
+- 13.10은 13.11 뒤에 수행한다. 목표는 배포 스킬을 실제 새 세션이 발견해 카탈로그 → 사용자 선택 → 이름 설치 → 시험 로그인 재개 → 연결·예약 완료를 실제 상태와 세션 원본으로 입증하는 것이다. 기존 나머지 격리·보존·정리 수락조건은 유지한다. 13.11 자체가 built여도 이 계획은 blocked를 유지한다.
+- Given 13.11 배포 후보와 격리 Brain 홈·DB·Label, When 새 실제 에이전트 세션이 brain-install을 발견하고 위 경로를 실행하면, Then catalog 출력·사용자 선택·이름 install 호출·재개·최종 상태 및 소유 자원 정리와 세션 원본이 기록된다. 단순 SKILL 파일을 프롬프트에 붙이거나 직접 CLI를 실행한 증거로 대체하지 않는다.
+- Claude 세션이 권한 심사로 막히면 Codex 세션도 인정한다. 동일 core 배포 스킬의 실제 발견·목록 선택·CLI 호출·재개를 검증하는 것이 사용자 목표이기 때문이다. 사용한 에이전트와 판단 근거를 기록하며 Codex 증거를 Claude 고유 경로의 성공으로 주장하지 않는다. 이전 Claude 거부 이력은 보존하고 실행 승인 심사를 우회하지 않는다.
+- 이번 재정의는 실제 세션 실행이 아니다. 운영 설치본·daemon·DB는 변경하지 않았으며 미충족 조건은 위 blocked_reason과 operator_actions에 남는다.

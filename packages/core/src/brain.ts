@@ -18,7 +18,7 @@ import { readSessionPage, type ReadInput } from './sessions/read.js';
 import { CONVERSATION_CHUNK_KIND, conversationChunkHandler } from './recall/conversation-work.js';
 import { runExtension } from './extensions/run.js';
 import { installExtension, type ExtensionRuntime } from './extensions/install.js';
-import { extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
+import { catalogExtensions, extensionStatus, listExtensions, publicExtensionStatus, setExtensionEnabled } from './extensions/status.js';
 import { holdWorkGroup, releaseWorkGroup } from './queue/hold-groups.js';
 import { listWork } from './queue/list.js';
 import { workExecutionClass } from './domain/work-item.js';
@@ -277,6 +277,7 @@ export interface BrainExt {
   install(input: { name?: string; packagePath?: string; signal?: AbortSignal }): ReturnType<typeof installExtension>;
   status(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   list(): ReturnType<typeof listExtensions>;
+  catalog(): ReturnType<typeof catalogExtensions>;
   publicStatus(input: { name: string }): ReturnType<typeof publicExtensionStatus>;
   enable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
   disable(input: { name: string }): ReturnType<typeof setExtensionEnabled>;
@@ -561,7 +562,7 @@ export function createBrain(dependencies: BrainDependencies): Brain {
       return {ok:true,sourceId,workId:added.item.id,created:added.created};
     }},
     recall: { docs: async input => { const result = await searchDocuments(store, input, store, resolveDocumentLocation); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
-    ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies) },
+    ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies), catalog: () => catalogExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
     files: { show: input => showDocument(store, input, async (fileId, extractionId) => {
       const state=await store.readFileExtractionState(fileId);

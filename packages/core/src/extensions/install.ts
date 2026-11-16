@@ -24,6 +24,8 @@ export function comparePackageVersion(a: string, b: string): number | null {
 export interface ExtensionPackages {
   resolve(name: string): Promise<{ ok: true; dir: string; manifestText: string } | { ok: false }>;
   prepareExternal?(path: string, options?: { signal?: AbortSignal }): Promise<{ name: string; dir: string; manifestText: string; digest: string; cleanup(): Promise<void> }>;
+  prepareCatalog?(name: string, options?: { signal?: AbortSignal }): Promise<{ name: string; dir: string; manifestText: string; digest: string; cleanup(): Promise<void> } | null>;
+  catalog?(): Promise<readonly { name: string; version: string; description: string; login_required: boolean }[]>;
   checkCore?(manifest: ExtensionManifest): Promise<void>;
   checkInstalledCore?(): Promise<void>;
   captureRunningCore?(): Promise<void>;
@@ -85,8 +87,13 @@ export async function installExtension(deps: ExtensionDependencies, input: { nam
       if (!runtime.packages.prepareExternal || !runtime.packages.checkCore) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 설치를 사용할 수 없습니다' };
       try { prepared = await runtime.packages.prepareExternal(input.packagePath, { signal: input.signal }); }
       catch { return input.signal?.aborted ? { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' } : { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지를 검사하지 못했습니다' }; }
+    } else if (input.name !== undefined && runtime.packages.prepareCatalog) {
+      try { prepared = (await runtime.packages.prepareCatalog(input.name, { signal: input.signal })) ?? undefined; }
+      catch { return input.signal?.aborted ? { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' } : { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지를 검사하지 못했습니다' }; }
     }
-    if (input.packagePath !== undefined && input.signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
+    if (prepared && input.name !== undefined && prepared.name !== input.name) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '확장 패키지의 이름이 다릅니다' };
+    if (prepared && !runtime.packages.checkCore) return { ok: false as const, code: 'EXTENSION_INVALID' as const, message: '패키지 설치를 사용할 수 없습니다' };
+    if ((input.packagePath !== undefined || prepared) && input.signal?.aborted) return { ok: false as const, code: 'EXTENSION_INSTALL_CANCELLED' as const, message: '확장 설치가 취소되었습니다' };
     const name = prepared?.name ?? input.name!;
     const run = async () => {
       try { await runtime.packages.checkInstalledCore?.(); }

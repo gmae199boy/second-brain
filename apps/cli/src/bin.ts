@@ -18,12 +18,12 @@ try {
   let registry = [...commands];
   if (argv[0] === 'ext' || argv[0] === 'guide' && argv[1] === 'schema') {
     const dynamic = await dynamicExtensionCommands(process.env);
-    if (!dynamic.ok && argv[0] === 'ext' && argv.length >= 3 && !['install', 'run', 'login', 'list', 'status', 'enable', 'disable'].includes(argv[1] ?? '') && !argv[1]?.startsWith('-') && !argv[2]?.startsWith('-')) {
+    if (!dynamic.ok && argv[0] === 'ext' && argv.length >= 3 && !['install', 'run', 'login', 'list', 'catalog', 'status', 'enable', 'disable'].includes(argv[1] ?? '') && !argv[1]?.startsWith('-') && !argv[2]?.startsWith('-')) {
       const name = argv[1]!, verb = argv[2]!;
       registry.push({ ns: `ext.${name}`, verb, usedFor: '확장 명령 목록을 읽습니다', required: [], examples: [`brain ext ${name} ${verb}`], output: '오류', risk: 'read', hook: false, dryRun: false, standalone: true, options: [{ flags: '--input <json>', description: '입력' }], async run() { return dynamic; } });
     } else if (dynamic.ok) {
       registry = [...commands, ...dynamic.commands];
-      if (argv[0] === 'ext' && argv.length >= 3 && !['install', 'run', 'login', 'list', 'status', 'enable', 'disable'].includes(argv[1] ?? '') && !argv[1]?.startsWith('-') && !argv[2]?.startsWith('-') && !dynamic.commands.some(spec => spec.ns === `ext.${argv[1]}` && spec.verb === argv[2])) {
+      if (argv[0] === 'ext' && argv.length >= 3 && !['install', 'run', 'login', 'list', 'catalog', 'status', 'enable', 'disable'].includes(argv[1] ?? '') && !argv[1]?.startsWith('-') && !argv[2]?.startsWith('-') && !dynamic.commands.some(spec => spec.ns === `ext.${argv[1]}` && spec.verb === argv[2])) {
         const name = argv[1]!, verb = argv[2]!;
         const blocked = await blockedExtensionCommand(process.env, name);
         if (blocked) registry.push({ ns: `ext.${name}`, verb, usedFor: '확장 교체 대기를 확인합니다', required: [], examples: [`brain ext ${name} ${verb}`], output: '오류', risk: 'read', hook: false, dryRun: false, standalone: true, options: [{ flags: '--input <json>', description: '입력' }], async run() { return blocked; } });
