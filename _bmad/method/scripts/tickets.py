@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6.0.2,<7"]
 # ///
 """tickets — read a ticket tree and answer what is next.
 
@@ -49,6 +50,8 @@ import unicodedata
 from datetime import date
 from pathlib import Path
 
+import yaml
+
 sys.dont_write_bytecode = True
 
 STATUSES = ("draft", "ready-for-dev", "in-progress", "in-review", "built", "done", "blocked", "dropped")
@@ -75,7 +78,6 @@ EPIC_RE = re.compile(r"^epic-[^/]+$")
 BREAKDOWN = "tickets.toml"
 TICKETS = "tickets"
 TABLES = ("initiative", "epic", "entry")
-QUOTED_COMMENT_RE = re.compile(r"""^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s+#.*$""")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---(?:\n|\Z)", re.S)
 PLAN_FIELDS = ("status", "assignee", "blocked_at", "blocked_reason")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)  # a template's example sits in one
@@ -101,46 +103,41 @@ class StoreRefusal(Exception):
 # ---------------------------------------------------------------- frontmatter
 
 
-def parse_frontmatter(text: str, lenient: bool = False) -> dict:
-    """Minimal YAML subset: `key: value`, lists as `[a, b]`, quoted or bare scalars. Lenient
-    skips block lists instead of refusing them, for plans written from the build's template."""
+class FrontmatterLoader(yaml.SafeLoader):
+    """YAML that types only whole numbers, `true`, `false` and null, and reads every other scalar as text:
+    `1.10` names entry 10 in epic 1, not the number 1.1, and a date is the text it was written as."""
+
+
+FrontmatterLoader.yaml_implicit_resolvers = {
+    first: [(tag, rx) for tag, rx in resolvers if tag == "tag:yaml.org,2002:null"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+FrontmatterLoader.add_implicit_resolver("tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$"), list("tf"))
+FrontmatterLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:int", re.compile(r"^-?(?:0|[1-9][0-9]*)$"), list("-0123456789")
+)
+
+
+def parse_frontmatter(text: str, where: str) -> dict:
+    """The frontmatter as `FrontmatterLoader` reads it, an absent value as `""`."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         return {}
-    data = {}
-    for line in m.group(1).splitlines():
-        if lenient and (line[:1].isspace() or line.startswith("- ")):
-            continue
-        if line.lstrip().startswith("- "):
-            raise TicketError("frontmatter lists must be inline: `key: [a, b]`")
-        if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        value = value.split("   #")[0].strip()
-        quoted = QUOTED_COMMENT_RE.match(value)
-        data[key.strip()] = _scalar(quoted.group(1) if quoted else value)
-    return data
-
-
-def _scalar(value: str):
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        return [] if not inner else [_scalar(v.strip()) for v in inner.split(",")]
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        if value[0] == '"':
-            try:
-                return str(json.loads(value))
-            except ValueError:
-                pass
-        return value[1:-1] if value[0] == '"' else value[1:-1].replace("''", "'")
-    if value in ("true", "false"):
-        return value == "true"
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
-    return value
+    try:
+        data = yaml.load(m.group(1) + "\n", Loader=FrontmatterLoader)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)  # its line counts from the block, which starts after `---`
+        at = f" at line {mark.line + 2}" if mark else ""
+        raise TicketError(f"{where}: frontmatter is not valid YAML{at}: {getattr(e, 'problem', None) or e}") from e
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise TicketError(f"{where}: frontmatter is not `key: value` lines")
+    return {key: "" if value is None else value for key, value in data.items()}
 
 
 def set_frontmatter_value(text: str, key: str, value: str) -> str:
+    """`key: value` in place of the line starting `key:`, or appended; an empty value removes that line."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         raise TicketError("ticket has no frontmatter")
@@ -260,7 +257,7 @@ def load_container(folder: Path) -> dict:
     path = folder / f"{folder.name}.md"
     if not path.is_file():
         raise TicketError(f"{folder.name}: no {path.name}")
-    fm = parse_frontmatter(read_text(path))
+    fm = parse_frontmatter(read_text(path), f"{folder.name}/{path.name}")
     if fm.get("type") not in CONTAINER_TYPES:
         raise TicketError(
             f"{folder.name}/{path.name}: type {fm.get('type')!r} is not one of {', '.join(CONTAINER_TYPES)}"
@@ -329,17 +326,13 @@ def load_folder(folder: Path, problems: list[str]) -> list[dict]:
     seen = {}
     for path in sorted(tickets_dir(folder).glob("*.md")):
         text = read_text(path)
-        fm = parse_frontmatter(text, lenient=True)
+        fm = parse_frontmatter(text, f"{at}/{path.name}")
         if not fm and text.startswith("---") and NAME_RE.match(path.name):
             raise TicketError(f"{at}/{path.name}: frontmatter does not close")
         if fm.get("type") not in LEAF_TYPES:
             if "ticket" in fm:
                 plans.append((path.name, fm))
             continue
-        try:
-            fm = parse_frontmatter(text)
-        except TicketError as e:
-            raise TicketError(f"{at}/{path.name}: {e}") from e
         status = _one_of(fm.get("status", ""), STATUSES, f"{at}/{path.name}", "status")
         tracker_status = _one_of(fm.get("tracker_status", ""), STATES, f"{at}/{path.name}", "tracker_status")
         n = _id(fm.get("id"))
@@ -925,12 +918,28 @@ def locate(args, folder: Path, text: str) -> tuple[dict, dict]:
         backlog = getattr(args, "backlog", None)
         if backlog is None:
             raise
+        number = text.strip()
         try:
             other = load_tree(backlog)
             other["fallback"] = True
-            return resolve_ticket(other, text), other
+            try:
+                # A number that is a ticket's tracker id names that ticket, whatever local ids the backlog holds.
+                return by_tracker_id(other, number) if number.isdigit() else resolve_ticket(other, text), other
+            except NoMatch:
+                found = resolve_ticket(other, text)
         except (NoMatch, OSError, ValueError):  # not there, or a backlog that cannot be read
             raise miss from None
+        if number.isdigit():
+            # A bare number names an entry of some epic; the backlog's file that carries that id is only a guess.
+            named = [ref_name(t, tree) for t in tree["tickets"] if t["id"] == _id(number)]
+            if named:
+                what = f"could name more than one ticket: {', '.join([*named, ref_name(found, other)])}"
+            else:
+                what = f"names no ticket in the initiative, and in the backlog it matches {ref_name(found, other)}"
+            raise TicketError(
+                f"{number!r} is a bare number and {what}; name the ticket's epic folder or its file name"
+            ) from None
+        return found, other
 
 
 def next_view(folder: Path) -> dict:
@@ -1255,9 +1264,12 @@ def write_leaf(t: dict, tree: dict, root: Path | None) -> Path:
 
 def quoted(value: str) -> str:
     """A double-quoted scalar that `parse_frontmatter` reads back exactly."""
-    # parse_frontmatter cuts a value at "   #" and splits lines on these characters, so they go in as escapes.
-    text = json.dumps(value, ensure_ascii=False).replace("   #", "   \\u0023")
-    return text.translate({c: f"\\u{c:04x}" for c in (0x85, 0x2028, 0x2029)})
+    value.encode("utf-8")  # an undecodable argument stops here, before it could be written as an escape
+    # YAML reads some of these as line breaks and refuses others in a file, so they go in as escapes.
+    text = json.dumps(value, ensure_ascii=False)
+    return "".join(
+        c if c.isprintable() else f"\\u{ord(c):04x}" if ord(c) <= 0xFFFF else f"\\U{ord(c):08x}" for c in text
+    )
 
 
 def edit_frontmatter(path: Path, values: dict[str, str]) -> str:
@@ -1265,8 +1277,18 @@ def edit_frontmatter(path: Path, values: dict[str, str]) -> str:
     the line. Returns the new text."""
     raw = path.read_bytes()
     text = raw.decode("utf-8-sig").replace("\r\n", "\n")
+    before = parse_frontmatter(text, path.name)
     for key, value in values.items():
         text = set_frontmatter_value(text, key, value)
+    # A line edit is right only for a one-line value; anything else would corrupt the file, so it is refused.
+    try:
+        want = {k: v for k, v in before.items() if k not in values}
+        want.update({k: parse_frontmatter(f"---\n{k}: {v}\n---\n", path.name)[k] for k, v in values.items() if v})
+        ok = parse_frontmatter(text, path.name) == want
+    except TicketError:
+        ok = False
+    if not ok:
+        raise TicketError(f"{path.name}: {', '.join(values)} cannot be edited in place; edit the frontmatter by hand")
     data = text.encode("utf-8")  # before the file is opened, so a failure leaves the file as it was
     if b"\r\n" in raw:
         data = data.replace(b"\n", b"\r\n")
@@ -1309,7 +1331,7 @@ def cmd_mark(args) -> dict:
         if args.assignee is not None:
             values["assignee"] = quoted(args.assignee)
         text = edit_frontmatter(path, values)
-    fm = parse_frontmatter(text, lenient=True)
+    fm = parse_frontmatter(text, path.name)
     return {
         "plan": str(path),
         "created": created,
@@ -1363,7 +1385,7 @@ def container_named(tree: dict, name: str, by_ref: bool) -> dict | None:
         path = folder / f"{folder.name}.md"
         if not path.is_file():
             continue
-        fm = parse_frontmatter(read_text(path), lenient=True)
+        fm = parse_frontmatter(read_text(path), f"{folder.name}/{path.name}")
         tracker_id = str(fm.get("tracker_id", "") or "")
         if fm.get("type") in CONTAINER_TYPES and (
             (tracker_id and tracker_id.lower() == low) or (by_ref and folder.name.lower() == low)
@@ -1403,6 +1425,8 @@ def cmd_mirror(args) -> dict:
         hit = miss = container = None
         for tree in trees:
             try:
+                if "ref" in item and tree is not trees[0] and str(name).strip().isdigit():
+                    raise NoMatch(f"a bare number does not name a backlog ticket: {name!r}")
                 # A tracker id alone never falls back to an entry id or a title that happens to match it.
                 t = resolve_ticket(tree, str(name)) if "ref" in item else by_tracker_id(tree, str(name))
             except NoMatch as e:
@@ -1599,10 +1623,10 @@ def cmd_move(args) -> dict:
         for path in sorted({*home.glob("*.md"), *([own] if own.is_file() else [])}):
             if is_old and path.parent == home and path.name == t["file"]:
                 continue
-            fm = parse_frontmatter(read_text(path), lenient=True)
+            where = f"{at}/{path.name}" if path != own else f"{folder.name}/{own.name}"
+            fm = parse_frontmatter(read_text(path), where)
             if fm.get("type") not in LEAF_TYPES and not (fm.get("type") in CONTAINER_TYPES and path == own):
                 continue
-            where = f"{at}/{path.name}" if path != own else f"{folder.name}/{own.name}"
             after = _list(fm.get("after"), where)
             new = [new_ref(folder, where) if names_moved(e, folder) else e for e in after]
             if new != after:
@@ -1633,7 +1657,7 @@ def cmd_move(args) -> dict:
         if (dest_home / name).exists():
             raise TicketError(f"{shown(dest)}/{name} exists already")
         if name == t["file"]:
-            fm = parse_frontmatter(read_text(old_home / name))
+            fm = parse_frontmatter(read_text(old_home / name), f"{shown(old)}/{name}")
             after = _list(fm.get("after"), f"{shown(old)}/{name}")
             new = [own_ref(e, f"{shown(old)}/{name}") for e in after]
             if new != after:
@@ -1705,7 +1729,10 @@ DIR_HELP = """<dir> is an epic folder, a backlog folder, or an initiative folder
 folder's name under the store, the active initiative, or its `tickets/` folder. A `tickets/` folder is
 read as the folder that holds it. Left out, it is the active initiative."""
 
-BACKLOG_HELP = "With no <dir>, a ticket the initiative does not hold is looked for in the backlog folder."
+BACKLOG_HELP = (
+    "With no <dir>, a ticket the initiative does not hold is looked for in the backlog folder, "
+    "except by a bare number, which is ambiguous there unless it is the ticket's tracker id."
+)
 
 PARENT_HELP = """A parent initiative, whose `tickets.toml` lists `[[initiative]]` tables, works only with status
 and next; the other commands want one of its initiatives."""
