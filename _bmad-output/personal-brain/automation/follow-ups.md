@@ -713,7 +713,7 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 | 원인 미확정 일시 시험 실패 3 | apps/cli/python-test/garmin-report.test.ts의 daemon SIGKILL after 7d commit 사례 첫 all 모델 호출 대기 timeout. 재실행·전체 Python 회귀 통과, 원인 미확정. 같은 별도 작업 소유 |
 | 이관 전용 설정 잔존값 | garmin.capture_manifest·garmin.legacy_conversation_id는 제거 후 공식 config 조회가 CONFIG_INVALID다. DB 잔존값 부재를 증명하지 않음. rollout10-retired-config-verdict.json 근거. 조사·정리는 별도 범위 결정 시 수행하며 현재 경고 때문에 필요한 조치라는 근거는 없음 |
 | 13.10 수락 증거 | 실제 Claude testext 설치·시험 로그인 재개·연결·예약과 세션 원본 미확보. blocked 유지. 최신 marketplace/일반 스킬 발견은 해소 |
-| 21.7 과거 수락조건 | 지원 설치·전환·실수집·새 분석·발신은 확인. 과거 반입 snapshot 전수 일치는 실패 이력이며 조건 폐기/대체 인수 판단이 남아 blocked 유지. verifier 수정·16표본 조회 보존은 하지 않음 |
+| 21.7 과거 수락조건 | **해소, built**. 2026-11-16 사용자 후속 지시로 ‘반입 당시 전수 snapshot 일치’ 조건을 이관 기능 제거와 함께 폐기했다. b6c67603·release7142875c·2026-11-16/rollout10-report.md 근거. 지원 설치·전환·실수집·새 분석·발신 근거는 유지하며 과거 실패를 통과로 소급하지 않음. verifier 수정·16표본 조회 보존은 하지 않고 done도 쓰지 않음 |
 | 보류 아이디어 1 | 성향·선호 기억과 시작 맥락 주입 |
 | 보류 아이디어 2 | 메신저에서 에이전트와 대화(OpenClaw claude-cli 연동 검토 포함) |
 | 보류 아이디어 3 | 기간별 분석 에이전트 override |

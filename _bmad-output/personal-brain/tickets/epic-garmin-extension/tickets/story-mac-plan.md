@@ -3,7 +3,7 @@ title: '이 Mac에서 전환: 옛 데이터를 확정 반입하고 옛 예약을
 type: 'chore'
 ticket: 7
 created: '2026-11-06'
-status: blocked
+status: built
 baseline_revision: 'e36d3aa5ec51ad9fccbc3d6ab4cac9adabd2ecaa'
 route: 'full'
 route_source: 'pinned'
@@ -16,8 +16,6 @@ followup_review_recommended: false
 context: [AGENTS.md, _bmad-output/personal-brain/automation/runbook.md, extensions/garmin/README.md, .brain-automation/independent-spec.md, .brain-automation/inv-a-report.md, .brain-automation/prep-b-report.md]
 warnings: [oversized]
 deferred: []
-blocked_at: "2026-11-16"
-blocked_reason: "운영 전환·실수집·실평가·발송은 확인됐으나 원래 인수조건의 반입 snapshot 대비 전수 일치는 미충족 이력이다. 2026-11-16 이관 기능 제거 결정으로 재검증·수정은 수행하지 않으며, 이 조건의 폐기/대체 인수 판정이 남는다."
 ---
 
 > 2026-11-16: Garmin 일회성 이관은 완료됐고 해당 명령과 도구는 제거됐다. 아래 이관 절차·결함은 당시 기록이며 현재 실행 지침이 아니다.
@@ -142,3 +140,9 @@ blocked_reason: "운영 전환·실수집·실평가·발송은 확인됐으나 
 사용자 2026-11-16 결정: `b6c67603`에서 import-preflight/import/import-verify와 도구를 제거했고 `7142875c`/rollout10으로 운영 반영했다. 보존 데이터는 유지했다. verifier 계약 수정과 과거 Body Battery 16표본의 조회 보존은 **하지 않는다**. 제거된 명령 재실행·재반입·복원 개발을 후속 조치로 요구하지 않는다.
 
 따라서 기존 제품 차단은 지웠지만, 명세의 ‘모든 수락조건 충족 시 built’ 기준에 따라 원래 전수 일치 조건의 미충족을 명시하고 blocked를 유지한다. 남은 것은 기술 구현이 아니라 이 과거 수락조건의 폐기/대체 인수 판정이다. 사용자 결정만으로 해당 조건까지 폐기된 것으로 해석해 built로 바꾸지 않았다. dropped 14.8·16.9 등을 되살리지 않는다. 이 문서의 이전 미실행 체크박스·재개 지시는 과거 이력이며 현재 실행 지침이 아니다.
+
+## 2026-11-16 사용자 후속 결정 — 전수 snapshot 조건 폐기, built 전환
+
+사용자 지시(2026-11-16, 중앙 전달 `후속: 21.7 종료`)에 따라 ‘반입 당시 전수 snapshot 일치’ 수락조건을 이관 기능 제거와 함께 폐기한다. 근거는 이관 명령·도구 제거 커밋 `b6c67603`, release `7142875c` 및 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`다. 해당 조건의 폐기/대체 인수 판단 대기는 이 명시적 결정으로 해소됐다. 과거 전수 비교 실패를 통과로 소급하지 않는다.
+
+나머지 지원 설치·전환·실수집·새 분석·발신·조회 조건은 위 수락조건별 운영 증거를 유지한다. 이 결정으로 status를 blocked에서 built로 바꾸고 blocked_at·blocked_reason을 비운다. done은 쓰지 않으며 13.10은 그대로 둔다. verifier 계약 수정·과거 Body Battery 16표본 조회 보존·재반입은 하지 않는다. 앞의 blocked 유지 판단과 미실행 체크박스는 당시 이력이며 현재 상태는 이 절과 frontmatter를 따른다.
