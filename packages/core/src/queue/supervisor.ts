@@ -80,7 +80,7 @@ export function publicCollectSummary(kind: string, summary: string | undefined):
 export interface SupervisorOptions {
   store: WorkStore & SchemaStore & Partial<Pick<ChannelStore, 'recoverChannelAttempt'>>; launcher: ProcessLauncher; inspector: ProcessInspector;
   clock: Clock; timer: Timer; idGen: IdGen;
-  launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null>>;
+  launches: Readonly<Record<string, (item: WorkItem, token: string) => ProcessSpec | null | Promise<ProcessSpec | null>>>;
   protectedLaunches?: Readonly<Record<string, {
     extension: string; declarations: Readonly<Record<string, 'string' | 'number' | 'boolean'>>; errorCodes: readonly string[]; required?: readonly string[]; secrets?: readonly string[];
     prepare(item: WorkItem, token: string, userId?: string): Promise<{ ok: true; spec: ProcessSpec } | { ok: false; code: 'USER_MISSING' | 'EXTENSION_CONFIG_INVALID' | 'DB_UNAVAILABLE' | 'DB_LOCKED' }>;
@@ -237,7 +237,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
         const prepared = await protection.prepare(item, token, preflight?.ok ? preflight.userId : undefined);
         if (!prepared.ok) preparationFailure = { code: prepared.code, retryable: prepared.code !== 'EXTENSION_CONFIG_INVALID' && prepared.code !== 'USER_MISSING' };
         else spec = prepared.spec;
-      } else spec = launches[item.kind]?.(item, token) ?? null;
+      } else spec = await launches[item.kind]?.(item, token) ?? null;
       if (spec && preflight?.ok && preflight.userId !== undefined) spec = { ...spec, env: { ...spec.env, BRAIN_USER_ID: preflight.userId } };
       if (spec && protection && (!Object.hasOwn(spec.env, 'BRAIN_SETTINGS_SNAPSHOT') || !decodeAbiEnv(spec.env).ok || !validateProtectedSnapshot(spec.env['BRAIN_SETTINGS_SNAPSHOT'], protection))) {
         preparationFailure = { code: 'EXTENSION_CONFIG_INVALID', retryable: false }; spec = null;

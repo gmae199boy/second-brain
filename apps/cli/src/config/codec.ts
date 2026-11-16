@@ -820,12 +820,16 @@ export async function extensionDatabaseUrl(home: string, name: string, runtimeUr
   return url.toString();
 }
 
+export class TelegramConfigError extends Error {
+  constructor(readonly code: string) { super('Telegram DB 설정을 읽을 수 없습니다'); }
+}
+
 /** DB 사용자 설정을 우선하고 키별 미설정 값만 기존 환경에서 읽는다. */
 export async function resolveTelegramConfig(home: string, env: NodeJS.ProcessEnv, settings?: SettingsDependencies): Promise<{ token: string; chatId: string } | null> {
   const read = async (key: string, envKey: string): Promise<string | undefined> => {
     if (settings) {
       const result = await getSetting(settings, { key });
-      if (!result.ok) throw new Error('Telegram DB 설정을 읽을 수 없습니다');
+      if (!result.ok) throw new TelegramConfigError(result.code);
       if (result.value) return result.value;
     }
     return resolveStoreUrl(home, envKey, env);

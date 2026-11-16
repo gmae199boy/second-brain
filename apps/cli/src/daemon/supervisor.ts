@@ -10,7 +10,7 @@ import { openBrainStore } from '../runtime/brain-store.js';
 import { systemProcessInspector } from '../runtime/process-inspector.js';
 import { systemProcessLauncher } from '../runtime/process-group.js';
 import { systemTimer } from '../runtime/clock.js';
-import { resolveStoreUrl, resolveTelegramConfig, extensionDatabaseUrl } from '../config/codec.js';
+import { resolveStoreUrl, resolveTelegramConfig, TelegramConfigError, extensionDatabaseUrl } from '../config/codec.js';
 import type { RunDaemonOptions } from './run.js';
 import { readDaemonLock } from './lock.js';
 import type { ReadConfigResult } from '../config/codec.js';
@@ -40,8 +40,6 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
     const opened = await openBrainStore({ home: options.home, env: options.env, config, path: 'drain', createStore: options.createStore });
     try {
       const url = config.ok ? await resolveStoreUrl(options.home, config.config.storeUrlEnv, options.env).catch(() => undefined) : undefined;
-      // 설정 조회 실패는 Telegram만 비활성화하며 self/schema 오류는 기존 일감 준비 단계에서 처리한다.
-      const telegram = await resolveTelegramConfig(options.home, options.env, { store: opened.store, schemaVersions: opened.expected, clock: options.clock }).catch(() => null);
       const loadProtectedLaunches = async (): Promise<NonNullable<SupervisorOptions['protectedLaunches']>> => {
       const protectedLaunches: Record<string, NonNullable<SupervisorOptions['protectedLaunches']>[string]> = {};
       const installed = await opened.store.listExtensions();
@@ -115,7 +113,13 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
         idGen: options.idGen, signal: controller.signal, log: (message) => log.write(message),
         ...(options.supervisor?.pollMs === undefined ? {} : { pollMs: options.supervisor.pollMs }),
         ...(options.supervisor?.renewEveryMs === undefined ? {} : { renewEveryMs: options.supervisor.renewEveryMs }),
-        launches: { channel_send: (item, token) => url ? ({
+        launches: { channel_send: async (item, token) => {
+          if (!url) return null;
+          let telegram: Awaited<ReturnType<typeof resolveTelegramConfig>> = null;
+          let configFailure: 'invalid' | 'lookup' | undefined;
+          try { telegram = await resolveTelegramConfig(options.home, options.env, { store: opened.store, schemaVersions: opened.expected, clock: options.clock }); }
+          catch (error) { configFailure = error instanceof TelegramConfigError && error.code === 'CONFIG_INVALID' ? 'invalid' : 'lookup'; }
+          return ({
           command: process.execPath,
           args: [fileURLToPath(new URL('../../dist/workers/channel-send.js', import.meta.url))],
           env: { [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url,
@@ -124,10 +128,11 @@ export function startDaemonSupervisor(options: RunDaemonOptions, config: ReadCon
             [PROCESS_ABI_ENV.targetKind]: item.targetKind, [PROCESS_ABI_ENV.targetId]: item.targetId,
             BRAIN_CHANNEL_FILES_PATH: config.ok ? config.config.filesPath : join(options.home, 'files'),
             ...(telegram ? { BRAIN_TELEGRAM_BOT_TOKEN: telegram.token, BRAIN_TELEGRAM_CHAT_ID: telegram.chatId } : {}),
+            ...(configFailure ? { BRAIN_TELEGRAM_CONFIG_FAILURE: configFailure } : {}),
             ...(options.supervisor?.channelTestEndpoint ? { BRAIN_CHANNEL_TEST_ENDPOINT: options.supervisor.channelTestEndpoint } : {}),
             ...(options.supervisor?.channelTestEndpoint && options.supervisor.channelTestBarrier ? { BRAIN_CHANNEL_TEST_BARRIER: options.supervisor.channelTestBarrier } : {}),
           },
-        }) : null, process_probe: (item, token) => url ? ({ command: options.supervisor?.probeWorker?.command ?? process.execPath,
+        }); }, process_probe: (item, token) => url ? ({ command: options.supervisor?.probeWorker?.command ?? process.execPath,
           args: options.supervisor?.probeWorker?.args ?? [fileURLToPath(new URL('../../dist/workers/process-probe.js', import.meta.url))],
           env: { ...options.supervisor?.probeWorker?.env, [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: url, [PROCESS_ABI_ENV.workId]: item.id,
             [PROCESS_ABI_ENV.runGeneration]: String(item.attempts), [PROCESS_ABI_ENV.attemptToken]: token, [PROCESS_ABI_ENV.workKind]: item.kind,

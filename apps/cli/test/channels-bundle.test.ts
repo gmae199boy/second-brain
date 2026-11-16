@@ -100,3 +100,27 @@ it('허용되지 않는 FileStore 위치는 파일 HTTP 없이 거부한다', as
     expect(await f.store.listChannelItemResults(input.id)).toMatchObject({ items: [{ result: { outcome: 'sent' } }, { result: { code: 'LOCATION_REFUSED' } }] });
   } finally { await f.close(); }
 }, 60000);
+
+it.each([
+  ['photo', 2, ['sendMessage', 'sendPhoto', 'sendPhoto', 'sendMediaGroup', 'sendDocument']],
+  ['album', 3, ['sendMessage', 'sendPhoto', 'sendMediaGroup', 'sendMediaGroup', 'sendDocument']],
+  ['document', 4, ['sendMessage', 'sendPhoto', 'sendMediaGroup', 'sendDocument', 'sendDocument']],
+] as const)('%s 재개 전 설정 조회 장애는 저장된 성공 항목을 중복 전송하지 않는다', async (_kind, requestNumber, expected) => {
+  const f = await bundleFixture();
+  try {
+    const photo = await file(f, Buffer.from('photo')); const doc = await file(f, Buffer.from('document'));
+    const input = await insert(f, { summary: 'summary', albums: [{ photos: [photo] }, { photos: [photo, photo] }], document: doc });
+    f.disconnectOnRequest(requestNumber); await f.start();
+    await expect.poll(() => f.requests.length, { timeout }).toBe(requestNumber);
+    await expect.poll(async () => f.db.rows<{ current_attempt_token: string | null }>(`select current_attempt_token from brain.work_items where target_id='${input.id}'`), { timeout }).toMatchObject([{ current_attempt_token: null }]);
+    f.setTelegramSettingsFailure(true); f.advance(2000);
+    await expect.poll(async () => (await f.store.listChannelItemResults(input.id)), { timeout }).toMatchObject({ items: [
+      ...Array.from({ length: requestNumber - 1 }, (_, index) => ({ index, result: { outcome: 'sent' } })),
+      { index: requestNumber - 1, result: { outcome: 'definite_failed', code: 'CHANNEL_CONFIG_LOOKUP_FAILED', retryable: true } },
+    ] });
+    expect(f.requests).toHaveLength(requestNumber);
+    await expect.poll(async () => f.db.rows<{ current_attempt_token: string | null }>(`select current_attempt_token from brain.work_items where target_id='${input.id}'`), { timeout }).toMatchObject([{ current_attempt_token: null }]);
+    f.setTelegramSettingsFailure(false); f.advance(3_600_000); await done(f, input.id);
+    expect(f.requests.map(r => r.url.split('/').pop())).toEqual(expected);
+  } finally { await f.close(); }
+}, 60000);

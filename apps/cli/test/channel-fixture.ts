@@ -21,6 +21,7 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
   const files = localFileStore({ root: filesPath });
   const store = postgresStore({ databaseUrl: db.appUrl });
   let mode = initialMode;
+  let failTelegramSettings: boolean | 'telegram.bot_token' | 'telegram.chat_id' = false;
   let timeMs = Date.now();
   let offsetMs = 0;
   const currentTime = () => clockMode === 'running' ? Date.now() + offsetMs : timeMs;
@@ -63,6 +64,7 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
   const input = { id: 'abcdefab-cdef-7abc-abcd-efabcdefabcd', conversationId, producer: 'test-producer', producerResultId: producerId, purpose: 'notice', revision: null, text: 'password: secret123456', createdAt: now };
   return {
     db, store, files, home, input, requests, ids, barriers, endpoint: `http://127.0.0.1:${address.port}`, now: () => new Date(currentTime()),
+    setTelegramSettingsFailure(value: boolean | 'telegram.bot_token' | 'telegram.chat_id') { failTelegramSettings = value; },
     disconnectOnRequest(number: number) { disconnectAt = number; },
     setMode(value: typeof mode) { mode = value; },
     async offline() { await new Promise<void>(resolve => server.close(() => resolve())); },
@@ -74,6 +76,14 @@ export async function channelFixture(initialMode: 'hold' | 'success' | 'null-id'
       timeMs = Math.max(timeMs, Date.now());
       running = runDaemon({ home, env: { ...withoutHarnessFolders(process.env), ...db.env,
         BRAIN_TELEGRAM_BOT_TOKEN: configured ? 'test-token' : '', BRAIN_TELEGRAM_CHAT_ID: configured ? 'test-chat' : '' },
+        createStore: options => {
+          const created = postgresStore(options);
+          const getSettings = created.getSettings.bind(created);
+          created.getSettings = async input => failTelegramSettings && input.keys.some(key => failTelegramSettings === true ? key.startsWith('telegram.') : key === failTelegramSettings)
+            ? { ok: false, code: 'DB_UNAVAILABLE', message: 'synthetic-private-detail' }
+            : getSettings(input);
+          return created;
+        },
         clock: { now: () => new Date(currentTime()) }, idGen: uuidV7IdGen(), signal: controller.signal, drainPauseMs: 25, heartbeatMs: 100,
         supervisor: { pollMs: 25, ...(barrier ? { channelTestBarrier: barrier } : {}), channelTestEndpoint: `http://127.0.0.1:${address.port}` } });
     },

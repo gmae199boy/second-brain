@@ -27,7 +27,13 @@ async function run(): Promise<void> {
     const legacy = !token && !read.channel?.botRef.startsWith('messenger:') &&
       read.conversation?.externalRef === env['BRAIN_TELEGRAM_CHAT_ID'];
     const resolvedToken = token ?? (legacy ? env['BRAIN_TELEGRAM_BOT_TOKEN'] : undefined);
-    const sender = read.channel?.kind === 'telegram' && resolvedToken
+    const configFailure = !token && !read.channel?.botRef.startsWith('messenger:') ? env['BRAIN_TELEGRAM_CONFIG_FAILURE'] : undefined;
+    const invalid = configFailure === 'invalid';
+    const failure = async () => ({ ok: false as const, outcome: 'definite_failed' as const,
+      code: invalid ? 'CHANNEL_CONFIG_INVALID' : 'CHANNEL_CONFIG_LOOKUP_FAILED', retryable: !invalid });
+    const sender = configFailure === 'lookup' || invalid
+      ? { sendMessage: failure, sendPhoto: failure, sendMediaGroup: failure, sendDocument: failure }
+      : read.channel?.kind === 'telegram' && resolvedToken
       ? telegramSender(resolvedToken, env['BRAIN_CHANNEL_TEST_ENDPOINT'] ? { endpoint: env['BRAIN_CHANNEL_TEST_ENDPOINT'] } : {})
       : { async sendMessage() { return { ok: false as const, outcome: 'definite_failed' as const, code: 'CHANNEL_CONFIG_INVALID', retryable: false }; } };
     const sent = await sendChannelRequest({ store, sender,
