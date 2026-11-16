@@ -16,8 +16,8 @@ followup_review_recommended: false
 context: [AGENTS.md, _bmad-output/personal-brain/automation/runbook.md, extensions/garmin/README.md, .brain-automation/independent-spec.md, .brain-automation/inv-a-report.md, .brain-automation/prep-b-report.md]
 warnings: [oversized]
 deferred: []
-blocked_at: "2026-11-06"
-blocked_reason: "plugin 설치본(detached clone)에서 운영자 TTY offline 확인을 입력할 지원 진입점 없음(npx는 detached 거부 bootstrap.ts:318, hook은 stdin 닫음). 제품 수정 반영·release 뒤 재개"
+blocked_at: "2026-11-16"
+blocked_reason: "운영 전환·실수집·실평가·발송은 확인됐으나 원래 인수조건의 반입 snapshot 대비 전수 일치는 미충족 이력이다. 2026-11-16 이관 기능 제거 결정으로 재검증·수정은 수행하지 않으며, 이 조건의 폐기/대체 인수 판정이 남는다."
 ---
 
 > 2026-11-16: Garmin 일회성 이관은 완료됐고 해당 명령과 도구는 제거됐다. 아래 이관 절차·결함은 당시 기록이며 현재 실행 지침이 아니다.
@@ -126,3 +126,19 @@ blocked_reason: "plugin 설치본(detached clone)에서 운영자 TTY offline �
 - 리뷰: 이 blocked 계획 문서에 독립 Sol quick 리뷰 1회(`ctx_0039d58cb064`) — 발견 3건(공개 경로 비식별화, 설치 전 예약 보류 조건, 모델 실행기 로그인 항목)을 모두 이 문서에 반영했다. 제품 코드 diff는 0이다.
 - 재개 조건: plugin 설치본에서 같은 설치 잠금·staged app·대상 ref로 설치기에 TTY를 넘기는 지원 대화형 진입점이 main에 반영되고 core plugin에 release될 것. 그다음 설치 직전에 legacy 전제를 다시 확인하고, 옛 데몬을 내린 뒤 종료를 확인한다. 이어서 사람 입력: 설치기의 대화형 offline 확인, D3를 포함한 계정 귀속 확인, 전용 tokenstore 로그인/MFA와 0600 binding, `garmin.*` 설정값(connection·timezone·model·agent·effort·timeout·수신 conversation), 선택한 모델 실행기(Codex 등)의 로그인 상태 확인과 필요하면 사람이 직접 로그인, 최종 capture 전 원본 파일 목록 확인.
 - 재개 지점: `.brain-automation/private/runbook-21.7.md` 단계 1.
+
+## 2026-11-16 운영 증거 재대조 — 제품 차단 해소, 원래 전수 일치 조건은 미충족
+
+근거 루트: `~/github/second-brain/.brain-automation/operations/`. 수락조건을 줄여 과거 실패를 성공으로 바꾸지 않는다.
+
+| 단계 / 수락조건 | 판정과 증거 |
+| --- | --- |
+| 선행 21.8~21.11 및 지원 설치·신원 확인 | 기존 built 유지. `2026-11-10/operational-upgrade-execution-report.md`의 실제 TTY 설치 exit0 이후, `2026-11-16/rollout10-report.md`가 지원 bootstrap exit0·설치본/app/daemon ref 일치와 Garmin 1.2.13 enabled/connected를 확인한다. 과거 detached TTY 진입점 부재 차단은 해소됐다. |
+| 설치 직후 새 예약 비활성·원본 writer 정지·최종 capture·계정 확인 | 충족. `2026-11-10/b3-replace-report.md`의 ‘재개 Task’·‘사람 귀속 완료’·보호 사본 인증 절: 두 예약 disabled, writer 미실행/bootout, 새 최종 capture 바이트·DB 논리 비교 일치, 사람 귀속 영수증 및 token profile 일치. D3는 미확인으로 제외·보존. 온라인 예비 capture는 반입하지 않고 최종 capture 1회 반입으로 변경됐다. |
+| 확정 반입·표별 건수·자연키·해시·평가·파일 관계 모두 일치 | **원래 조건은 미충족**. B3 실반입 succeeded 이후 최초 verifier stalled. `2026-11-11/verify-diagnosis-report.md`는 원형 보존·mapping·raw·legacy·files·inventory 검증 성공과 native snapshot 대비 16행 누락·384행 값 변화를 분리했다. 반입 미완료 checkpoint라고 단정할 수 없으며 현재 정규화/최신 raw와 일치한다. ‘모두 일치’ 성공으로 소급하지 않는다. |
+| 옛 LaunchAgent 중지와 새 예약 실수집·실평가·발신 | 충족. `2026-11-10/b4-collect-report.md` 최종절은 옛 두 label 영구 disabled·plist 보존을 확인한다. 그날 수동 collect는 no-op이므로 실수집 증거로 쓰지 않는다. `2026-11-12/backlog1-report.md`의 정기 수집 success·새 응답 저장과 `rollout7-report.md`~`rollout9-report.md`의 새 네 기간 분석 succeeded 및 channels sent를 사용한다. 정기 리포트 수신은 2026-11-16 사용자 확인. |
+| 설치본 조회·cron·플러그인·공개 비밀/건강값 비노출 | 충족. B4의 공식 daily-values 조회, rollout10의 공개 명령 schema·package·예약/구독 검증 및 각 보고서의 비식별 집계만 보존. 수집 08:00·분석 08:10(after_schedule=collect)·일일 발송 08:30, Asia/Seoul. |
+
+사용자 2026-11-16 결정: `b6c67603`에서 import-preflight/import/import-verify와 도구를 제거했고 `7142875c`/rollout10으로 운영 반영했다. 보존 데이터는 유지했다. verifier 계약 수정과 과거 Body Battery 16표본의 조회 보존은 **하지 않는다**. 제거된 명령 재실행·재반입·복원 개발을 후속 조치로 요구하지 않는다.
+
+따라서 기존 제품 차단은 지웠지만, 명세의 ‘모든 수락조건 충족 시 built’ 기준에 따라 원래 전수 일치 조건의 미충족을 명시하고 blocked를 유지한다. 남은 것은 기술 구현이 아니라 이 과거 수락조건의 폐기/대체 인수 판정이다. 사용자 결정만으로 해당 조건까지 폐기된 것으로 해석해 built로 바꾸지 않았다. dropped 14.8·16.9 등을 되살리지 않는다. 이 문서의 이전 미실행 체크박스·재개 지시는 과거 이력이며 현재 실행 지침이 아니다.

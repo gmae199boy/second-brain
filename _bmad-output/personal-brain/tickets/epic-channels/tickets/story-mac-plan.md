@@ -3,7 +3,7 @@ title: '이 Mac의 채널 설치본과 옛 Telegram 봇 확인'
 type: chore
 ticket: 7
 created: '2026-10-31'
-status: blocked
+status: built
 baseline_revision: 884fd42769e2921b872d2cca80adbdacce85b7af
 route: full
 route_source: pinned
@@ -16,14 +16,9 @@ followup_review_recommended: true
 context: [AGENTS.md]
 warnings: [oversized]
 deferred: []
-operator_actions:
-  - "옛 Telegram 봇의 bot_token과 chat_id를 안전하게 확보하여 ~/.second_brain/.env의 BRAIN_TELEGRAM_BOT_TOKEN과 BRAIN_TELEGRAM_CHAT_ID에 파일 권한 0600으로 설정하세요."
-  - "두 키 설정 뒤 tooling/channels-mac/README.md의 데몬 재시작·고정 probe·동일 요청 재조회 절차를 실행하여 sent와 실제 message ID 및 소유 요청 식별자를 기록하세요."
-  - "검토된 이 티켓의 배포 커밋과 상태 기록 커밋을 원격 저장소에 push하세요."
-  - "원격 marketplace 플러그인을 갱신하여 version 0.1.14와 app-ref 884fd42769e2921b872d2cca80adbdacce85b7af 및 channels 스킬 발견을 확인하세요."
-  - "나머지 operator_actions의 증거를 모두 확보한 뒤 저장소에서 bmad-loop confirm 15.7 --reverify를 실행하세요."
-blocked_at: "2026-10-31"
-blocked_reason: "awaiting operator: 옛 Telegram 봇의 bot_token과 chat_id를 안전하게 확보하여 ~/.second_brain/.env의 BRAIN_TELEGRAM_BOT_TOKEN과 BRAIN_TELEGRAM_CHAT_ID에 파일 권한 0600으로 설정하세요.; 두 키 설정 뒤 tooling/channels-mac/README.md의 데몬 재시작·고정 probe·동일 요청 재조회 절차를 실행하여 sent와 실제 message ID 및 소유 요청 식별자를 기록하세요.; 검토된 이 티켓의 배포 커밋과 상태 기록 커밋을 원격 저장소에 push하세요.; 원격 marketplace 플러그인을 갱신하여 version 0.1.14와 app-ref 884fd42769e2921b872d2cca80adbdacce85b7af 및 channels 스킬 발견을 확인하세요.; 나머지 operator_actions의 증거를 모두 확보한 뒤 저장소에서 bmad-loop confirm 15.7 --reverify를 실행하세요."
+operator_actions: []
+blocked_at: ""
+blocked_reason: ""
 ---
 
 <intent-contract>
@@ -127,3 +122,16 @@ Status: awaiting-operator
 옛 config가 가리키는 tokenstore에 telegram.json이 없고 Brain의 두 Telegram 키도 비어 있어 실발신은 0건이다. token·chat id를 복사하거나 출력하지 않았고 실발신 sent·message ID 성공을 주장하지 않는다. 원격 push와 marketplace 검증도 미수행이다. 티켓 done·tickets.py mark는 실행하지 않으며 오케스트레이터가 자체 검증 뒤 판정한다. 구현 커밋 `46386c94a23290700adedb283872ea882b103171`를 만든 뒤 운영자 작업 5개를 frontmatter operator_actions에 확정했으며 status와 이 결과를 awaiting-operator로 기록했다. 에이전트가 수행할 구현·검증·리뷰·정리는 끝났으며 외부 설정·배포 확인 뒤의 완료 판정은 오케스트레이터에 맡긴다.
 
 정리: 자기 Orca Run `run_d09722bb91e8`의 구현·Quick 리뷰 두 Dispatch는 모두 정식 succeeded 보고와 전문을 수락한 뒤 released로 정리했다. restore와 worker-list는 completed/released 2개, active/reclaimable 0개이며 pending delivery·미확인 요청이 없다. 과거 transcript source 변경 관찰은 최종 settlement·release 증거로 해소했다. 별도 취소·강제 종료·중복 구현자는 없으며 최종 커밋·HALT checkpoint 후 자기 전용 제어 셸만 마지막에 닫는다.
+
+## 2026-11-16 운영 증거 재대조 — blocked → built
+
+근거 루트: `~/github/second-brain/.brain-automation/operations/`. 원래 인수 조건 4개를 대조한다.
+
+| 인수 조건 | 판정과 증거 |
+| --- | --- |
+| 설치 metadata/build/app-ref와 channels 스킬 | 충족. 기존 로컬 bootstrap 검증 및 `2026-11-11/rollout2-report.md`의 설치본·app·daemon 일치, `2026-11-16/rollout10-report.md`의 최신 marketplace/core 0.1.34·스킬 16개 검증. 사용자 2026-11-16 새 세션 스킬 발견 정상 확인. |
+| list/status/resend·doctor와 fixture 상태 | 충족. 이 계획의 2026-10-31 독립 격리 검증 12개 관찰과 doctor 기록. rollout2는 공식 channels list/status·doctor exit0 및 실제 sent를 추가 확인했다. |
+| 실제 발신 sent·message id 또는 설정 부재 인계 | 충족. rollout2의 저장 리포트 발신 1회: source work `01a1c96d-f393-70d9-a566-d51c69695d16`, request `c3f50e2c-5cc9-4baf-b157-f262f6066099`, sent/closed, attempts1, Telegram message ID 14. 원본 `rollout2-channel-status.json`, `rollout2-delivery-evidence.json`. 옛 토큰 파일은 없었으므로 ‘옛 봇 복사 성공’으로 쓰지 않는다. 이후 사용자 등록 메신저 personal/reports로 운영 목표를 달성했고, 2026-11-16 사용자 지시에서 매일 정상 수신·봇 토큰 재발급을 확인했다. |
+| 원격/설정 부재의 남은 조치 분리 | 충족. 당시 인계는 보존하며 이후 main 릴리스·공식 marketplace 갱신·실발신으로 해소됐다. 구형 .env 복사·0.1.14 고정·bmad-loop confirm은 현재 절차가 아니다. |
+
+2026-11-16 사용자 결정과 현재 DB 메신저/채널 설정이 옛 .env 기반 인계 절차를 대체한다. operator_actions와 blocked 필드를 비웠다. 별도 probe를 다시 보내지 않았고 사용자 인수 완료를 뜻하는 done은 쓰지 않는다. 과거 awaiting-operator 결과는 이력으로 남긴다.

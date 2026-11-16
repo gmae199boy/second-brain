@@ -700,3 +700,37 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 - 고유 자기 container390개 및 hook3project의 container/network/volume 부재·cleanup/quarantine0 장부를 확인했다. 첫 cleanup optional-key 오류는 Docker 조작 전 실패로 보존한다. 원시·독립 보고·장부·외부 실행 JSON/로그는 원 워크트리와 중앙 비공개 archive에 보존한다.
 
 필수 미해결/자체 operator_actions 없음·built이며 사용자 done은 아니다. 실제 OAuth/개인 문서/설치본 배포·릴리스 인수는 후속8.8 범위이고 합성 시험이나 미실행 성능을 해당 성공으로 확대하지 않는다. 19.1은 정상 경계에서 문서 검색/fixture 의존 영향과 새 고정 성능 입력을 구별한다.
+
+## 2026-11-16 — 운영 반영 뒤 남은 항목
+
+근거: [운영 대응표](operations-2026-11-10-16.md), 중앙 `~/github/second-brain/.brain-automation/operations/2026-11-12/SESSION-HANDOFF.md`, 같은 날짜 rollout5~9·backlog1 보고, `2026-11-16/rollout10-report.md`·flaky-tests-spec.md 및 2026-11-16 사용자 결정. 앞의 21.7 제품 차단·토큰·스킬·첫 리포트 대기 기록은 당시 이력이며 아래 현황으로 대체한다.
+
+| 구분 | 남은 내용 / 처분 |
+| --- | --- |
+| 운영 메모 아이디어 | 걷기·트레드밀 활동에 경사 태그를 메모하는 흐름. 미착수, 새 구현 승인 아님 |
+| 원인 미확정 일시 시험 실패 1 | packages/postgres/test/recall-performance-contract.test.ts의 가나 사례 전체 실행 120초 timeout, 단독 7/7 통과. 별도 독립 작업 진행 중, 원인 확정·수정 완료로 쓰지 않음 |
+| 원인 미확정 일시 시험 실패 2 | apps/cli/test/channels-retry.test.ts의 500 응답 사례에서 http_5xx 대신 CHANNEL_CONFIG_INVALID, 단독 26/26 통과. 같은 별도 작업 소유 |
+| 원인 미확정 일시 시험 실패 3 | apps/cli/python-test/garmin-report.test.ts의 daemon SIGKILL after 7d commit 사례 첫 all 모델 호출 대기 timeout. 재실행·전체 Python 회귀 통과, 원인 미확정. 같은 별도 작업 소유 |
+| 이관 전용 설정 잔존값 | garmin.capture_manifest·garmin.legacy_conversation_id는 제거 후 공식 config 조회가 CONFIG_INVALID다. DB 잔존값 부재를 증명하지 않음. rollout10-retired-config-verdict.json 근거. 조사·정리는 별도 범위 결정 시 수행하며 현재 경고 때문에 필요한 조치라는 근거는 없음 |
+| 13.10 수락 증거 | 실제 Claude testext 설치·시험 로그인 재개·연결·예약과 세션 원본 미확보. blocked 유지. 최신 marketplace/일반 스킬 발견은 해소 |
+| 21.7 과거 수락조건 | 지원 설치·전환·실수집·새 분석·발신은 확인. 과거 반입 snapshot 전수 일치는 실패 이력이며 조건 폐기/대체 인수 판단이 남아 blocked 유지. verifier 수정·16표본 조회 보존은 하지 않음 |
+| 보류 아이디어 1 | 성향·선호 기억과 시작 맥락 주입 |
+| 보류 아이디어 2 | 메신저에서 에이전트와 대화(OpenClaw claude-cli 연동 검토 포함) |
+| 보류 아이디어 3 | 기간별 분석 에이전트 override |
+| 보류 아이디어 4 | Codex 대화 수집 adapter |
+
+체중 백필 26항목은 rollout6에서 잔여0/errors0으로 해소됐다. 정기 backlog의 별도 1항목은 backlog1 조사 당시 stale 재확인 대상으로 귀속됐다. 이후 ops-cleanup-report.md의 공식 doctor 이력 대조에서 rollout7부터 집계0이며 11-16 현재도0임을 확인했다. 정확 해소 실행·시각은 확정하지 않는다. 프로필 값 입력은 profile-input-report.md에서 완료됐고 개인 값은 이 문서에 복사하지 않는다. 사용자 2026-11-16 확인에 따라 일일 정상 수신·봇 토큰 재발급·새 세션 스킬 발견은 대기 목록에서 해소한다. import-verify 계약 수정과 과거 Body Battery 16표본 조회 보존 제안은 이관 기능 제거 결정으로 폐기한다. dropped 티켓은 재개하지 않는다.
+
+### 최신 운영 정리 결과 — 2026-11-16 12:45~12:46 KST
+
+근거: `~/github/second-brain/.brain-automation/operations/2026-11-16/ops-cleanup-report.md`, `ops-cleanup-doctor-final.json`, `ops-cleanup-backlog-history.json`, `ops-cleanup-dry-result.json`. 리뷰 F1을 반영했다.
+
+| 구분 | 현재 관측과 남은 결정 |
+| --- | --- |
+| 과거 정기 backlog 1건 | 11-12 14:21:38 이후~16:48:28까지 집계에서 사라짐. 11-16 현재 endpoint/활동/날짜0. 정확 원인 실행·해소 시각은 미확정이며 미해소 항목으로 재조사하지 않음 |
+| 새 백필 재확인 계획 | 기간·endpoint 제한 없는 공식 dry_run=true 1회 succeeded. 11-12~11-16 각 날짜 activities_by_date·training_readiness, 합계10항목/5일, unplannable0. 정기 backlog0과 별개이며 실제 수신 결과가 아님. 실제 백필 필요 여부를 별도 결정 |
+| 과거 실패2행 | 제거된 import_preflight/import_verify의 과거 실패 이력, 현재 설치 실패 아님. 공식 acknowledge/resolve 없음. 유지 또는 향후 삭제 없는 확인 처리 기능을 별도 결정. 제거된 job retry·SQL 삭제 금지 |
+| 과거 미경로1건 | 결과 보관 이벤트가 아니라 옛 garmin.report topic 요청(unrouted/unhanded). 공식 send-pending은 실제 발신이므로 과거 보고서를 지금 보낼지 별도 결정. 이번 작업에서 발신·route 변경하지 않음 |
+| 최신 Claude hook 관측 | 현재 plugin/ref 자체는 정상이나 last-hook은 옛 rollout9 root의 PLUGIN_DUPLICATE. 최신 plugin을 읽는 새 Claude 세션의 정상 hook 관측과 doctor 재확인이 필요하며 경고 소멸은 아직 미검증. 사용자 일반 스킬 발견 정상 확인과 구분. 관측 파일 편집·hook 수동 호출은 하지 않음 |
+
+최신 doctor exit0, passed27/warned3/failed0이며 위 경고는 보존됐다. 진단 완료를 경고 해소로 기록하지 않는다. 이 표는 새 제품 개발·백필·발신·세션 실행 승인이 아니다.

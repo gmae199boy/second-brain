@@ -138,3 +138,9 @@ AD-30의 자기 출처 INSERT/RLS, core 단독 요청 인계, 생산자 바이�
 보드는 `UV_CACHE_DIR=/tmp/epic14-revalidate-uv UV_OFFLINE=1 uv run ~/.agents/skills/bmad-agent-po/scripts/tickets.py --project-root "$(git rev-parse --show-toplevel)" status _bmad-output/personal-brain`으로 읽었다. exit 0, `unpinned_after=[]`, `undeclared_after=[]`, `order_conflict=[]`이며 cycle·drift 오류는 없었다. epic 14는 refined=true, gated_by=[], next_id=9이고 8개 entry 모두 planned·file=null이다. 기존 after와 covers는 유지됐으며, F5의 순서 예외와 F2의 향후 교차 after 고정은 현재 보드와 충돌하지 않는다.
 
 이 절만 보고서 끝에 추가했다. 테스트·빌드·Docker·네트워크·설치·커밋 및 private capture 열람은 하지 않았다. 기존 본문 보존과 보고서의 절대 홈 경로 부재를 확인했다. 이 작업의 저장소 쓰기는 보고서 하나뿐이다. 작성 전후 파일 내용 비교에서는 다른 워커 소유의 분석·조회 코드 조사 보고서 두 개가 병행 변경됐으며, 이 작업이 검토한 에픽·세트·spine 및 나머지 기존 파일은 그대로였다. 다른 워커 보고서는 수정하지 않았다.
+
+## 2026-11-16 이관 기능 종료 결정
+
+사용자 결정으로 main `b6c67603`에서 import-preflight·import·import-verify와 이관 도구를 제거했다. release `7142875c`의 운영 반영 근거는 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`다. 기존 migration·이미 반입한 원형 보존층과 Garmin 데이터는 유지됐고 48표의 행 수·지문이 같았다. 이전 이관 절차는 이력이며 현재 실행 지침이 아니다.
+
+`2026-11-11/verify-diagnosis-report.md`의 verifier 계약 수정 및 과거 Body Battery 16표본 조회 보존 제안은 하지 않기로 했다. 제거 결정은 그 진단의 과거 실패를 통과로 바꾸지 않는다. dropped 티켓은 유지한다. 이관 전용 설정 잔존값은 공식 조회 미지원으로 미확인이며 별도 후속 모음에 남긴다. 운영 반영과 상태별 근거는 `_bmad-output/personal-brain/automation/operations-2026-11-10-16.md`에 있다.

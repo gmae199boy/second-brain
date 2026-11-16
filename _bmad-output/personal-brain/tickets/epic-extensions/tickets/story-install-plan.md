@@ -140,3 +140,9 @@ Orca 정리와 인계:
 - `run_7131ba85a128`의 구현·행동 평가·Quick 리뷰 워커 3개는 정식 succeeded 보고를 수락하고 모두 release했다. 전체 fleet에서 completed/released를 확인했으며 pending mail·reclaimable·미확인 워커·미확인 요청은 없다. 별도 취소나 강제 종료는 하지 않았다.
 - 행동 평가 산출물은 `/tmp/brain137-behavior-artifacts.tar.gz`에 보존하고 실행용 `/tmp/brain137-live` 디렉터리를 정리했다. 이후 원본을 보려면 이 archive를 풀어 확인한다. 최종 판정 요약·hash 목록·구현/행동/리뷰 전문과 시험 로그는 위 임시 경로에 보존했다.
 - 체크포인트는 현재 task의 `orca-coordination.json`에 보존한다. 최종 커밋·clean 검증을 기록한 뒤 워커·mail이 없는 전용 제어 셸만 닫는다. 티켓 done은 변경하지 않는다.
+
+## 2026-11-16 후속 운영 반영 기록
+
+13.7 done 유지. 공개 CLI 커버리지 및 brain-* 접두사는 8240ebf1·39f37cfc로 확장됐다. 실제 설치본 링크·hash는 rollout2/rollout10에서 검증됐고, 사용자 새 세션 발견 정상 확인과 13.10 Claude testext 시나리오 검증을 구분한다.
+
+커밋·운영 증거와 새 티켓을 만들지 않은 판단은 [운영 대응표](../../../automation/operations-2026-11-10-16.md)에 있다. 이번 문서 작업에서 시험을 재실행하지 않았다.

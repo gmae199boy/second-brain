@@ -183,3 +183,13 @@ deferred: []
 - 운영조치:21.7운영자가확인된profile+self/connection과전용tokenstore의동일계정을확인해보호된0700디렉터리에0600 `brain-account-binding.json`을준비한다(README의필드/지문). 확인서는Garmin서명이아닌로컬운영자명시증거이며동일OS사용자의보호디렉터리/session락·라이브러리token저장동작을신뢰한다. 지금운영계정/토큰에는접근하지않았다. 임의token수동교체/불명장부는보존·거부하고운영자원인을확인한다.
 - 잔여위험: 실제DB DDL/권한, native값/NULL/배열/시간대동등성, 취소·프로세스그룹/동시성·시험timeout·토큰게시fsync의실행결과는21.8에서만확정된다. 원본fetched millisecond변경추적한계는그대로다. 다중사용자전체권한격리완성은주장하지않는다. 추가권고/별도기능보류는없다.
 - 금지경계: 운영설치/DB/실계정/API/건강자료/모델/Telegram/예약·원본checkout변경없음. 중앙state/공용follow-ups/main병합·push/에픽전이없음. app-ref변경없음. 티켓브랜치commit/push·원격SHA확인과실제최종보고파일작성확인후중앙Run으로보고한다.
+
+## 2026-11-16 후속 운영 반영 기록
+
+21.3 built 유지. 051bb561의 누락 백필·backlog, 11c1e4c4·4b7bcc07의 기간 체중 해석·오류 진단 수정이 rollout5/6으로 운영 반영됐다. rollout6의 대상 잔여0/errors0과 정기 backlog 전체 집계는 다르다. backlog1은 stale 재확인 1항목의 귀속을 설명했으며 당시 최종 해소 증거는 아니다.
+
+커밋·운영 증거와 새 티켓을 만들지 않은 판단은 [운영 대응표](../../../automation/operations-2026-11-10-16.md)에 있다. 이번 문서 작업에서 시험을 재실행하지 않았다.
+
+### 최신 정기 backlog 관측 — 독립 리뷰 F1 반영
+
+`~/github/second-brain/.brain-automation/operations/2026-11-16/ops-cleanup-report.md`는 정기 backlog endpoint/활동/날짜 모두0을 확인했다. 11-12의 별도1건은 후속 rollout7 doctor부터 집계에서 사라졌으며 정확 원인 실행·해소 시각은 미확정이다. 새 공식 dry-run의 백필 재확인10항목/5일은 별도 기준이며 실제 백필 완료/실패 결과가 아니다. 실제 백필 필요 여부는 후속 운영 결정으로 남기고 이번 작업에서 실행하지 않는다.

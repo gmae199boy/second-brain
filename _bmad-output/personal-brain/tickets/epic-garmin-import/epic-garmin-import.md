@@ -151,3 +151,9 @@ Garmin 확장 뼈대와 스키마를 PostgreSQL에 만들고 기존 Garmin 데�
 - Decision(2026-11-01, 추천으로 정함, 14.5 escalation 해소): 리뷰 반복 상한은 세션 정지로 취급한다. 보존 구현에서 inventory namespace와 가림 삭제 후 claim 만료를 각각 회귀·교정·checkpoint하고 전체 검증과 독립 리뷰를 다시 수행한다. 수락 계약은 유지한다.
 - Decision(2026-11-05, 사용자, Garmin 확장 재설계): 옛 데이터는 core 건강 표·`analyses`가 아니라 원본 SQLite 표를 같은 모양 `garmin` 표로 복사해 반입한다(AD-36). 이 에픽의 capture·읽기 전용 reader·hash·checkpoint·preserved_rows는 21.2가 재사용하고, core 쓰기 경로는 20.6이 지운다.
 - Dropped(2026-11-05): 14.8 — 실제 반입은 21.7(예비·확정 반입, 계정 확인 gate 유지)이 한다. blocked 원인(계정 미확인 후보)은 21.7의 gate로 넘어간다.
+
+## 2026-11-16 이관 기능 종료 결정
+
+사용자 결정으로 main `b6c67603`에서 import-preflight·import·import-verify와 이관 도구를 제거했다. release `7142875c`의 운영 반영 근거는 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`다. 기존 migration·이미 반입한 원형 보존층과 Garmin 데이터는 유지됐고 48표의 행 수·지문이 같았다. 이전 이관 절차는 이력이며 현재 실행 지침이 아니다.
+
+`2026-11-11/verify-diagnosis-report.md`의 verifier 계약 수정 및 과거 Body Battery 16표본 조회 보존 제안은 하지 않기로 했다. 제거 결정은 그 진단의 과거 실패를 통과로 바꾸지 않는다. dropped 티켓은 유지한다. 이관 전용 설정 잔존값은 공식 조회 미지원으로 미확인이며 별도 후속 모음에 남긴다. 운영 반영과 상태별 근거는 `_bmad-output/personal-brain/automation/operations-2026-11-10-16.md`에 있다.

@@ -213,3 +213,7 @@ deferred: []
 - **시험 실행은21.8로 이관, 미실행.** 직접시험·fixture생성/checker·합성반입·test:changed·전체시험을실행하지않았다. 기능시험통과나실제PG/동시성성공으로표현하지않는다.21.8은README의전용DB/소유자원/합성fixture에서새·기존시험포함 `pnpm test` 다음 `pnpm test:python`을순차실행하고실패원인별최소수정·관련재검증증거를남긴다.
 - 잔여위험: 실제DB DDL/권한·패키지wheel설치·시험시간/동시성·고정oracle동등성의실행결과는21.8에서만확정된다. 미실행/미해결실패가있으면21.8 built/21.7 시작금지다. 다중사용자권한격리완성은주장하지않는다.
 - 운영설치/운영DB/실계정/실건강자료/모델/예약·원본checkout을변경하지않았다. main병합/push·에픽전이·중앙state수정은하지않는다. 티켓브랜치commit/push·원격SHA확인뒤실제최종보고파일을작성·확인하여중앙Run으로전달한다.
+
+## 2026-11-16 이관 공개 경로 제거 — built 이력 유지
+
+이 티켓의 반입 구현은 당시 완료 이력으로 유지한다. 사용자 결정으로 `b6c67603`에서 import-preflight·import·import-verify와 도구를 제거했고 release `7142875c`/rollout10으로 운영 반영했다. 기존 migration·이미 반입된 원형 데이터는 유지됐다. 옛 반입 명령 재실행·verifier 계약 수정·과거 Body Battery 16표본 조회 보존은 하지 않는다. 근거는 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`와 운영 대응표다.

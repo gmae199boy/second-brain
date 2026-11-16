@@ -205,3 +205,9 @@ KEEP: native원형/revision불변·oracle독립성,보호tokenstore/binding·att
 - 배포: 구현commit뒤플러그인ref는그이전구현commit을가리키도록별도releasecommit에서올리고같은commit에plugin version/package.plugin_version/digest를동기화한다. 정상hook의티켓branchcommit/push·원격SHA일치증거는로컬최종보고에기록한다. main병합/push·에픽전이·중앙state변경은하지않는다. worktree/로컬branch/세션과로컬증거를보존한다.
 
 - 릴리스 반영: 구현 commit `ca8b1742b2122fde46a76e390040a5952cc1eea1`를 이전커밋ref로선택하고Garmin plugin version을0.1.0→0.1.1로올린다. 같은releasecommit에package.plugin_version/digest를재생성하며source/SQL바이트는변경하지않는다. 최종branch/remoteSHA는실제최종보고파일에서확인한다.
+
+## 2026-11-16 후속 운영 반영 기록
+
+21.5 built 유지. 15.8 결과 이벤트/core 구독, 저장 결과·기간 분석·강제 재발신, 그래프·전체 문서·형식3, brain-garmin-* 스킬을 운영 반영했다. 직접 발송 요청 설명은 초기 이력이며 b30908bc 이후 결과 이벤트 계약을 따른다. rollout10 기준 수집08:00·분석08:10·일일 발신08:30, Asia/Seoul이다.
+
+커밋·운영 증거와 새 티켓을 만들지 않은 판단은 [운영 대응표](../../../automation/operations-2026-11-10-16.md)에 있다. 이번 문서 작업에서 시험을 재실행하지 않았다.

@@ -16,12 +16,9 @@ followup_review_recommended: true
 context: []
 warnings: [oversized]
 deferred: []
-operator_actions:
-  - "tooling/mac-install/operator-actions.md에 따라 실제 Claude 세션의 install 스킬 발견·설치·시험 로그인 재개와 최종 상태를 검증하세요."
-  - "같은 절차에 따라 실제 Claude 세션 원본과 단계별 증거를 보존하고 격리 자원을 정리하세요."
-  - "검토된 릴리스 커밋을 원격에 push한 뒤 marketplace를 갱신하여 플러그인 0.1.12와 install 스킬 발견을 확인하세요."
-blocked_at: "2026-10-31"
-blocked_reason: "awaiting operator: tooling/mac-install/operator-actions.md에 따라 실제 Claude 세션의 install 스킬 발견·설치·시험 로그인 재개와 최종 상태를 검증하세요.; 같은 절차에 따라 실제 Claude 세션 원본과 단계별 증거를 보존하고 격리 자원을 정리하세요.; 검토된 릴리스 커밋을 원격에 push한 뒤 marketplace를 갱신하여 플러그인 0.1.12와 install 스킬 발견을 확인하세요."
+operator_actions: ["격리 Claude 세션의 brain-install 실제 호출·testext 로그인 재개·연결·예약 결과 및 세션 원본을 확보한다. 기존 tooling/mac-install/operator-actions.md의 소유 자원 정리 절차를 따른다."]
+blocked_at: "2026-11-16"
+blocked_reason: "실제 새 Claude 세션의 brain-install 발견→testext 시험 로그인 재개→연결·예약 완료와 세션 원본 증거가 없음. 직접 CLI·운영 Garmin 설치 성공은 이 조건의 대체 증거가 아님."
 ---
 
 <intent-contract>
@@ -156,3 +153,18 @@ Orca 정리:
 
 - 자기 Run `run_d4e126153e71`의 조사·구현·Quick 리뷰 Task 3개는 정식 succeeded 보고와 전문을 수락하고 모두 release했다. fleet에서 completed/released 3개를 확인했고 활성·reclaimable 워커와 미확인 요청은 없다. 마지막 ack는 count 0이며 pending mail도 없다.
 - 과거 transcript source 변경 관측은 실제 completed/released 증거로 해소했다. 강제 종료·중복 워커·별도 취소는 하지 않았다. 자기 task의 orca-coordination.json에 보고·검증·판단과 최종 커밋을 checkpoint한다. 모든 워커·mail 정리와 최종 checkpoint 뒤 전용 제어 셸만 마지막으로 닫는다.
+
+## 2026-11-16 운영 증거 재대조 — blocked 유지
+
+판정은 원래 인수 조건 6개를 순서대로 대조했다. 중앙 근거 루트는 `~/github/second-brain/.brain-automation/operations/`다. 이번 작업은 문서만 수정했으며 실제 세션·설치·DB·시험을 실행하지 않았다.
+
+| 인수 조건 | 판정과 증거 |
+| --- | --- |
+| 출처·버전·스킬 발견을 분리 기록 | 충족. 기존 Implementation Notes와 `2026-11-16/rollout10-report.md`, `rollout10-plugins-verified.json`, `rollout10-skills-verified.json`: core 0.1.34/Garmin 0.1.21, 고정 staging과 app-ref 일치. 사용자 2026-11-16 새 세션 스킬 발견 정상 확인. |
+| 새 claude -p에서 testext 설치·시험 로그인 재개·연결·예약과 원본 기록 | **미충족**. 2026-10-31 직접 CLI 증거는 있지만 실제 Claude 실행은 당시 승인 심사에서 거부됐다. 새 세션의 일반 스킬 발견 확인은 이 전체 시나리오 실행을 뜻하지 않는다. |
+| 반복 설치·disable/enable 시 auth·DDL·예약·파일 보존 | 기존 격리 직접 CLI 검증으로 충족. 이 계획의 ‘리뷰 수정 후 지휘자 검증’과 `/tmp/brain1310-post-review-evidence/` 기록. 이번에 해당 임시 증거의 현존 여부를 재확인한 것은 아니다. |
+| Python/uv 차단·빈 확장 doctor | 기존 동일 절의 spy·extensions 부재 assertion으로 충족. 운영 Garmin의 doctor를 빈 확장 검증으로 대체하지 않는다. |
+| bootstrap 갱신 후 testext 보존 | 기존 동일 절의 전체 트리·DB·예약 snapshot 동등성으로 충족. rollout10의 Garmin enabled/connected 보존은 추가 운영 근거다. |
+| 소유 격리 자원 정리·재실행 절차 | 기존 동일 절의 소유 자원 부재 확인 및 tooling/mac-install 문서로 충족. 새 Claude 시나리오 실행 시 그 실행의 원본 보존·소유 자원 정리 증거가 추가로 필요하다. |
+
+원격 push/marketplace 구버전 0.1.12 확인 요청은 이후 main 릴리스와 rollout10으로 대체되어 차단 목록에서 제거했다. 남은 조건은 실제 Claude 시나리오와 그 증거뿐이다. 상태는 blocked이며 done으로 바꾸지 않는다. 과거 Auto Run Result는 당시 이력이다.

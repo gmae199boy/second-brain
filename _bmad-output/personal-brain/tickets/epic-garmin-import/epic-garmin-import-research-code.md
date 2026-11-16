@@ -307,3 +307,9 @@ notification은 먼저 기록 후 전송하는 gate이고 전달 성공과 다�
 순서안 A는 T1→T2→T3→T4→T5→T6→T7이다. 규약의 최소 경로를 일찍 관통하고 뒤에서 전수화한다. 순서안 B는 T2→T1→T3→T4→T5→T6→T7이며, 원본 schema 해석을 먼저 고정해 tracer mapping을 덜 바꾸는 장점이 있다. T1이 한 세션을 넘으면 패키지/설치·최소 DDL 준비를 별도 선행 후보로 나누되 마지막 수직 경로에서만 tracer 성공을 선언한다. T4·T5를 병렬화하려면 core 인계/analysis 관계·migration 번호 소유를 먼저 나눠야 하므로 기본은 한 레인 후보가 타당하다. 실제 교차 after는 11의 최종 코드 기반, 12.1/12.3/12.4, 13.2/13.3/13.4 및 최종 코드 조립, 15.3을 받는 스토리에 선언한다. 앞 에픽의 이 Mac 확인·사람 닫기를 전체 gate로 다시 만들지 않는다.
 
 자체 확인: 보고서만 대상으로 절대 홈 경로·긴 해시 패턴·개인 일자 패턴을 검색하고, 수치/문자열을 집계 출력·정적 코드 근거와 대조하여 측정값·본문·개인 파일명·계정 식별자·해시 값이 포함되지 않았음을 확인했다.
+
+## 2026-11-16 이관 기능 종료 결정
+
+사용자 결정으로 main `b6c67603`에서 import-preflight·import·import-verify와 이관 도구를 제거했다. release `7142875c`의 운영 반영 근거는 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`다. 기존 migration·이미 반입한 원형 보존층과 Garmin 데이터는 유지됐고 48표의 행 수·지문이 같았다. 이전 이관 절차는 이력이며 현재 실행 지침이 아니다.
+
+`2026-11-11/verify-diagnosis-report.md`의 verifier 계약 수정 및 과거 Body Battery 16표본 조회 보존 제안은 하지 않기로 했다. 제거 결정은 그 진단의 과거 실패를 통과로 바꾸지 않는다. dropped 티켓은 유지한다. 이관 전용 설정 잔존값은 공식 조회 미지원으로 미확인이며 별도 후속 모음에 남긴다. 운영 반영과 상태별 근거는 `_bmad-output/personal-brain/automation/operations-2026-11-10-16.md`에 있다.

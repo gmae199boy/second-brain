@@ -219,3 +219,9 @@ body intake의 최종 status/detail은 측정JSON이 아니다. 원본 skill→�
 21.8은README의전용소유PG/role/compose·격리home·합성자료에서새·기존시험전체 `pnpm test` → `pnpm test:python`을순차실행하고실패별수정/관련재검증을수행한다. 기준SHA·환경/소유자원·명령·종료코드·로그·실패처분/재검증증거를남긴다. 실제감독kill/restart·attemptretry/fence·IPC/파일중단·TERM무시후손·계정입력/digest·고정SQLite동등성을포함한다. 미실행또는미해결실패가있으면21.8built/21.7시작금지다. 설치본의모델실행경로와workspace sandbox에서body파일요청의허용도실모델호출없이소유시험환경에서확인한다.
 
 운영조치:21.5가결과파일등록·발송/cron/플러그인연결을맡고21.7이운영계정/credential확인·전환을맡는다. 이번작업은운영설치/운영DB/실계정/실모델/예약을변경하지않았고main병합/push·중앙state·공용follow-ups도변경하지않았다. 티켓브랜치commit/push와원격SHA증거는최종로컬보고에남기며main병합·에픽전이는중앙소관이다.
+
+## 2026-11-16 후속 운영 반영 기록
+
+21.4 built 유지. 11-10 이후 실행 경로 탐지·수집 대기 제거, 운동 분석 v2·측정 snapshot·분석 프로필·공통 agent 선택, 두 scope 동시성·진단·취소와 저장 fence가 반영됐다. 원래 직렬 순서 설명은 초기 이력이며 804f8a67 이후 동시 실행 계약으로 바뀌었다. rollout7~9에서 새 네 기간 분석 succeeded를 확인했다. Claude adapter 실호출 검증은 없으며 프로필 개인 값은 공개하지 않는다.
+
+커밋·운영 증거와 새 티켓을 만들지 않은 판단은 [운영 대응표](../../../automation/operations-2026-11-10-16.md)에 있다. 이번 문서 작업에서 시험을 재실행하지 않았다.

@@ -85,3 +85,13 @@ core 범위 구현·독립 리뷰·수정 후 관련 검증을 완료했다. 일
 
 ## 중앙 통합 후속
 Garmin 브랜치와 통합한 뒤 role_probe·새 이벤트 방출·실제 구독 발신을 포함하는 전체 회귀를 실행해야 한다. 이 계획의 built는 core 과업 범위이며 15.8 전체 통합 인수 완료가 아니다. 운영·실발신·main·plugin/app-ref·version은 변경하지 않았다. 상세 증거와 브랜치 push SHA는 `.brain-automation/route-delivery-time-report.md`에 보존한다.
+
+## 2026-11-16 운영 근거 갱신 — 15.8 built 유지
+
+구현 main 커밋 `306d9472`(core)·`b30908bc`(Garmin), 통합 `dd03ec77`, 배포 `06016e0f`. `~/github/second-brain/.brain-automation/operations/2026-11-11/rollout4-report.md`에서 결과 이벤트·core 구독 배포와 무인 갱신, 일일 08:20·기간 immediate 정책을 확인했다. 이후 `2026-11-12/rollout7-report.md`~`rollout9-report.md`에서 실제 새 분석 이벤트→personal/reports sent를 확인했다. rollout8 추가 지시로 일일 발송은 08:30 Asia/Seoul로 바뀌었고 `2026-11-16/rollout10-report.md`에서 보존됐다. 2026-11-16 사용자는 매일 정상 수신을 확인했다.
+
+이 계획의 기존 단위·PG/CLI 통합 시험 결과와 운영 관측을 구분한다. 이번 문서 작업은 시험을 다시 실행하지 않았다. 미구독·과거 이벤트·중복·지정 시각의 구현 분기와 기존 단위·PG/CLI 관련 검증 기록을 유지하며, 실제 sent 한 사례가 모든 분기를 증명한다고 쓰지 않는다. 상태 built 유지, done 미사용. 전체 운영 변경 대응표는 [운영 반영 기록](../../../automation/operations-2026-11-10-16.md)에 있다.
+
+### 독립 리뷰 F2 반영 — 통합 검증 한계
+
+위 ‘중앙 통합 후속’의 Python 교차 실패(role_probe·새 emit 권한) 및 통합 전체 회귀의 최종 처분은 이번 감사 자료에서 재확인하지 않았다. Verification 절의 실행 방침 자체를 결과 증거로 사용하지 않는다. main 통합 dd03ec77과 rollout4/rollout7~9의 배포·실제 발송은 운영 근거이며 이 과거 실패의 해결 증거를 대신하지 않는다. 상태 built는 core 범위와 기존 관련 검증 근거로 유지하고, 15.8 전체 통합 인수나 전체 Python 회귀 통과로 확대하지 않는다. 이번 문서 작업에서 시험 재실행은 하지 않았다.

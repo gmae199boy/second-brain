@@ -76,3 +76,9 @@ Garmin 사용자가 Brain의 공통 예약으로 수집·day→7d→30d→all �
 - Decision(2026-11-06, 중앙 무인 구현):21.7 재진단의 옛 manifest 차단을 별도21.10으로 분리한다.21.9→21.10→21.7 순서이며21.10은 옛 패키지의 실행 금지와 검증된 새 패키지 교체까지 지원하고 실제 운영/계정 gate는21.7이 유지한다. 기존 sweep 완료 이력은 바꾸지 않는다.
 
 - Decision(2026-11-06, 중앙):21.10 뒤21.7 재진단에서 detached plugin app의 새 ref 준비와 TTY offline 확인을 연결하는 지원 bootstrap 진입점이 없음을 확인했다. 별도21.11을21.10 뒤21.7 앞에 두고 합성 detached app의 bootstrap부터 PTY까지 안전/보존·hook 무질문·중단복구를 검증한다. 실제 운영자 확인·운영 전환은21.7만 수행한다.
+
+## 2026-11-16 이관 기능 종료 결정
+
+사용자 결정으로 main `b6c67603`에서 import-preflight·import·import-verify와 이관 도구를 제거했다. release `7142875c`의 운영 반영 근거는 `~/github/second-brain/.brain-automation/operations/2026-11-16/rollout10-report.md`다. 기존 migration·이미 반입한 원형 보존층과 Garmin 데이터는 유지됐고 48표의 행 수·지문이 같았다. 이전 이관 절차는 이력이며 현재 실행 지침이 아니다.
+
+`2026-11-11/verify-diagnosis-report.md`의 verifier 계약 수정 및 과거 Body Battery 16표본 조회 보존 제안은 하지 않기로 했다. 제거 결정은 그 진단의 과거 실패를 통과로 바꾸지 않는다. dropped 티켓은 유지한다. 이관 전용 설정 잔존값은 공식 조회 미지원으로 미확인이며 별도 후속 모음에 남긴다. 운영 반영과 상태별 근거는 `_bmad-output/personal-brain/automation/operations-2026-11-10-16.md`에 있다.
