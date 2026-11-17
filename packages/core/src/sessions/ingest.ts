@@ -290,6 +290,16 @@ export async function ingestSession(
     transcriptPath = located.path;
   }
 
+  // Validating parsers need the exact bytes before any possible spool or store
+  // write. Reuse this read for parsing; non-validating parsers keep their order.
+  const validatedRead = parser.validateSessionId ? await transcripts.read(transcriptPath) : null;
+  if (validatedRead !== null) {
+    if (!validatedRead.ok) return validatedRead;
+    if (!parser.validateSessionId!(validatedRead.content, key.harnessSessionId)) {
+      return { ok: false, code: 'TRANSCRIPT_UNREADABLE', message: '트랜스크립트의 세션 id가 요청과 일치하지 않습니다' };
+    }
+  }
+
   // The stored cursor, before the file is read: it is what lets the parse start
   // where the last one stopped (AD-4). A session nobody has ingested yet comes
   // back as `null`, which is a value and not a failure.
@@ -299,7 +309,7 @@ export async function ingestSession(
   const stored = found.session;
 
   const scannedAt = clock.now();
-  const read = await transcripts.read(transcriptPath);
+  const read = validatedRead ?? await transcripts.read(transcriptPath);
   if (!read.ok) return read;
 
   // A cursor is only worth anything to the parser that made it. A session read

@@ -92,6 +92,19 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/codex:
+    dependencies:
+      '@second-brain/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/core:
     devDependencies:
       typescript:
@@ -138,6 +151,9 @@ importers:
       '@second-brain/claude-code':
         specifier: workspace:*
         version: link:../claude-code
+      '@second-brain/codex':
+        specifier: workspace:*
+        version: link:../codex
       '@second-brain/core':
         specifier: workspace:*
         version: link:../core

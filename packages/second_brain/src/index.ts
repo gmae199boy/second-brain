@@ -2,3 +2,4 @@
 export * from '@second-brain/core';
 export * from '@second-brain/claude-code';
 export * from '@second-brain/modelstudio';
+export * from '@second-brain/codex';

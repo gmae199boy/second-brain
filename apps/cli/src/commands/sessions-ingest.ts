@@ -4,6 +4,8 @@ import {
   type IngestSessionInput,
   type IngestSessionResult,
   type WarningCode,
+  type Parser,
+  type TranscriptReader,
 } from 'second_brain';
 import type {
   CommandContextBase,
@@ -12,7 +14,7 @@ import type {
   DatabaseCommandSpec,
   SpoolCommandContext,
 } from '../dispatch.js';
-import type { Harness } from '../harnesses.js';
+import { readCodexExplicitInput, type Harness } from '../harnesses.js';
 
 /**
  * `brain sessions ingest <harness>`: read the transcript of the session a
@@ -69,9 +71,12 @@ export interface SessionsIngestData {
 
 export function sessionsIngestCommand(
   registry: readonly Harness[],
+  explicitParsers: readonly Parser[] = [],
+  transcripts?: TranscriptReader,
 ): DatabaseCommandSpec<SessionsIngestData> {
+  const inputs = [...registry, ...explicitParsers.map(parser => ({ parser, readHookInput: readCodexExplicitInput }))];
   const run = async (context: CommandContext) => {
-      const payload = await readPayload(registry, context);
+      const payload = await readPayload(inputs, context);
       if (!payload.ok) return payload;
 
       const result = await context.brain.sessions.ingest(payload.input);
@@ -89,9 +94,9 @@ export function sessionsIngestCommand(
     // `stdin` is in here with the argument because the payload is an input a
     // caller has to supply, and the only place it can be supplied is there.
     required: ['harness', 'stdin'],
-    examples: ['brain sessions ingest claude-code'],
+    examples: ['brain sessions ingest claude-code', 'brain sessions ingest codex'],
     output:
-      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`), 파서가 메시지로 두지 않은 줄 수를 이유별로 담은 `droppedLines`(spool로 갔으면 `null`). 트랜스크립트는 대부분 대화가 아니므로 `droppedLines`는 정상입니다. 읽을 수 없던 줄인 `droppedLines.unreadable`만 `TRANSCRIPT_LINES_SKIPPED` 경고를 함께 냅니다. 본문과 도구 메모 대상은 원문 그대로 저장하고, 비밀은 나갈 때 가립니다. 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
+      '세션 토큰 `session`, 데이터베이스 대신 spool로 갔는지인 `spooled`, 그 세션을 이 호출이 만들었는지인 `created`, 넣은 건수 `inserted`(메시지 `messages`, 도구 메모 `toolNotes`), 파서가 메시지로 두지 않은 줄 수를 이유별로 담은 `droppedLines`(spool로 갔으면 `null`). 트랜스크립트는 대부분 대화가 아니므로 `droppedLines`는 정상입니다. 읽을 수 없던 줄인 `droppedLines.unreadable`만 `TRANSCRIPT_LINES_SKIPPED` 경고를 함께 냅니다. 본문과 도구 메모 대상은 원문 그대로 저장하고, 비밀은 나갈 때 가립니다. Codex 명시 수집은 파일 고유 `id`와 `transcript_path`를 받습니다. 페이로드에 `transcript_path`가 없으면 그 하네스의 트랜스크립트 폴더에서 `session_id`로 찾습니다',
     risk: 'write',
     hook: true,
     dryRun: false,
@@ -101,8 +106,17 @@ export function sessionsIngestCommand(
     run,
 
     async spool(context: SpoolCommandContext) {
-      const payload = await readPayload(registry, context);
+      const payload = await readPayload(inputs, context);
       if (!payload.ok) return payload;
+
+      const parser = explicitParsers.find(candidate => payload.input.session.startsWith(`${candidate.harness}:`));
+      if (parser?.validateSessionId) {
+        if (!transcripts || !payload.input.transcriptPath) return { ok: false as const, code: 'TRANSCRIPT_UNREADABLE' as const, message: '트랜스크립트 경로가 필요합니다' };
+        const read = await transcripts.read(payload.input.transcriptPath);
+        if (!read.ok) return read;
+        const id = payload.input.session.slice(parser.harness.length + 1);
+        if (!parser.validateSessionId(read.content, id)) return { ok: false as const, code: 'TRANSCRIPT_UNREADABLE' as const, message: '트랜스크립트의 세션 id가 요청과 일치하지 않습니다' };
+      }
 
       // The same Core function the use case reaches when a lock stops it
       // mid-ingest, and the only thing this branch can do: there is no brain
@@ -157,7 +171,7 @@ function answer(result: Extract<IngestSessionResult, { ok: true }>): {
  * whether the database happens to be reachable.
  */
 async function readPayload(
-  registry: readonly Harness[],
+  registry: readonly Pick<Harness, 'parser' | 'readHookInput'>[],
   context: CommandContextBase,
 ): Promise<{ ok: true; input: IngestSessionInput } | CommandFailure> {
   const name = context.args[0] ?? '';
@@ -179,7 +193,7 @@ async function readPayload(
     return { ok: false, code: payload.code, message: payload.message, exit: 2 };
   }
 
-  await context.recordHookArrival(harness.parser.harness);
+  if (!harness.parser.validateSessionId) await context.recordHookArrival(harness.parser.harness);
 
   return {
     ok: true,
@@ -197,7 +211,7 @@ async function readPayload(
 }
 
 /** The names this build accepts, for the `USAGE` message. */
-function known(registry: readonly Harness[]): string {
+function known(registry: readonly Pick<Harness, 'parser'>[]): string {
   if (registry.length === 0) return '이 빌드는 어떤 하네스에서도 수집할 수 없습니다.';
   return `아는 하네스: ${registry.map((harness) => harness.parser.harness).join(', ')}.`;
 }
