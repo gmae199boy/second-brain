@@ -48,8 +48,10 @@ Codex로 일한 대화도 Claude Code 대화와 같은 기억이 되어, 어느 
 
 - Decision(2026-11-17, 사용자): epic-capture의 2026-10-15 결정 "당분간 Claude Code만(Codex 제외)", "다른 Harness의 세션은 범위 밖"을 이 에픽으로 바꾼다. Codex 수집을 새 에픽으로 두고, 끝난 epic-capture는 다시 열지 않는다.
 - Decision(2026-11-17, 사용자): 남은 에픽 중 이 에픽을 가장 먼저 개발한다. 빌드 순서에서 미완료 항목이 남은 첫 에픽(epic-extensions) 앞에 두어 `tickets.py next`의 첫 시작 후보가 이 에픽의 첫 항목이 되게 한다.
-- Decision(2026-11-17): 첫 항목은 spike(Codex 세션 기록 실측)다. 가장 불확실한 것이 Codex 쪽 사실(기록 형식·트리거)이라서다. tracer는 그다음 항목 2(fixture 세션 하나 → parser → 수집 → `sessions read`)다. 3(증분·스캔)과 4(꼬리표)는 2 뒤에 나란히 갈 수 있다. 3~6은 spike 결과로 다시 나눌 수 있는 초안이다.
+- Decision(2026-11-17): 첫 항목은 spike(Codex 세션 기록 실측)다. 가장 불확실한 것이 Codex 쪽 사실(기록 형식·트리거)이라서다. tracer는 그다음 항목 2(fixture 세션 하나 → parser → 수집 → `sessions read`)다. 3(증분·스캔)과 4(꼬리표)는 2 뒤에 나란히 갈 수 있다. 3~6의 상세 범위는 spike 결과에 따른 아래 결정으로 확정한다.
 - Decision(2026-11-17): 항목이 셋보다 많아 Refactor sweep(7)으로 닫는다. 닫는 e2e 스위트는 두지 않고, 6(이 Mac 실사용 확인)이 완료 조건을 실제 세션으로 확인한다.
 - Decision(2026-11-17, 사용자): 스토리는 leaf 파일로 쓰지 않고 이 에픽의 `tickets/tickets.toml` 항목으로만 계획한다. 파일은 항목을 시작할 때 만든다.
-- Unknown: Codex 세션 기록의 위치·형식·증분 읽기 가능 여부, 수집 트리거(hook·notify 지원 여부), cwd·브랜치·서브에이전트·도구 출력 표시 방식. 첫 항목(spike)이 실측해 이 에픽의 research 파일에 남기고, 나머지 항목은 그 결과를 기다린다.
+- Decision(2026-11-17, spike 23.1): [실측 연구](epic-codex-capture-research.md)를 근거로 기존 2~7 분할과 의존성을 유지한다. 2는 파일별 `payload.id`를 세션 키 후보로 검증하며 부모·자식의 별도 수집과 호출·출력 대응을 다룬다. 부모 관계 저장에 공통 계약 변경이 필요하면 별도 결정으로 다룬다.
+- Decision(2026-11-17, spike 23.1): 3은 활성·보관 양쪽 스캔, 이동·중복, 미완성 줄과 재작성 복구를 맡고 4는 최초 cwd 기준 정체성을 맡아 2 뒤에 병렬 가능하다. 5는 3 뒤 연결·진단과 기존 notify 공존, 6은 3·4·5 뒤 실제 기록 대조, 7은 기존 sweep 범위를 맡는다. 3의 스캔은 hook·notify 적용 여부와 관계없이 복구 경로다.
+- 실측 한계: 한 파일의 append와 이 기계의 표본에서 ID 관계를 확인했을 뿐 형식 안정성·항상 append를 보장하지 않는다. hooks는 로컬 기능 표시와 공식 문서로 지원을 확인했지만 실제 hook·notify 실행과 신뢰·설정 공존은 검증하지 않았다. 각 후속 항목은 이 한계를 fixture와 실제 환경 검증으로 다룬다.
 - Open question: initiative Requirements에 Codex 수집을 다루는 줄이 없어 `covers`가 비어 있다. 이 에픽을 정제할 때 initiative에 줄을 더할지(SPEC), 이 에픽 Requirements가 spec CAP-1을 직접 인용할지 정한다.
