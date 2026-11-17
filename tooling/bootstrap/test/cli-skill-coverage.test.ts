@@ -127,3 +127,10 @@ it('프로필 항목 수정은 공개 config patch와 설정 스킬에 함께 �
   for (const term of ['garmin.analysis_profile', 'goals.target_weight_kg', 'alcohol_units', 'unset', '재생성', 'DB_LOCKED']) expect(text).toContain(term);
   expect(uncovered(['config patch'], core.filter(path => !path.includes('/brain-config/')), [])).toEqual(['config patch']);
 });
+
+it('Codex 명시 파일 수집은 배포 세션 스킬에 입력과 범위를 설명한다', () => {
+  const text = body('plugin/skills/brain-sessions/SKILL.md');
+  expect(mentions(text, 'sessions ingest')).toBe(true);
+  expect(internal.some(entry => entry.command === 'sessions ingest')).toBe(false);
+  for (const term of ['`brain sessions ingest codex --json`', '`id`', '`transcript_path`', '`session_meta.payload.id`', '`session_id`', '명시적으로 요청', '폴더 스캔']) expect(text).toContain(term);
+});

@@ -30,7 +30,8 @@ import { filesRedactCommand } from './files-redact.js';
 import { messagesRedactCommand } from './messages-redact.js';
 import { connectors } from '../connectors/index.js';
 import type { CommandSpec } from '../dispatch.js';
-import { harnesses } from '../harnesses.js';
+import { explicitPathParsers, harnesses } from '../harnesses.js';
+import { fileTranscriptReader } from '../runtime/transcript.js';
 import { daemonStopCommand } from './daemon-stop.js';
 import { daemonStartCommand } from './daemon-start.js';
 import { daemonStatusCommand } from './daemon-status.js';
@@ -99,7 +100,7 @@ export const commands: readonly CommandSpec[] = [
   schedulesRemoveCommand,
   schedulesRunCommand,
   schedulesUpdateCommand,
-  sessionsIngestCommand(harnesses),
+  sessionsIngestCommand(harnesses, explicitPathParsers(), fileTranscriptReader()),
   setupRun,
   setupUninstallCommand,
   setupConnectCommand(connectors),

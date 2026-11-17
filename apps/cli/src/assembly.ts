@@ -22,7 +22,7 @@ import { resolveStoreUrl } from './config/codec.js';
 import type { ReadConfigResult } from './config/codec.js';
 import { spoolPath } from './config/paths.js';
 import { runtimeChecks } from './doctor/checks.js';
-import { harnessParsers, harnesses, transcriptFolders } from './harnesses.js';
+import { explicitPathParsers, harnessParsers, harnesses, transcriptFolders } from './harnesses.js';
 import { localFileStore } from './runtime/file-store.js';
 import { gitRepositoryInspector } from './runtime/git.js';
 import { fileSourceReader } from './runtime/source-file.js';
@@ -109,8 +109,8 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     schemaVersions: assembly.schemaVersions,
     clock,
     idGen,
-    // Parsers and connectors come from the same harness registry.
-    parsers: harnessParsers(harnesses),
+    // Explicit-path parsers do not imply an installed connector or watched folder.
+    parsers: [...harnessParsers(harnesses), ...explicitPathParsers()],
     transcripts: fileTranscriptReader(),
     // Every registered harness folder is scanned by default.
     transcriptFolders: transcriptFolders(env),

@@ -2,6 +2,7 @@ import {
   claudeCodeConnector,
   type Connector,
   claudeCodeParser,
+  codexParser,
   claudeCodeTranscriptFolder,
   claudeCodeProjectsFolder,
   readClaudeCodeHookInput,
@@ -43,6 +44,11 @@ export function harnessParsers(registry: readonly Harness[] = harnesses): readon
   return registry.map((harness) => harness.parser);
 }
 
+/** Parsers that accept explicit transcript paths without a connected hook or watch root. */
+export function explicitPathParsers(): readonly Parser[] {
+  return [codexParser()];
+}
+
 /** Where Claude Code keeps its configuration, when the environment says. */
 const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 
@@ -74,4 +80,20 @@ export function watchFolders(
   registry: readonly Harness[] = harnesses,
 ): readonly string[] {
   return registry.map((harness) => harness.watchFolder(env));
+}
+
+/** Explicit ingest input, not a Codex hook: id is the file's own meta id. */
+export function readCodexExplicitInput(stdin: string): ReturnType<HookInputReader> {
+  try {
+    const value: unknown = JSON.parse(stdin);
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      const id = record['id'];
+      const path = record['transcript_path'];
+      if (typeof id === 'string' && id.trim() !== '' && typeof path === 'string' && path.trim() !== '') {
+        return { ok: true, input: { harnessSessionId: id, transcriptPath: path } };
+      }
+    }
+  } catch { /* malformed input is a usage error */ }
+  return { ok: false, code: 'USAGE', message: 'Codex 명시 수집에는 파일의 id와 transcript_path가 필요합니다' };
 }

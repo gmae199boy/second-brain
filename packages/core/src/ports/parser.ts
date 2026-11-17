@@ -91,6 +91,8 @@ export interface Parser {
   readonly harness: string;
   /** Recorded per session, so a parser change stays traceable (AD-4). */
   readonly version: string;
+  /** Validate the requested key against the exact transcript read before any write. */
+  validateSessionId?(content: string, harnessSessionId: string): boolean;
   /**
    * Read the content, starting at the cursor when the content still matches it.
    *

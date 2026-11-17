@@ -1684,3 +1684,76 @@ describe('@파일 원본 선택', () => {
     expect(JSON.stringify(record)).not.toContain(sourcePath);
   });
 });
+
+describe('sessions.ingest parser identity validation', () => {
+  const codexLine = (id: string) => JSON.stringify({ type: 'session_meta', payload: { id } }) + '\n' + JSON.stringify({ timestamp: '2026-01-01T00:00:01Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'synthetic' }] } }) + '\n';
+  const token = 'codex:own-file-id';
+
+  it.each(['findSession', 'readSelfUser', 'ensureSession', 'ingest'] as const)('rejects mismatch before %s and any session, history or spool write', async step => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const { deps, store, spool } = await kit({ content: codexLine('other-id') });
+    let calls = 0;
+    const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: 'synthetic failure' };
+    const guarded = { ...store, [step]: async () => { calls++; return unavailable; }, recordTranscriptFile: async () => { calls++; throw new Error('unexpected history'); } };
+    const result = await ingestSession({ ...deps, store: guarded, parsers: [codexParser()] }, { session: token, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: false, code: 'TRANSCRIPT_UNREADABLE' });
+    expect(calls).toBe(0);
+    expect(spool.records()).toEqual([]);
+    expect(await store.findSession({ harness: 'codex', harnessSessionId: 'own-file-id' })).toMatchObject({ ok: true, session: null });
+  });
+
+  it('reads once, validates and parses the same content', async () => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const { deps, transcripts } = await kit({ content: codexLine('own-file-id') });
+    const result = await ingestSession({ ...deps, parsers: [codexParser()] }, { session: token, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: true, created: true, inserted: { messages: 1 } });
+    expect(transcripts.reads()).toEqual([PATH]);
+  });
+
+  it('spools a validated file when findSession fails without reading it twice', async () => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const { deps, store, transcripts, spool } = await kit({ content: codexLine('own-file-id') });
+    const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: 'synthetic' };
+    const result = await ingestSession({ ...deps, parsers: [codexParser()], store: { ...store, findSession: async () => unavailable } }, { session: token, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: true, spooled: true });
+    expect(transcripts.reads()).toEqual([PATH]);
+    expect(spool.records()).toHaveLength(1);
+  });
+
+  it.each(['findSession', 'readSelfUser', 'ensureSession', 'ingest'] as const)('spools validated content when %s fails', async step => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const { deps, store, spool, transcripts } = await kit({ content: codexLine('own-file-id') });
+    const unavailable = { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: 'synthetic failure' };
+    const result = await ingestSession({ ...deps, parsers: [codexParser()], store: { ...store, [step]: async () => unavailable } }, { session: token, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: true, spooled: true });
+    expect(spool.records()).toHaveLength(1);
+    expect(transcripts.reads()).toEqual([PATH]);
+  });
+
+  it('keeps the non-validating parser find-before-read spool path unchanged', async () => {
+    const { deps, store, transcripts, spool } = await kit();
+    const result = await ingestSession({ ...deps, store: { ...store, findSession: async () => ({ ok: false as const, code: 'DB_UNAVAILABLE' as const, message: 'synthetic' }) } }, { session: TOKEN, transcriptPath: PATH });
+    expect(result).toMatchObject({ ok: true, spooled: true });
+    expect(transcripts.reads()).toEqual([]);
+    expect(spool.records()).toHaveLength(1);
+  });
+});
+
+describe('Codex parser dropped-line warning integration', () => {
+  it('warns for a damaged line before the first message on initial ingest and cursor reset', async () => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const metadata = JSON.stringify({ type: 'session_meta', payload: { id: 'synthetic-file' } }) + '\n';
+    const message = (text: string) => JSON.stringify({ timestamp: '2026-01-01T00:00:01Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }) + '\n';
+    const { deps, transcripts } = await kit({ content: metadata + '{broken\n' + message('initial') });
+    const input = { session: 'codex:synthetic-file', transcriptPath: PATH };
+    const withCodex = { ...deps, parsers: [codexParser()] };
+    const first = await ingestSession(withCodex, input);
+    expect(first).toMatchObject({ ok: true, droppedLines: { unreadable: 1 }, warnings: ['TRANSCRIPT_LINES_SKIPPED'] });
+    transcripts.write(PATH, metadata + '{broken\n' + message('rewritten'));
+    const reset = await ingestSession(withCodex, input);
+    expect(reset).toMatchObject({ ok: true, droppedLines: { unreadable: 1 } });
+    if (!reset.ok) throw new Error(reset.message);
+    expect(reset.warnings).toContain('TRANSCRIPT_LINES_SKIPPED');
+    expect(reset.warnings).toContain('CURSOR_RESET');
+  });
+});
