@@ -93,6 +93,13 @@ describe('brain.queue.drain', () => {
     expect(store.snapshot().workItems[0]).toMatchObject({ attempts: 0, claimedBy: null });
   });
 
+  it('preserves successful handler warnings without changing work counts', async () => {
+    const {brain, store} = await kit({withFolder:false});
+    await store.addWork({id:'01940000-0000-7000-8000-0000000000c1',kind:'probe',targetKind:'session',targetId:TOKEN,createdAt:NOW,nextAttemptAt:NOW});
+    const report = await brain.queue.drain({budgetMs:DRAIN_BUDGET_MS.command,handlers:{probe:async () => ({ok:true,warnings:['TRANSCRIPT_LINES_SKIPPED']})}});
+    expect(report).toMatchObject({claimed:1,completed:1,failed:0,stopped:'empty',warnings:['TRANSCRIPT_LINES_SKIPPED']});
+  });
+
   it('reports a transcript folder read failure when the queue remains writable', async () => {
     const { brain } = await kit({ listFailure: '접근 권한이 없습니다' });
     expect(await brain.queue.drain({ budgetMs: DRAIN_BUDGET_MS.command })).toMatchObject({

@@ -60,7 +60,7 @@ function outcome(value: unknown): boolean {
 }
 
 export function codexParser(): Parser {
-  return {
+  const parser: Parser = {
     harness: CODEX_HARNESS,
     version: CODEX_PARSER_VERSION,
     validateSessionId: (content, harnessSessionId) => codexSessionId(content) === harnessSessionId,
@@ -153,4 +153,54 @@ export function codexParser(): Parser {
       };
     },
   };
+  parser.reconcile = (content, cursor, storedIds) => {
+    const full = parser.parse(content, null);
+    const ids = new Map<string, string>();
+    if (!full.ok) return { result: full, messageIds: ids };
+    const groups = new Map<string, string[]>();
+    for (const message of full.messages) {
+      const digest = message.harnessMessageId.split(':')[2]!;
+      const group = groups.get(digest) ?? [];
+      group.push(message.harnessMessageId); groups.set(digest, group);
+    }
+    for (const [digest, incoming] of groups) {
+      const assigned = new Set<number>();
+      // Reserve existing canonical positions first, then map legacy IDs by file order.
+      for (const id of storedIds) {
+        const match = /^codex:v2:([a-f0-9]{64}):(\d+)$/.exec(id);
+        if (!match || match[1] !== digest) continue;
+        const n = Number(match[2]);
+        if (Number.isSafeInteger(n) && n < incoming.length && !assigned.has(n)) { ids.set(incoming[n]!, id); assigned.add(n); }
+      }
+      const legacy = storedIds.map(id => ({ id, match: /^codex:(\d+):([a-f0-9]{64})$/.exec(id) }))
+        .filter(item => item.match?.[2] === digest)
+        .sort((a, b) => Number(a.match![1]) - Number(b.match![1]));
+      for (const item of legacy) {
+        const n = incoming.findIndex((_, index) => !assigned.has(index));
+        if (n < 0) break;
+        ids.set(incoming[n]!, item.id); assigned.add(n);
+      }
+      incoming.forEach((id, n) => { if (!ids.has(id)) ids.set(id, `codex:v2:${digest}:${n}`); });
+    }
+    const mapId = (id: string) => ids.get(id) ?? id;
+    const lines = completeLines(content);
+    // The persisted cursor names a stored ID; recover its current raw ID only
+    // when both identity and the exact prefix fingerprint agree.
+    const raw = cursor && full.messages.find(message => {
+      const index = Number(message.harnessMessageId.split(':')[1]);
+      const line = lines[index];
+      return mapId(message.harnessMessageId) === cursor.lastHarnessMessageId && line !== undefined && hash(content.slice(0, line.end)) === cursor.fingerprint;
+    });
+    const parsed = parser.parse(content, raw && cursor ? { lastHarnessMessageId: raw.harnessMessageId, fingerprint: cursor.fingerprint } : null);
+    if (!parsed.ok) return { result: parsed, messageIds: ids };
+    return { messageIds: ids, result: {
+      ...parsed,
+      cursorReset: cursor !== null && !raw ? true : parsed.cursorReset,
+      messages: parsed.messages.map(message => ({ ...message, harnessMessageId: mapId(message.harnessMessageId) })),
+      attachments: parsed.attachments.map(attachment => ({ ...attachment, harnessMessageId: mapId(attachment.harnessMessageId) })),
+      toolNotes: parsed.toolNotes.map(note => ({ ...note, harnessMessageId: mapId(note.harnessMessageId), earlierPositions: note.earlierPositions.map(position => ({ ...position, harnessMessageId: mapId(position.harnessMessageId) })) })),
+      cursor: parsed.cursor ? { ...parsed.cursor, lastHarnessMessageId: mapId(parsed.cursor.lastHarnessMessageId) } : null,
+    } };
+  };
+  return parser;
 }

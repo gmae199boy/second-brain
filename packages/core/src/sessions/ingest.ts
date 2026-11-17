@@ -292,7 +292,14 @@ export async function ingestSession(
 
   // Validating parsers need the exact bytes before any possible spool or store
   // write. Reuse this read for parsing; non-validating parsers keep their order.
-  const validatedRead = parser.validateSessionId ? await transcripts.read(transcriptPath) : null;
+  let validatedRead = parser.validateSessionId ? await transcripts.read(transcriptPath) : null;
+  if (validatedRead !== null && !validatedRead.ok && !input.transcriptPath) {
+    const relocated = await locateTranscript(transcriptFolders, key);
+    if (relocated.ok && relocated.path !== transcriptPath) {
+      transcriptPath = relocated.path;
+      validatedRead = await transcripts.read(transcriptPath);
+    }
+  }
   if (validatedRead !== null) {
     if (!validatedRead.ok) return validatedRead;
     if (!parser.validateSessionId!(validatedRead.content, key.harnessSessionId)) {
@@ -317,11 +324,21 @@ export async function ingestSession(
   // rules that decided what a message is have moved: lines the old version
   // dropped are messages now, and starting at its cursor would leave them
   // behind for good. Re-reading inserts nothing that is already stored (AD-8).
-  const parsed = parser.parse(read.content, cursorFor(stored, parser.version));
+  let storedIds: readonly string[] = [];
+  if (parser.reconcile && stored !== null) {
+    const existing = await store.readSession(input.session);
+    if (!existing.ok) {
+      if (existing.code === 'DB_UNAVAILABLE' || existing.code === 'DB_LOCKED') return spooled(existing.code);
+      return { ok: false, code: 'TRANSCRIPT_UNREADABLE', message: existing.message };
+    }
+    storedIds = existing.messages.map(message => message.harnessMessageId);
+  }
+  const reconciled = parser.reconcile?.(read.content, cursorFor(stored, parser.version), storedIds);
+  const parsed = reconciled?.result ?? parser.parse(read.content, cursorFor(stored, parser.version));
   if (!parsed.ok) return parsed;
   // Only override messages this read can write. Other links keep their own replay/retry.
   const parsedMessageIds = new Set(parsed.messages.map(message => message.harnessMessageId));
-  const attachmentOverrides = (options.attachmentOverrides ?? []).filter(a => parsedMessageIds.has(a.harnessMessageId));
+  const attachmentOverrides = (options.attachmentOverrides ?? []).map(a => ({ ...a, harnessMessageId: reconciled?.messageIds.get(a.harnessMessageId) ?? a.harnessMessageId })).filter(a => parsedMessageIds.has(a.harnessMessageId));
 
   /**
    * What this read saw, written to `transcript_files` so the next folder scan

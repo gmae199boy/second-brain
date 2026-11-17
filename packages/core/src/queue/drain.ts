@@ -1,4 +1,4 @@
-import { errorCodeSpec } from '../codes.js';
+import { errorCodeSpec, type WarningCode } from '../codes.js';
 import { failureFingerprint, failureText } from '../domain/failure.js';
 import { SPOOL_CAUSES, SPOOL_RECORD_VERSION, type SpoolCause } from '../domain/spool-record.js';
 import {
@@ -67,7 +67,7 @@ export interface WorkHandlerFailure {
 }
 
 /** One attempt at one item: it worked, or it did not and said why. */
-export type WorkHandlerResult = { ok: true } | WorkHandlerFailure;
+export type WorkHandlerResult = { ok: true; warnings?: readonly WarningCode[] } | WorkHandlerFailure;
 
 /** What a unit does with one item of its own kind. */
 export type WorkHandler = (item: WorkItem) => Promise<WorkHandlerResult>;
@@ -198,6 +198,8 @@ export interface DrainQueueReport {
    * says which way (AD-9).
    */
   stopped: 'empty' | 'budget' | 'unwritable';
+  /** Warnings from successfully completed work, when any were reported. */
+  warnings?: readonly WarningCode[];
   /** The code that stopped it, only when `stopped` is `unwritable`. */
   code?: string;
 }
@@ -232,6 +234,7 @@ export async function drainQueue(
     released: 0,
     lost: 0,
     spooled: 0,
+    ...({} as { warnings?: WarningCode[] }),
   };
 
   for (;;) {
@@ -264,6 +267,9 @@ export async function drainQueue(
         const done = await store.completeWork({ id: item.id, claimedBy, now });
         if (!done.ok) return { ...tally, stopped: 'unwritable', code: done.code };
         count(tally, done.outcome, 'completed');
+        if (done.outcome === 'done' && outcome.ok && outcome.warnings?.length) {
+          tally.warnings = [...new Set([...(tally.warnings ?? []), ...outcome.warnings])];
+        }
         break;
       }
 

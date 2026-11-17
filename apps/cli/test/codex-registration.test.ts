@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { explicitPathParsers, harnesses, harnessParsers, transcriptFolders, watchFolders } from '../src/harnesses.js';
 
 describe('explicit path parser registration', () => {
-  it('registers Codex alongside Claude without a Codex connector, folder, or watcher', () => {
+  it('registers Codex alongside Claude with a Codex folder but no connector or watcher', () => {
     expect([...harnessParsers(), ...explicitPathParsers()].map(parser => parser.harness)).toEqual(['claude-code', 'codex']);
     expect(harnesses.map(harness => harness.parser.harness)).toEqual(['claude-code']);
-    expect(transcriptFolders({ CLAUDE_CONFIG_DIR: '/synthetic/claude' }).map(folder => folder.harness)).toEqual(['claude-code']);
+    expect(transcriptFolders({ CLAUDE_CONFIG_DIR: '/synthetic/claude', CODEX_HOME: '/synthetic/codex' }).map(folder => folder.harness)).toEqual(['claude-code', 'codex']);
     expect(watchFolders({ CLAUDE_CONFIG_DIR: '/synthetic/claude' })).toEqual(['/synthetic/claude/projects']);
   });
 });

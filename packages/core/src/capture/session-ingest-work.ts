@@ -104,7 +104,7 @@ export function sessionIngestHandler(
         stage: SESSION_INGEST_KIND,
         now: clock.now(),
       });
-      return { ok: true };
+      return result.warnings.length > 0 ? { ok: true, warnings: result.warnings } : { ok: true };
     }
 
     const failure: WorkHandlerResult = {

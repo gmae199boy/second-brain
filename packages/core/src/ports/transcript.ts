@@ -56,6 +56,8 @@ export interface TranscriptListing {
   /** Where the file is, as `transcript_files.path` stores it. */
   path: string;
   sizeBytes: number;
+  /** Optional hash of the listed bytes, in the same format as transcript history. */
+  fingerprint?: string;
   modifiedAt: Date;
 }
 

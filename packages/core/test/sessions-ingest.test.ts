@@ -1,3 +1,4 @@
+import { redactMessage } from '../src/messages/redact.js';
 import { memoryFileStore } from '../src/testing/fakes/file-store.js';
 import { describe, expect, it } from 'vitest';
 import { contentHashOfBytes } from '../src/domain/file.js';
@@ -1755,5 +1756,65 @@ describe('Codex parser dropped-line warning integration', () => {
     if (!reset.ok) throw new Error(reset.message);
     expect(reset.warnings).toContain('TRANSCRIPT_LINES_SKIPPED');
     expect(reset.warnings).toContain('CURSOR_RESET');
+  });
+});
+
+describe('Codex reconciliation ingestion', () => {
+  it('keeps the stored cursor ID and spools if the stored ID snapshot cannot be read', async () => {
+    const { codexParser } = await import('../../codex/src/index.js');
+    const meta = JSON.stringify({type:'session_meta', payload:{id:'reconcile'}}) + '\n';
+    const turn = JSON.stringify({timestamp:'2026-01-01T00:00:01Z', type:'response_item', payload:{type:'message',role:'user',content:[{type:'input_text',text:'one'}]}}) + '\n';
+    const {deps, store, transcripts, spool} = await kit({content:meta + turn});
+    const input = {session:'codex:reconcile', transcriptPath:PATH};
+    const withCodex = {...deps, parsers:[codexParser()]};
+    expect(await ingestSession(withCodex, input)).toMatchObject({ok:true, inserted:{messages:1}});
+    const before = await store.readSession(input.session);
+    if (!before.ok) throw new Error(before.message);
+    expect(before.session.cursor?.lastHarnessMessageId).toBe(before.messages[0]!.harnessMessageId);
+    transcripts.write(PATH, meta + JSON.stringify({type:'event_msg'}) + '\n' + turn);
+    const failure = await ingestSession({...withCodex, store:{...store, readSession:async () => ({ok:false as const, code:'DB_UNAVAILABLE' as const, message:'synthetic'})}}, input);
+    expect(failure).toMatchObject({ok:true, spooled:true}); expect(spool.records()).toHaveLength(1);
+    const replay = await ingestSession(withCodex, input);
+    expect(replay).toMatchObject({ok:true, inserted:{messages:0}});
+    const after = await store.readSession(input.session);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.messages).toHaveLength(1); expect(after.session.cursor?.lastHarnessMessageId).toBe(before.messages[0]!.harnessMessageId);
+  });
+});
+
+describe('Codex scan relocation and legacy upgrade', () => {
+  const meta = JSON.stringify({type:'session_meta',payload:{id:'relocate'}}) + '\n';
+  const turn = JSON.stringify({timestamp:'2026-01-01T00:00:01Z',type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'legacy secret'}]}}) + '\n';
+  it('re-lists after the initially discovered path disappears, but does not retry explicit paths', async () => {
+    const {codexParser} = await import('../../codex/src/index.js');
+    const {deps, transcripts} = await kit({content:meta + turn});
+    const moved = '/memory/archive.jsonl'; transcripts.write(moved, meta + turn);
+    let listings = 0; let reads = 0;
+    const folders = [{harness:'codex', list:async () => ({ok:true as const, files:[{harness:'codex',harnessSessionId:'relocate',path:++listings === 1 ? PATH : moved,sizeBytes:1,modifiedAt:new Date()}]})}];
+    const reader = {read:async (path:string) => { reads++; if (path === PATH) return {ok:false as const,code:'TRANSCRIPT_UNREADABLE' as const,message:'gone'}; return transcripts.read(path); }};
+    const result = await ingestSession({...deps, parsers:[codexParser()], transcriptFolders:folders, transcripts:reader}, {session:'codex:relocate'});
+    expect(result).toMatchObject({ok:true, inserted:{messages:1}}); expect(listings).toBe(2); expect(reads).toBe(2);
+    listings = 0; reads = 0;
+    expect(await ingestSession({...deps, parsers:[codexParser()], transcriptFolders:folders, transcripts:reader}, {session:'codex:relocate',transcriptPath:PATH})).toMatchObject({ok:false,code:'TRANSCRIPT_UNREADABLE'});
+    expect(listings).toBe(0); expect(reads).toBe(1);
+  });
+  it('reuses an actually stored legacy ID and cursor after a prefix rewrite', async () => {
+    const {codexParser} = await import('../../codex/src/index.js');
+    const {deps, store, transcripts} = await kit({content:meta + turn});
+    const parser = codexParser(); const old: Parser = {harness:parser.harness,version:parser.version,parse:parser.parse,validateSessionId:parser.validateSessionId};
+    const input = {session:'codex:relocate',transcriptPath:PATH};
+    expect(await ingestSession({...deps,parsers:[old]},input)).toMatchObject({ok:true,inserted:{messages:1}});
+    const before = await store.readSession(input.session); if (!before.ok) throw new Error(before.message);
+    expect(before.messages[0]!.harnessMessageId).toMatch(/^codex:\d+:/);
+    expect(await redactMessage({store, clock:deps.clock, idGen:deps.idGen}, {message:before.messages[0]!.id, text:'legacy secret', confirm:true})).toMatchObject({ok:true});
+    const masked = await store.readSession(input.session); if (!masked.ok) throw new Error(masked.message);
+    expect(masked.messages[0]!.body).not.toContain('legacy secret');
+    expect(masked.messages[0]!.body).toContain('[REDACTED:manual]');
+    transcripts.write(PATH,meta + JSON.stringify({type:'event_msg'}) + '\n' + turn);
+    expect(await ingestSession({...deps,parsers:[parser]},input)).toMatchObject({ok:true,inserted:{messages:0}});
+    const after = await store.readSession(input.session); if (!after.ok) throw new Error(after.message);
+    expect(after.messages).toHaveLength(1); expect(after.messages[0]!.harnessMessageId).toBe(before.messages[0]!.harnessMessageId);
+    expect(after.messages[0]!.body).not.toContain('legacy secret');
+    expect(after.session.cursor?.lastHarnessMessageId).toBe(before.messages[0]!.harnessMessageId);
   });
 });
