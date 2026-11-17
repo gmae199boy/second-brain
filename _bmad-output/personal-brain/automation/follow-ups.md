@@ -734,3 +734,13 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 | 최신 Claude hook 관측 | 현재 plugin/ref 자체는 정상이나 last-hook은 옛 rollout9 root의 PLUGIN_DUPLICATE. 최신 plugin을 읽는 새 Claude 세션의 정상 hook 관측과 doctor 재확인이 필요하며 경고 소멸은 아직 미검증. 사용자 일반 스킬 발견 정상 확인과 구분. 관측 파일 편집·hook 수동 호출은 하지 않음 |
 
 최신 doctor exit0, passed27/warned3/failed0이며 위 경고는 보존됐다. 진단 완료를 경고 해소로 기록하지 않는다. 이 표는 새 제품 개발·백필·발신·세션 실행 승인이 아니다.
+
+
+## 23.1 — Codex 실측과 통합 복구 수락 (2026-11-17)
+
+근거: [연구](../tickets/epic-codex-capture/epic-codex-capture-research.md), [계획](../tickets/epic-codex-capture/tickets/spike-codex-plan.md), 연구 커밋 `5f7aa61a`, 별도 인프라 수정 `42ab96c3`. 원문 보고·독립 리뷰·실행 로그·사례 매핑·장부는 중앙 `.brain-automation/tickets/23.1/worktree-checkpoint-archive/`에 보존했다.
+
+- 23.1은 built이며 deferred/미충족 수락조건은 없다. 파일별 payload.id와 부모 관계·도구 대응, 두 루트 스캔·부분 줄·재작성, 최초 cwd, 실제 hook/notify 및 기존 설정 공존 검증은 연구의 명시적 한계를 이어받는 23.2~23.6 범위다. 공통 Store 계약 변경 필요 시 별도 결정한다. 이 연구만으로 형식 안정성이나 실제 hook 실행 성공을 주장하지 않는다.
+- 통합 최초 전체 TS는 5,302통과·372실패/오류1, Python은 setup/슬롯 오류로 대부분 미실행이었다. 임시 HOME의 Docker/OrbStack context를 교정하고 정확 대상 복구 계약을 수정했다. 인프라 직접 관련7파일100시험, 최초 TS실패33파일과 누락 Python12파일 및 남은6+8사례를 지정 검증해 최종 미매핑0·실제 실패0을 확인했다. 최초 전체 실행 통과로 소급하지 않으며 전체 명령을 반복하지 않았다.
+- 정확 대상 복구는 ID 필수·신원/종료/라벨 검증을 유지한다. 일반 실행은 다른 장부를 읽기 진단만 한다. 확인된 자기 run6개와 중첩3개는 공식 복구 완료, 전용 DB·공용 잠금은 해제했다.
+- 신원 증거가 부족한18장부는 보존한다. 당시 같은 run 라벨 컨테이너는 없었으나 상위 journal의 PID만으로 출생 시작 시각을 직접 연계하지 못했다. 이번 누수·종료완료로 단정하지 않으며 추가 처분은 정확 신원 근거를 확보한 별도 판단 대상으로 남긴다. 정상 새 시험은 이 장부를 자동 정리하지 않는다.
