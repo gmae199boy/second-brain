@@ -114,3 +114,15 @@ Store에는 부모 링크가 없고 예약된 `continuedFromSessionId`는 사용
 - 검증: 최종 수정 뒤 build/typecheck 성공. 시험 수정 뒤 typecheck·diff --check 성공. 관련7파일 총319건은 위 최초/재검증에서 모두 통과했다. I/O 모든 행과 외부 AC의 실제 통과 시험 매핑은 검증 보고서에 있다. 전체 pnpm test → test:python은 실행하지 않았으며 중앙 통합 단계의 필수 회귀로 남는다.
 - 결정·한계: Store/domain/schema를 바꾸지 않았다. 부모 관계 필드와 도구 output 원문 저장은 제공하지 않으며 호출/결과는 기존 도구 메모 계약에 대응한다. 읽기는 기존 occurredAt 순서이고 동일 시각 순서는 미정이다. 알 수 없는 output은 성공으로 추정하지 않는다. 실제 모든 Codex 버전 형식의 호환성을 주장하지 않는다. 후속23.3~23.6 스캔·태그·connect/doctor·운영 설치는 구현하지 않았으며 수락조건 미충족의 defer는 없다.
 - 전달: 티켓 브랜치에만 커밋·일반 push하고 원격 SHA를 확인한다. main 병합/push는 하지 않는다. 시작 depth1 ready 영수증 `start-receipt.json`, worker checkpoint `.brain-automation/worker.json`, 최종 보고 `.brain-automation/tickets/23.2/ticket-result.md`를 중앙이 복사할 수 있도록 보존한다.
+
+### 중앙 위임 통합 gate — 2026-11-17
+
+중앙 메시지 `msg_2ee4e6fa5778`이 정확 `fa1ea6bf02780d60b336f2112dc26ffd3f121b8a` checkout의 main 반영 전 필수 통합 전체 회귀를 이 독립 지휘자에게 위임했다. 앞 절의 전체 회귀 미실행은 최초 브랜치 전달 시점의 이력이며, 최신 결과는 아래와 같다.
+
+- 실제 정상 OrbStack/context를 확인하고 일반 HOME을 유지하면서 Brain·Claude·Codex·XDG·launchctl을 합성 경로로 격리했다. 공용 test-lock을 자기 소유 mkdir로 획득했다. 전용 PG는 run/file 라벨·tmpfs·랜덤 loopback59171·owner PID/시작 시각/정확 ID manifest로 관리했다. 운영54320/공유54329·사용자 실제 설정/대화 미사용, 제품 probe 위장 없음.
+- 최초 `pnpm test` → `pnpm test:python`을 순차 각1회 실행했다. TS는273파일5720건 중272파일5719건 통과·경계 시험1건 실패·종료1. Python은12파일55건 통과·실패0·skip0·종료0. 전체 명령을 반복하지 않았다.
+- 실패는 기존 bundle 경계 시험의 Codex 기대 의존성 목록 누락이다. `packages/second_brain/test/boundaries.test.ts`의 adapter 목록과 bundle 기대 목록에 Codex를 추가했고 기존 strict AD-1 단언은 유지했다. 제품/manifest/공통 계약 변경 없음. 수정 중 build/typecheck/diff --check만 수행해 통과했다.
+- Sol/medium 독립 Quick 리뷰 `integration-review.md`는 지적0건. 개발·리뷰 종료 후 경계 파일만 `pnpm exec vitest run packages/second_brain/test/boundaries.test.ts --reporter=verbose`로 재검증해9건 통과·종료0. 최초 실패8건 파일을 새9건 결과로 대체해 TS273파일5721건, Python12파일55건의 최종 통과 증거가 대응한다. 이는 두 번째 전체 시험 실행을 뜻하지 않는다. 미해결/누락/추가실패0.
+- 소유 PG 정확 ID 정리·자기 잠금 해제·자기 run 라벨 잔여 컨테이너0을 확인했다. 타/불명 ledger는 보존하고 일반 시작 읽기 진단 및 공유 자원 정리 fence를 유지했다. 최초 preflight와 종료 후 잔여 검사는 당시 도구 출력으로 확인했지만 별도 원시 로그를 저장하지 않아 사후 기록이라는 증거 한계를 명시한다.
+- 증거: `.brain-automation/tickets/23.2/integration-report.md`, `integration-terra-report.md`, `integration-ts.log`, `integration-python.log`, `integration-final-mapping.json`, `integration-python-cases.json`, `integration-review.md`, `integration-rerun-report.md`, `integration-boundary-rerun.log`, manifest·격리 사본·cleanup 파일. TS reporter가 성공 파일 이름을 생략해 파일 목록은 동일 config glob을 재구성해 총계와 대조한 것이며 개별 성공 로그로 가장하지 않는다.
+- 상태는 built 유지. 경계 시험과 이 계획만 별도 수정 커밋·티켓 브랜치 일반 push하며 main 병합/push는 하지 않는다.
