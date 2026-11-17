@@ -117,7 +117,7 @@ it('quarantines fixtures when a test process group lacks a confirmed termination
     const file = await fixture(root), token = 'f'.repeat(24);
     await writeFile(join(file, 'processes.jsonl'), JSON.stringify({ token, pid: 1234, state: 'active' }) + '\n');
     const { run, calls } = dockerMock();
-    const events = await recoverRuns(root, run, async () => null);
+    const events = await recoverRuns(root, run, async () => null, undefined, undefined, async () => [{ pid: 1234, ppid: 1, pgid: 1234, started: 'time', cpu: 0, time: '0' }]);
     expect(calls.some(args => args[0] === 'rm')).toBe(false); expect(JSON.stringify(events)).toContain('child process termination unconfirmed');
     await writeFile(join(file, 'processes.jsonl'), JSON.stringify({ token, pid: 1234, state: 'active' }) + '\n' + JSON.stringify({ token, pid: 1234, state: 'gone' }) + '\n');
     await recoverRuns(root, run, async () => null);
@@ -274,5 +274,142 @@ it('completes a file after all shared fixtures were released despite an unresolv
     const events = await recoverRuns(root, run, async () => null);
     expect(JSON.stringify(events)).not.toContain('untracked child safety unconfirmed');
     expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).state).toBe('completed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('records an absent detached group and recovers its owned fixture', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ts-absent-group-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root);
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+    await writeFile(join(file, 'processes.jsonl'), ['active', 'termination-proof'].map(state => JSON.stringify({ state, token, pid: 1234 })).join('\n') + '\n');
+    const { run, calls } = dockerMock();
+    await recoverRuns(root, run, async () => null, undefined, undefined, async () => []);
+    expect(calls.some(args => args[0] === 'rm')).toBe(true);
+    expect(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).toContain('process-groups-absent');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('preserves an occupied group or failed OS observation', async () => {
+  for (const sampler of [async () => [{ pid: 5678, ppid: 1, pgid: 1234, started: 'time', cpu: 0, time: '0' }], async () => { throw new Error('unavailable'); }]) {
+    const root = await mkdtemp(join(tmpdir(), 'ts-occupied-group-'));
+    try {
+      const file = await fixture(root), token = 'f'.repeat(24);
+      await writeFile(join(file, 'processes.jsonl'), ['active', 'termination-proof'].map(state => JSON.stringify({ state, token, pid: 1234 })).join('\n') + '\n');
+      const { run, calls } = dockerMock();
+      expect(JSON.stringify(await recoverRuns(root, run, async () => null, undefined, undefined, sampler))).toContain('termination unconfirmed');
+      expect(calls.some(args => args[0] === 'rm')).toBe(false);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+it('audits explicit release while preserving the shared database and refusing live owners', async () => {
+  const { releaseQuarantine } = await import('../src/python-slots.js');
+  const root = await mkdtemp(join(tmpdir(), 'ts-explicit-release-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root); await writeFile(join(file, 'resources.jsonl'), '');
+    await writeFile(join(file, 'shared-db.jsonl'), JSON.stringify({ state: 'acquired', fixtureId: nonce }) + '\n');
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false })].join('\n') + '\n');
+    const noDocker = async (args: string[]) => { if (args[0] === 'ps') return { stdout: '' }; throw new Error('unexpected operation'); };
+    await expect(releaseQuarantine(root, 'run', noDocker, async () => 'owner', async () => [])).rejects.toThrow('eligible');
+    await releaseQuarantine(root, 'run', noDocker, async () => null, async () => []);
+    const ledger = JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8'));
+    expect(ledger.preservedShared).toBe(true);
+    expect(ledger.cleanup.filter((row: { action?: string }) => row.action === 'explicit-release').map((row: { phase: string }) => row.phase)).toEqual(['before', 'after']);
+    expect(await readFile(join(file, 'shared-db.jsonl'), 'utf8')).toContain('acquired');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('refuses release of an active registered child and never touches protected resources', async () => {
+  const { releaseQuarantine } = await import('../src/python-slots.js');
+  const root = await mkdtemp(join(tmpdir(), 'ts-release-active-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root);
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+    const calls: string[][] = [];
+    const run = async (args: string[]) => { calls.push(args); throw new Error('must not access resources'); };
+    await expect(releaseQuarantine(root, 'run', run, async () => null, async () => [{ pid: 1234, ppid: 1, pgid: 1234, started: 'time', cpu: 0, time: '0' }])).rejects.toThrow('active');
+    expect(calls).toEqual([]);
+    const ledger = JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8'));
+    expect(ledger.state).toBe('running'); expect(ledger.cleanup.at(-1).outcome).toBe('refused');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('preserves an unreleased shared DB after proven group absence and fences the current owner', async () => {
+  for (const current of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'ts-shared-absence-')), token = 'f'.repeat(24);
+    try {
+      const file = await fixture(root);
+      await writeFile(join(file, 'resources.jsonl'), '');
+      await writeFile(join(file, 'shared-db.jsonl'), JSON.stringify({ state: 'acquired', fixtureId: nonce }) + '\n');
+      await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+      await writeFile(join(file, 'processes.jsonl'), ['active', 'termination-proof'].map(state => JSON.stringify({ state, token, pid: 1234 })).join('\n') + '\n');
+      if (current) await writeLedger(root, { runId: 'run', kind: 'typescript', state: 'running', coordinator: { pid: process.pid, started: 'owner' }, slots: [], files: [], resources: [], cleanup: [] });
+      const noDocker = async (args: string[]) => { if (args[0] === 'ps') return { stdout: '' }; throw new Error('unexpected operation'); };
+      const events = await recoverRuns(root, noDocker, async pid => current && pid === process.pid ? 'owner' : null, current ? 'run' : undefined, current ? { pid: process.pid, started: 'owner' } : undefined, async () => []);
+      const ledger = JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8'));
+      expect(ledger.state).toBe(current ? 'running' : 'completed');
+      expect(JSON.stringify(events)).toContain(current ? 'shared database lease remains' : 'preservedShared');
+      expect(await readFile(join(file, 'shared-db.jsonl'), 'utf8')).toContain('acquired');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+it('keeps legacy active-only resources when a detached descendant escaped the original group', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ts-escaped-descendant-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root);
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+    await writeFile(join(file, 'processes.jsonl'), JSON.stringify({ state: 'active', token, pid: 1234 }) + '\n');
+    const { run } = dockerMock();
+    const escaped = [{ pid: 5678, ppid: 1, pgid: 5678, started: 'descendant', cpu: 0, time: '0' }];
+    const events = await recoverRuns(root, run, async () => null, undefined, undefined, async () => escaped);
+    expect(JSON.stringify(events)).toContain('termination unconfirmed');
+    expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).state).toBe('running');
+    expect(JSON.stringify(events)).toContain(id);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('keeps the fixture when a proof-bearing group still has a leaderless member', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ts-leaderless-group-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root);
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+    await writeFile(join(file, 'processes.jsonl'), ['active', 'termination-proof'].map(state => JSON.stringify({ state, token, pid: 1234 })).join('\n') + '\n');
+    const { run } = dockerMock();
+    const events = await recoverRuns(root, run, async () => null, undefined, undefined, async () => [{ pid: 5678, ppid: 1, pgid: 1234, started: 'child', cpu: 0, time: '0' }]);
+    expect(JSON.stringify(events)).toContain('termination unconfirmed');
+    expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).state).toBe('running');
+    expect(JSON.stringify(events)).toContain(id);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('rejects a termination proof belonging to a different token or PID', async () => {
+  for (const proof of [{ token: 'e'.repeat(24), pid: 1234 }, { token: 'f'.repeat(24), pid: 4321 }]) {
+    const root = await mkdtemp(join(tmpdir(), 'ts-proof-mismatch-')), token = 'f'.repeat(24);
+    try {
+      const file = await fixture(root);
+      await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+      await writeFile(join(file, 'processes.jsonl'), [JSON.stringify({ state: 'active', token, pid: 1234 }), JSON.stringify({ state: 'termination-proof', ...proof })].join('\n') + '\n');
+      const { run, calls } = dockerMock();
+      const events = await recoverRuns(root, run, async () => null, undefined, undefined, async () => []);
+      expect(JSON.stringify(events)).toContain('invalid child process journal transition');
+      expect(calls.some(args => args[0] === 'rm')).toBe(false);
+      expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).state).toBe('running');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+it('does not accept a truncated termination proof as durable evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ts-proof-partial-')), token = 'f'.repeat(24);
+  try {
+    const file = await fixture(root);
+    await writeFile(join(file, 'children.jsonl'), [JSON.stringify({ state: 'begin' }), JSON.stringify({ state: 'spawned', token, tool: false }), JSON.stringify({ state: 'pid', token, pid: 1234 })].join('\n') + '\n');
+    await writeFile(join(file, 'processes.jsonl'), JSON.stringify({ state: 'active', token, pid: 1234 }) + '\n' + JSON.stringify({ state: 'termination-proof', token, pid: 1234 }));
+    const { run, calls } = dockerMock();
+    const events = await recoverRuns(root, run, async () => null, undefined, undefined, async () => []);
+    expect(JSON.stringify(events)).toContain('incomplete child process journal');
+    expect(calls.some(args => args[0] === 'rm')).toBe(false);
+    expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'run.json'), 'utf8')).state).toBe('running');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

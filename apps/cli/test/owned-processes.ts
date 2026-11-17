@@ -3,7 +3,7 @@ import { appendFileSync } from 'node:fs';
 import { spawn, type ChildProcessByStdio, type SpawnOptions } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { Duplex, Readable } from 'node:stream';
-import { ProcessTracker, sampleProcesses, terminateGroup, type ProcessSample } from '../../../tooling/test-db/src/slots/processes.js';
+import { ProcessTracker, sampleProcesses, terminateGroup, recordTerminationProof, type ProcessSample } from '../../../tooling/test-db/src/slots/processes.js';
 
 type Child = ChildProcessByStdio<null, Readable, Readable>;
 type Group = { token: string; pid?: number; tracker?: ProcessTracker; pending?: Promise<void>; ready: Promise<void>; child: Child; closed: Promise<void>; spawnError?: NodeJS.ErrnoException; journalError?: unknown; gateError?: unknown; gone: boolean };
@@ -14,7 +14,10 @@ export class OwnedProcesses {
   private closed = false;
   private closing?: Promise<void>;
   private readonly timer = setInterval(() => { for (const group of this.groups) this.sample(group); }, 100);
-  constructor(private readonly snapshot: () => Promise<ProcessSample[]> = sampleProcesses) {}
+  constructor(
+    private readonly snapshot: () => Promise<ProcessSample[]> = sampleProcesses,
+    private readonly terminate: typeof terminateGroup = terminateGroup,
+  ) {}
 
   spawn(command: string, args: readonly string[], options: SpawnOptions = {}): Child {
     if (this.closed) throw new Error('test process scope is closed');
@@ -44,6 +47,8 @@ export class OwnedProcesses {
 
   private async openGate(group: Group, pipe: Duplex, request: { command: string; args: string[]; env: Record<string, string>; argv0?: string }): Promise<void> {
     const pid = group.pid;
+    const guardKey = Symbol.for('brain.test.child-journal-error');
+    if (guardKey in group.child) group.journalError = (group.child as unknown as Record<symbol, unknown>)[guardKey] ?? new Error('child journal write failed');
     try {
       if (!pid) {
         await group.closed;
@@ -57,11 +62,7 @@ export class OwnedProcesses {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       if (!group.tracker) throw new Error('gate starting identity unconfirmed');
-      const guardKey = Symbol.for('brain.test.child-journal-error');
-      if (guardKey in group.child) {
-        const guardError = (group.child as unknown as Record<symbol, unknown>)[guardKey];
-        group.journalError = guardError ?? new Error('child journal write failed'); throw group.journalError;
-      }
+      if (group.journalError) throw group.journalError;
       // The helper cannot stop or execute the target until the first sample.
       pipe.end(JSON.stringify(request));
       let stopped = false;
@@ -81,7 +82,7 @@ export class OwnedProcesses {
     } catch (error) {
       group.gateError = error; pipe.destroy();
       group.child.stdout.resume(); group.child.stderr.resume();
-      group.child.emit('error', Object.assign(new Error('test process gate failed', { cause: error }), { code: 'BRAIN_GATE_FAILED' }));
+      group.child.emit('error', Object.assign(new Error('test process gate failed', { cause: group.journalError ?? error }), { code: 'BRAIN_GATE_FAILED' }));
       throw error;
     }
   }
@@ -136,6 +137,9 @@ export class OwnedProcesses {
   private record(group: Group, state: 'active' | 'gone'): void {
     if (process.env.BRAIN_TEST_PROCESS_LOG) appendFileSync(process.env.BRAIN_TEST_PROCESS_LOG, JSON.stringify({ token: group.token, pid: group.pid, state }) + '\n', { mode: 0o600 });
   }
+  private recordProof(group: Group): void {
+    recordTerminationProof(process.env.BRAIN_TEST_PROCESS_LOG, group.token, group.pid!);
+  }
   private sample(group: Group): void {
     if (!group.tracker || group.pending || group.gone) return;
     group.pending = group.tracker.sample(this.snapshot).catch(() => { group.tracker!.samplingFailed = true; }).finally(() => { group.pending = undefined; });
@@ -148,6 +152,7 @@ export class OwnedProcesses {
   }
   private async closeGroups(): Promise<void> {
     const errors: string[] = [];
+    const journalErrors: unknown[] = [];
     for (const group of this.groups) {
       if (group.gone) continue;
       await group.ready.catch(() => {}); await group.pending;
@@ -156,16 +161,20 @@ export class OwnedProcesses {
         await Promise.race([group.closed, new Promise<void>(resolve => setTimeout(resolve, 1000))]);
         if (group.spawnError && !group.child.pid) state = 'gone';
       } else if (group.tracker) {
-        try { state = await terminateGroup(group.pid, group.tracker); } catch { state = 'unknown'; }
+        try { state = await this.terminate(group.pid, group.tracker); } catch { state = 'unknown'; }
       }
       process.stderr.write(`test process group ${group.pid ?? 'not-started'}: ${state}\n`);
-      if (state !== 'gone') { errors.push(`${group.pid ?? 'not-started'}: ${state}`); continue; }
+      if (group.journalError) journalErrors.push(group.journalError);
+      if (state !== 'gone') {
+        errors.push(`${group.pid ?? 'not-started'}: ${state}${group.journalError ? `; process journal unavailable: ${String(group.journalError)}` : ''}`);
+        continue;
+      }
       if (group.journalError) { errors.push(`${group.pid}: process journal unavailable: ${String(group.journalError)}`); continue; }
       if (group.gateError) { errors.push(`${group.pid}: gate identity unconfirmed`); continue; }
-      if (group.pid) try { this.record(group, 'gone'); } catch (error) { group.journalError = error; errors.push(`${group.pid}: process journal unavailable`); continue; }
+      if (group.pid) try { this.recordProof(group); this.record(group, 'gone'); } catch (error) { group.journalError = error; journalErrors.push(error); errors.push(`${group.pid}: process journal unavailable`); continue; }
       group.gone = true;
     }
-    if (errors.length) throw new Error(`test process termination unconfirmed: ${errors.join(', ')}`);
+    if (errors.length) throw new Error(`test process termination unconfirmed: ${errors.join(', ')}`, { cause: journalErrors[0] });
   }
 }
 

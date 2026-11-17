@@ -10,6 +10,7 @@ import type { Docker } from '../src/slots/cluster.js';
 import type { Lookup } from '../src/slots/ledger.js';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
+const preserveShared = new WeakSet<TestProject>();
 
 type OwnershipOptions = { root?: string; env?: NodeJS.ProcessEnv; run?: Docker; lookup?: Lookup };
 export async function prepareOwnership(project: TestProject, options: OwnershipOptions = {}): Promise<() => Promise<void>> {
@@ -27,6 +28,11 @@ export async function prepareOwnership(project: TestProject, options: OwnershipO
   }
   const recovery = await recoverRuns(root, run, lookup);
   process.stderr.write(`Test resource recovery: ${JSON.stringify(recovery)}\n`);
+  const siblingRuns = closeState(project).runs;
+  if (recovery.some(item => { const row = item as { runId?: string; state?: string; remaining?: string[]; preservedShared?: boolean }; return !siblingRuns.has(row.runId ?? '') && (row.preservedShared || row.state === 'error' || row.state === 'alive' || row.state === 'unknown' || (row.remaining?.length ?? 0) > 0); })) {
+    preserveShared.add(project);
+    process.stderr.write('Warning: prior test resources remain quarantined; shared database teardown is disabled.\n');
+  }
   const runId = randomBytes(12).toString('hex');
   const started = await lookup(process.pid);
   if (!started) throw new Error('cannot identify TypeScript test owner');
@@ -34,6 +40,7 @@ export async function prepareOwnership(project: TestProject, options: OwnershipO
   const ledger: Ledger = { runId, kind: 'typescript', state: 'running', coordinator: owner, slots: [], files: [], resources: [], cleanup: [{ recovery }] };
   await mkdir(join(root, '.brain-test-runs', runId, 'files'), { recursive: true });
   await writeLedger(root, ledger);
+  siblingRuns.add(runId);
   project.provide('brainTestRunId', runId);
   return async () => {
     const result = await recoverRuns(root, run, lookup, runId, owner);
@@ -42,17 +49,17 @@ export async function prepareOwnership(project: TestProject, options: OwnershipO
   };
 }
 type Cleanup = () => void | Promise<void>;
-type CloseState = { ownership: Cleanup[]; databases: Cleanup[] };
+type CloseState = { ownership: Cleanup[]; databases: Cleanup[]; preserveDatabase: boolean; runs: Set<string> };
 const closeKey = Symbol.for('brain.test-resource-close-state');
 function closeState(project: TestProject): CloseState {
   const host = project.vitest as unknown as Record<symbol, CloseState | undefined>;
   if (host[closeKey]) return host[closeKey]!;
-  const state: CloseState = { ownership: [], databases: [] }; host[closeKey] = state;
+  const state: CloseState = { ownership: [], databases: [], preserveDatabase: false, runs: new Set<string>() }; host[closeKey] = state;
   project.vitest.onClose(async () => {
     const errors: unknown[] = [];
     for (const cleanup of state.ownership) try { await cleanup(); } catch (error) { errors.push(error); }
     // Projects share the test database; a quarantined user fences that database.
-    if (!errors.length) for (const cleanup of state.databases) try { await cleanup(); } catch (error) { errors.push(error); }
+    if (!errors.length && !state.preserveDatabase) for (const cleanup of state.databases) try { await cleanup(); } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, 'test resource cleanup failed');
   });
   return state;
@@ -61,4 +68,5 @@ export function registerDatabaseCleanup(project: TestProject, cleanup: Cleanup):
 export default async function setup(project: TestProject, options: OwnershipOptions = {}): Promise<void> {
   const state = closeState(project);
   state.ownership.push(await prepareOwnership(project, options));
+  if (preserveShared.has(project)) state.preserveDatabase = true;
 }

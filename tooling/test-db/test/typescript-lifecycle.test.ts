@@ -140,10 +140,74 @@ it('permits parent recovery after a real shared DB user and owned group finish',
     await promisify(execFile)(process.execPath, [join(root, 'node_modules/vitest/vitest.mjs'), 'run', '--config', 'tooling/test-db/test/fixtures/ownership/vitest.config.ts'], { cwd: root, env, timeout: 120000 });
     const result = JSON.parse(await readFile(output, 'utf8')) as { runId: string; fileId: string; container: string };
     const base = join(root, '.brain-test-runs', result.runId);
-    expect(await readFile(join(base, result.fileId, 'shared-db.jsonl'), 'utf8')).toContain('acquired');
+    const leases = (await readFile(join(base, result.fileId, 'shared-db.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { state: string; fixtureId: string });
+    expect(leases).toHaveLength(2);
+    expect(leases[0]).toMatchObject({ state: 'acquired' });
+    expect(leases[1]).toMatchObject({ state: 'released', fixtureId: leases[0]!.fixtureId });
     const groups = (await readFile(join(base, result.fileId, 'processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { state: string; token: string });
     expect(groups.some(group => group.state === 'gone')).toBe(true);
     expect(JSON.parse(await readFile(join(root, '.brain-test-runs', `${result.runId}.json`), 'utf8')).state).toBe('completed');
     await expect(promisify(execFile)('docker', ['inspect', result.container])).rejects.toThrow(/no such/i);
   } finally { await rm(dir, { recursive: true, force: true }); }
 }, 150000);
+
+it('warns about a prior quarantined run but starts an independent run and preserves the shared database', async () => {
+  const { default: setup, registerDatabaseCleanup } = await import('./typescript-global-setup.js');
+  const { writeLedger } = await import('../src/slots/ledger.js');
+  const root = await mkdtemp(join(tmpdir(), 'ownership-prior-fence-'));
+  const callbacks: (() => Promise<void>)[] = []; let runId = '', removed = false;
+  const project = { provide: (_key: string, value: string) => { runId = value; }, vitest: { onClose: (callback: () => Promise<void>) => callbacks.push(callback) } } as unknown as import('vitest/node').TestProject;
+  try {
+    await writeLedger(root, { runId: 'prior', kind: 'typescript', state: 'running', coordinator: { pid: 123, started: 'old' }, slots: [], files: [], resources: [], cleanup: [] });
+    const fileId = 'a'.repeat(20), base = join(root, '.brain-test-runs', 'prior');
+    await mkdir(join(base, 'files'), { recursive: true }); await mkdir(join(base, fileId));
+    await writeFile(join(base, 'files', `${fileId}.json`), JSON.stringify({ fileId, worker: { pid: 124, started: 'old-worker' } }));
+    await writeFile(join(base, fileId, 'shared-db.jsonl'), '{"state":"used"}\n');
+    await writeFile(join(base, fileId, 'children.jsonl'), '{"state":"begin"}\n{"state":"spawned"}\n');
+    await setup(project, { root, env: {}, lookup: async pid => pid === process.pid ? 'current' : null, run: async () => ({ stdout: '' }) });
+    expect(runId).not.toBe('prior'); expect(runId).not.toBe('');
+    registerDatabaseCleanup(project, () => { removed = true; });
+    await callbacks[0]!(); expect(removed).toBe(false);
+    expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'prior.json'), 'utf8')).state).toBe('running');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('closes a shared Vitest host after both sibling projects finish', async () => {
+  const { default: setup, registerDatabaseCleanup } = await import('./typescript-global-setup.js');
+  const root = await mkdtemp(join(tmpdir(), 'sibling-projects-')), sentinel = join(root, 'database');
+  const callbacks: (() => Promise<void>)[] = [], ids: string[] = [];
+  const host = { onClose: (callback: () => Promise<void>) => callbacks.push(callback) };
+  const project = () => ({ vitest: host, provide: (_key: string, value: string) => ids.push(value) }) as unknown as import('vitest/node').TestProject;
+  const first = project(), second = project();
+  try {
+    await writeFile(sentinel, 'shared');
+    const options = { root, env: {}, lookup: async (pid: number) => pid === process.pid ? 'owner' : null, run: async () => ({ stdout: '' }) };
+    await setup(first, options); await setup(second, options);
+    expect(new Set(ids).size).toBe(2); expect(callbacks).toHaveLength(1);
+    registerDatabaseCleanup(first, async () => { await rm(sentinel); });
+    await callbacks[0]!();
+    await expect(readFile(sentinel, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    for (const id of ids) expect(JSON.parse(await readFile(join(root, '.brain-test-runs', `${id}.json`), 'utf8')).state).toBe('completed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('preserves shared resources across explicit release and the next setup and close', async () => {
+  const { default: setup, registerDatabaseCleanup } = await import('./typescript-global-setup.js');
+  const { writeLedger } = await import('../src/slots/ledger.js');
+  const { releaseQuarantine } = await import('../src/python-slots.js');
+  const root = await mkdtemp(join(tmpdir(), 'released-prior-')), sentinel = join(root, 'database');
+  const callbacks: (() => Promise<void>)[] = [];
+  const project = { provide: () => {}, vitest: { onClose: (callback: () => Promise<void>) => callbacks.push(callback) } } as unknown as import('vitest/node').TestProject;
+  try {
+    await writeFile(sentinel, 'preserve this');
+    await mkdir(join(root, '.brain-test-runs', 'prior', 'files'), { recursive: true });
+    await writeLedger(root, { runId: 'prior', kind: 'typescript', state: 'running', coordinator: { pid: 123, started: 'old' }, slots: [], files: [], resources: [], cleanup: [] });
+    const noDocker = async () => { throw new Error('release cannot access resources'); };
+    await releaseQuarantine(root, 'prior', noDocker, async () => null, async () => []);
+    await setup(project, { root, env: {}, lookup: async pid => pid === process.pid ? 'current' : null, run: async () => ({ stdout: '' }) });
+    registerDatabaseCleanup(project, async () => { await rm(sentinel); });
+    await callbacks[0]!();
+    expect(await readFile(sentinel, 'utf8')).toBe('preserve this');
+    expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'prior.json'), 'utf8'))).toMatchObject({ state: 'completed', preservedShared: true });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

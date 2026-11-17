@@ -30,7 +30,7 @@ it('records the gated child and group termination using the same token and PID',
     expect((await ownedDocker(['version'])).stdout).toBe('owned');
     const groups = (await readFile(journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { state: string; token: string; pid: number });
     const records = (await readFile(children, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { state: string; token?: string; pid?: number });
-    expect(groups.map(row => row.state)).toEqual(['active', 'gone']);
+    expect(groups.map(row => row.state)).toEqual(['active', 'termination-proof', 'gone']);
     expect(groups[0]!.token).toBe(groups[1]!.token); expect(groups[0]!.pid).toBe(groups[1]!.pid);
     expect(records).toContainEqual(expect.objectContaining({ state: 'pid', token: groups[0]!.token, pid: groups[0]!.pid }));
   } finally {

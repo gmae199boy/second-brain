@@ -14,7 +14,7 @@ import { checkClusterBoundary, createCluster, docker, inspectPort, isNoSuchObjec
 import { cleanupHookResources, hookResourcesAbsent } from './slots/hook-compose.js';
 import { ledgerPath, liveness, lookupProcess, readLedger, writeLedger, type Ledger, type Liveness, type Lookup, type Identity } from './slots/ledger.js';
 import { assertUnprotected } from './slots/protected.js';
-import { ProcessTracker, SharedProcessSampler, terminateGroup, type ProcessSample } from './slots/processes.js';
+import { ProcessTracker, SharedProcessSampler, terminateGroup, observeAbsentGroups, sampleProcesses, type ProcessSample, type Sampler } from './slots/processes.js';
 
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
@@ -187,7 +187,7 @@ function sharedResourcesRemain(contents: string): boolean {
   return [...leases.values()].some(released => !released);
 }
 
-export async function recoverRuns(root: string, run: Docker = docker, lookup: Lookup = lookupProcess, onlyRunId?: string, currentOwner?: Identity): Promise<unknown[]> {
+export async function recoverRuns(root: string, run: Docker = docker, lookup: Lookup = lookupProcess, onlyRunId?: string, currentOwner?: Identity, sampler?: Sampler): Promise<unknown[]> {
   const dir = join(root, '.brain-test-runs'), events: unknown[] = [];
   let entries: string[];
   try { entries = await readdir(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return events; throw error; }
@@ -199,9 +199,9 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
       if (ledger.runId !== id || !ledger.coordinator || !Number.isInteger(ledger.coordinator.pid) || typeof ledger.coordinator.started !== 'string') throw new Error('invalid ledger identity');
       if (ledger.kind !== undefined && ledger.kind !== 'direct' && ledger.kind !== 'coordinator' && ledger.kind !== 'typescript') throw new Error('invalid ledger kind');
       if (ledger.state !== undefined && ledger.state !== 'running' && ledger.state !== 'completed') throw new Error('invalid ledger state');
-      if (ledger.state === 'completed') { events.push({ runId: id, state: 'completed', removed: [] }); continue; }
+      if (ledger.state === 'completed') { events.push({ runId: id, state: 'completed', removed: [], ...(ledger.preservedShared ? { preservedShared: true } : {}) }); continue; }
       const state = await liveness(ledger.coordinator, lookup);
-      const event: { runId: string; state: string; removed: string[]; remaining?: string[]; hookCleanup?: unknown[] } = { runId: id, state, removed: [] }; events.push(event);
+      const event: { runId: string; state: string; removed: string[]; remaining?: string[]; hookCleanup?: unknown[]; preservedShared?: boolean } = { runId: id, state, removed: [] }; events.push(event);
       const ownsCurrentRun = Boolean(currentOwner && currentOwner.pid === process.pid && ledger.coordinator.pid === currentOwner.pid && ledger.coordinator.started === currentOwner.started && state === 'alive');
       if (!mayRecover(state) && !ownsCurrentRun) continue;
       const quarantinedFiles = new Set<string>(), cleanupErrors: string[] = [];
@@ -242,15 +242,24 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
             let contents = '';
             try { contents = await readFile(join(fileDir, 'processes.jsonl'), 'utf8'); }
             catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-            const groups = new Map<string, { pid: number; gone: boolean }>();
+            if (contents && !contents.endsWith('\n')) throw new Error('incomplete child process journal');
+            const groups = new Map<string, { pid: number; gone: boolean; proof: boolean }>();
             for (const line of contents.split('\n').filter(Boolean)) {
               const row = JSON.parse(line) as { token?: unknown; pid?: unknown; state?: unknown };
               if (typeof row.token !== 'string' || !/^[a-f0-9]{24}$/.test(row.token) || !Number.isInteger(row.pid) || (row.pid as number) <= 0) throw new Error('invalid child process journal');
-              if (row.state === 'active' && !groups.has(row.token)) groups.set(row.token, { pid: row.pid as number, gone: false });
+              if (row.state === 'active' && !groups.has(row.token)) groups.set(row.token, { pid: row.pid as number, gone: false, proof: false });
+              else if (row.state === 'termination-proof' && groups.get(row.token)?.pid === row.pid && !groups.get(row.token)?.gone && !groups.get(row.token)?.proof) groups.get(row.token)!.proof = true;
               else if (row.state === 'gone' && groups.get(row.token)?.pid === row.pid && !groups.get(row.token)?.gone) groups.get(row.token)!.gone = true;
               else throw new Error('invalid child process journal transition');
             }
-            if ([...groups.values()].some(group => !group.gone)) throw new Error('child process termination unconfirmed');
+            const unconfirmed = [...groups.entries()].filter(([, group]) => !group.gone);
+            if (unconfirmed.length) {
+              if (unconfirmed.some(([, group]) => !group.proof)) throw new Error('child process termination unconfirmed');
+              if (!await observeAbsentGroups(unconfirmed.map(([, group]) => group.pid), sampler)) throw new Error('child process termination unconfirmed');
+              ledger.cleanup.push({ at: new Date().toISOString(), fileId, observation: 'process-groups-absent', pgids: unconfirmed.map(([, group]) => group.pid) });
+              await writeLedger(root, ledger);
+              for (const [, group] of unconfirmed) group.gone = true;
+            }
             const children = new Map<string, { tool: boolean; pid?: number; completed: boolean }>();
             for (const row of guard.slice(1)) {
               if (row.state === 'sealed') continue;
@@ -265,6 +274,10 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
               const group = groups.get(token);
               if (child.pid && group?.pid === child.pid && group.gone) continue;
               throw new Error('untracked child safety unconfirmed');
+            }
+            if (hasShared) {
+              if (ownsCurrentRun) throw new Error('shared database lease remains');
+              ledger.preservedShared = true; event.preservedShared = true;
             }
           } catch (error) { quarantinedFiles.add(fileId); cleanupErrors.push(`file ${fileId}: ${String(error)}`); }
         }
@@ -371,11 +384,53 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
         if (ledger.kind === 'direct') await rm(join(dir, `${id}.lease.json`), { force: true });
         ledger.state = 'completed';
       }
-      ledger.cleanup.push({ recovery: event, errors: cleanupErrors, at: new Date().toISOString() }); await writeLedger(root, ledger);
+      ledger.cleanup.push({ recovery: event, errors: cleanupErrors, at: new Date().toISOString() });
+      await writeLedger(root, ledger);
       if (cleanupErrors.length) throw new Error(`cleanup incomplete: ${cleanupErrors.join('; ')}`);
     } catch (error) { events.push({ runId: id, state: 'error', error: String(error) }); }
   }
   return events;
+}
+/** A manual release lifts the run fence but preserves every owned resource. */
+export async function releaseQuarantine(root: string, runId: string, _run: Docker = docker, lookup: Lookup = lookupProcess, sampler: Sampler = sampleProcesses): Promise<unknown[]> {
+  const ledger = await readLedger(root, runId);
+  if (ledger.runId !== runId || ledger.kind !== 'typescript' || ledger.state === 'completed' || !ledger.coordinator || !Number.isInteger(ledger.coordinator.pid) || typeof ledger.coordinator.started !== 'string' || await liveness(ledger.coordinator, lookup) !== 'dead') throw new Error('run is not an eligible dead TypeScript owner');
+  ledger.cleanup.push({ action: 'explicit-release', phase: 'before', at: new Date().toISOString() });
+  await writeLedger(root, ledger);
+  let outcome = 'refused';
+  try {
+    const base = join(root, '.brain-test-runs', runId), registrations = await readdir(join(base, 'files'));
+    const rows = await sampler();
+    for (const entry of registrations) {
+      if (!/^[a-f0-9]{20}\.json$/.test(entry)) throw new Error('invalid file registration');
+      const fileId = entry.slice(0, -5);
+      const registration = JSON.parse(await readFile(join(base, 'files', entry), 'utf8')) as { fileId?: unknown; worker?: { pid?: unknown; started?: unknown } };
+      if (registration.fileId !== fileId || !Number.isInteger(registration.worker?.pid) || typeof registration.worker?.started !== 'string' || !registration.worker.started || await liveness({ pid: registration.worker.pid as number, started: registration.worker.started }, lookup) !== 'dead') throw new Error('worker termination unconfirmed');
+      for (const name of ['children.jsonl', 'processes.jsonl']) {
+        let contents: string;
+        try { contents = await readFile(join(base, fileId, name), 'utf8'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+        for (const line of contents.split('\n').filter(Boolean)) {
+          const item = JSON.parse(line) as { pid?: unknown };
+          if (item.pid !== undefined && (!Number.isSafeInteger(item.pid) || (item.pid as number) <= 1)) throw new Error('invalid child identity');
+          if (typeof item.pid === 'number' && rows.some(row => row.pid === item.pid || row.pgid === item.pid)) throw new Error('child process remains active');
+        }
+      }
+    }
+    for (const file of ledger.files) {
+      const id = (file as { fileId?: unknown })?.fileId;
+      if (typeof id !== 'string' || !registrations.includes(`${id}.json`)) throw new Error('file registration missing');
+    }
+    // Unknown children cannot be ruled out. No Docker, filesystem cleanup, or DB
+    // deletion is performed, and future shared-cluster teardown remains fenced.
+    ledger.preservedShared = true;
+    ledger.state = 'completed';
+    outcome = 'released-resources-preserved';
+    return [{ runId, state: outcome, preservedShared: true }];
+  } finally {
+    ledger.cleanup.push({ action: 'explicit-release', phase: 'after', at: new Date().toISOString(), outcome });
+    await writeLedger(root, ledger);
+  }
 }
 async function manifest(config: string, signal: AbortSignal): Promise<string[]> {
   const env: NodeJS.ProcessEnv = { ...withoutFileOwnership(process.env), BRAIN_TEST_DATABASE_URL: 'postgres://unused:unused@127.0.0.1:1/postgres' };
@@ -553,7 +608,11 @@ async function runCoordinator(options: Options): Promise<number> {
   };
   try {
     report.recovery = await recoverRuns(repo);
-    if (report.recovery.some(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; })) failed = true;
+    const recoveryIssues = report.recovery.filter(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; });
+    if (recoveryIssues.length || report.recovery.some(item => (item as { preservedShared?: boolean }).preservedShared)) {
+      process.stderr.write(`Warning: previous test resources quarantined: ${JSON.stringify(recoveryIssues)}\n`);
+      if (options.recover) failed = true;
+    }
     if (!options.recover) {
       await mkdir(join(repo, '.brain-test-runs'), { recursive: true });
       await mkdir(runDir, { recursive: false });
@@ -670,6 +729,13 @@ async function runCoordinator(options: Options): Promise<number> {
   return signal ? exitStatus(true, signal) : usageError ? 2 : exitStatus(failed);
 }
 export async function main(args: string[]): Promise<number> {
+  if (args[0] === '--release-quarantine') {
+    if (args.length !== 3 || args[1] !== '--run-id' || !/^[a-zA-Z0-9_-]+$/.test(args[2] ?? '')) { process.stderr.write('usage: --release-quarantine --run-id ID\n'); return 2; }
+    let events: unknown[];
+    try { events = await releaseQuarantine(repo, args[2]!); } catch (error) { process.stderr.write(`Release refused: ${String(error)}\n`); return 1; }
+    process.stderr.write(`Explicit quarantine release: ${JSON.stringify(events)}\n`);
+    return events.length && !events.some(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; }) ? 0 : 1;
+  }
   let options: Options;
   try { options = parseArgs(args); } catch (e) { process.stderr.write(`${String(e)}\n`); return 2; }
   try { return await runCoordinator(options); } catch (e) { process.stderr.write(`${String(e)}\n`); return 1; }

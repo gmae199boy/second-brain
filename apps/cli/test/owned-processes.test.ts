@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { liveness, lookupProcess } from '../../../tooling/test-db/src/slots/ledger.js';
-import { sampleProcesses } from '../../../tooling/test-db/src/slots/processes.js';
+import { sampleProcesses, terminateGroup } from '../../../tooling/test-db/src/slots/processes.js';
 import { TimeoutProcessSupervisor } from './timeout-process-supervisor.js';
 import { expect, it, vi } from 'vitest';
 import { closeTestScope, OwnedProcesses } from './owned-processes.js';
@@ -61,7 +61,7 @@ it('writes one active and one gone record even when close is repeated', async ()
     const child = scope.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']); child.stdout.resume(); child.stderr.resume();
     await scope.close(); await scope.close();
     const events = (await readFile(path, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { token: string; pid: number; state: string });
-    expect(events.map(event => event.state)).toEqual(['active', 'gone']);
+    expect(events.map(event => event.state)).toEqual(['active', 'termination-proof', 'gone']);
     expect(events[0]?.token).toBe(events[1]?.token); expect(events[0]?.pid).toBe(child.pid);
     const guardToken = (child as unknown as Record<symbol, string>)[Symbol.for('brain.test.child-token')];
     if (guardToken) expect(events[0]?.token).toBe(guardToken);
@@ -165,7 +165,11 @@ it('returns ownership after only the child PID append fails and never releases t
     if ((record as { state?: string }).state === 'pid') throw originalError;
     appendFileSync(journal, JSON.stringify(record) + '\n', { mode: 0o600 });
   });
-  const scope = new OwnedProcesses();
+  const observation: { actualState: 'gone' | 'alive' | 'unknown' } = { actualState: 'unknown' };
+  const scope = new OwnedProcesses(sampleProcesses, async (pid, tracker) => {
+    observation.actualState = await terminateGroup(pid, tracker);
+    return 'unknown'; // Inject an unconfirmed cleanup after the real termination attempt.
+  });
   let child: ReturnType<OwnedProcesses['spawn']> | undefined;
   try {
     child = scope.spawn(process.execPath, ['-e', 'require("fs").writeFileSync(process.argv[1], "ran")', marker]);
@@ -173,8 +177,11 @@ it('returns ownership after only the child PID append fails and never releases t
     expect((child as unknown as Record<symbol, unknown>)[Symbol.for('brain.test.child-journal-error')]).toBe(originalError);
     const failure = await new Promise<Error>(resolve => child!.once('error', resolve));
     expect(failure.cause).toBe(originalError);
-    await expect(scope.close()).rejects.toThrow('synthetic PID journal failure');
-    expect(() => process.kill(child!.pid!, 0)).toThrow();
+    const closeError = await scope.close().then(() => { throw new Error('expected quarantine'); }, error => error as Error);
+    expect(closeError.message).toContain('unknown');
+    expect(closeError.message).toContain('synthetic PID journal failure');
+    expect(closeError.cause).toBe(originalError);
+    if (observation.actualState === 'gone') expect(() => process.kill(child!.pid!, 0)).toThrow();
     await expect(readFile(marker, 'utf8')).rejects.toThrow();
     const rows = (await readFile(journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { state: string });
     expect(rows.some(row => row.state === 'spawned')).toBe(true); expect(rows.some(row => row.state === 'pid')).toBe(false);
@@ -339,11 +346,34 @@ it('does not repeat a completed group journal transition when another group is q
     await new Promise<void>(resolve => second.once('error', () => resolve()));
     await expect(scope.close()).rejects.toThrow('unknown'); await expect(scope.close()).rejects.toThrow('unknown');
     const records = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { pid: number; state: string });
-    expect(records.filter(record => record.pid === first.pid).map(record => record.state)).toEqual(['active', 'gone']);
+    expect(records.filter(record => record.pid === first.pid).map(record => record.state)).toEqual(['active', 'termination-proof', 'gone']);
     expect(records.filter(record => record.pid === second.pid)).toEqual([]);
   } finally {
     if (old === undefined) delete process.env.BRAIN_TEST_PROCESS_LOG; else process.env.BRAIN_TEST_PROCESS_LOG = old;
     try { await scope.close(); } catch { /* intentionally unresolved journal */ }
     // The intentionally unresolved journal is retained for quarantine.
+  }
+}, 20000);
+
+it('preserves the PID journal cause even if the first identity sample fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'guard-sample-failure-')), journal = join(dir, 'children'), marker = join(dir, 'target');
+  const original = new Error('synthetic PID journal failure');
+  const unguard = installChildGuard(journal, record => {
+    if ((record as { state?: string }).state === 'pid') throw original;
+    appendFileSync(journal, JSON.stringify(record) + '\n', { mode: 0o600 });
+  });
+  const scope = new OwnedProcesses(async () => { throw new Error('synthetic snapshot failure'); });
+  let child: ReturnType<OwnedProcesses['spawn']> | undefined;
+  try {
+    child = scope.spawn(process.execPath, ['-e', 'require("fs").writeFileSync(process.argv[1], "ran")', marker]);
+    const failure = await new Promise<Error>(resolve => child!.once('error', resolve));
+    expect(failure.cause).toBe(original);
+    const closeError = await scope.close().then(() => { throw new Error('expected quarantine'); }, error => error as Error);
+    expect(closeError.message).toContain('unknown'); expect(closeError.cause).toBe(original);
+    await expect(readFile(marker, 'utf8')).rejects.toThrow();
+  } finally {
+    try { await scope.close(); } catch { /* unknown ownership remains fenced */ }
+    unguard();
+    if (child?.pid && await lookupProcess(child.pid) === null) await rm(dir, { recursive: true, force: true });
   }
 }, 20000);

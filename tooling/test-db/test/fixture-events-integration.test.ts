@@ -62,6 +62,8 @@ it('uses one fixture identity for validated shared slot boundary, create and dro
 it('records shared usage only for a shared backend, never for an isolated fixture', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'backend-marker-')), marker = join(dir, 'shared-db.jsonl');
   const previousDir = process.env.BRAIN_TEST_FILE_DIR, previousUrl = process.env.BRAIN_TEST_DATABASE_URL;
+  const previousRun = process.env.BRAIN_TEST_RUN_ID, previousFile = process.env.BRAIN_TEST_FILE_ID;
+  process.env.BRAIN_TEST_RUN_ID = 'a'.repeat(24); process.env.BRAIN_TEST_FILE_ID = 'b'.repeat(20);
   process.env.BRAIN_TEST_FILE_DIR = dir;
   process.env.BRAIN_TEST_DATABASE_URL = 'postgres://unused:unused@127.0.0.1:1/postgres';
   let isolated: Awaited<ReturnType<typeof createIsolatedTestDatabase>> | undefined;
@@ -74,13 +76,17 @@ it('records shared usage only for a shared backend, never for an isolated fixtur
     const acquired = JSON.parse((await readFile(marker, 'utf8')).trim());
     expect(acquired).toMatchObject({ state: 'acquired', fixtureId: expect.stringMatching(/^[a-f0-9]{24}$/) });
     const name = new URL(shared.url).pathname.slice(1);
+    const owner = { runId: 'a'.repeat(24), fileId: 'b'.repeat(20), fixtureId: acquired.fixtureId, database: name };
+    expect(acquired).toMatchObject(owner);
+    const comment = await isolated.rows<{ description: string }>(`select shobj_description(oid, 'pg_database') as description from pg_database where datname = '${name}'`);
+    expect(JSON.parse(comment[0]!.description)).toEqual(owner);
     const otherDir = await mkdtemp(join(tmpdir(), 'other-marker-'));
     try {
       process.env.BRAIN_TEST_FILE_DIR = otherDir;
       await shared.drop();
       await shared.drop();
       const rows = (await readFile(marker, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-      expect(rows).toEqual([acquired, { state: 'released', fixtureId: acquired.fixtureId }]);
+      expect(rows).toEqual([acquired, { ...acquired, state: 'released' }]);
       expect(await isolated.rows(`select datname from pg_database where datname = '${name}'`)).toEqual([]);
       await expect(readFile(join(otherDir, 'shared-db.jsonl'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       shared = undefined;
@@ -90,6 +96,8 @@ it('records shared usage only for a shared backend, never for an isolated fixtur
     try { await shared?.drop(); } finally { try { await isolated?.drop(); } finally {
       if (previousDir === undefined) delete process.env.BRAIN_TEST_FILE_DIR; else process.env.BRAIN_TEST_FILE_DIR = previousDir;
       if (previousUrl === undefined) delete process.env.BRAIN_TEST_DATABASE_URL; else process.env.BRAIN_TEST_DATABASE_URL = previousUrl;
+      if (previousRun === undefined) delete process.env.BRAIN_TEST_RUN_ID; else process.env.BRAIN_TEST_RUN_ID = previousRun;
+      if (previousFile === undefined) delete process.env.BRAIN_TEST_FILE_ID; else process.env.BRAIN_TEST_FILE_ID = previousFile;
       await rm(dir, { recursive: true, force: true });
     } }
   }

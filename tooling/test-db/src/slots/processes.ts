@@ -1,3 +1,4 @@
+import { openSync, writeSync, fsyncSync, closeSync } from 'node:fs';
 import { fixedProcessSnapshot } from './internal-ps.js';
 import type { Identity } from './ledger.js';
 export interface ProcessSample extends Identity { ppid: number; pgid: number; cpu: number; time: string; status?: string }
@@ -10,6 +11,23 @@ export function parseProcesses(output: string): ProcessSample[] {
   });
 }
 export const sampleProcesses: Sampler = async () => parseProcesses(await fixedProcessSnapshot());
+/** A single successful OS snapshot proves absence only for the exact group. */
+export async function observeAbsentGroups(pgids: number[], sampler: Sampler = sampleProcesses): Promise<boolean> {
+  if (pgids.some(id => !Number.isSafeInteger(id) || id <= 1)) return false;
+  try { const rows = await sampler(); return pgids.every(id => !rows.some(row => row.pgid === id || row.pid === id)); }
+  catch { return false; }
+}
+/** Persist only after terminateGroup reports gone; a torn write remains untrusted. */
+export function recordTerminationProof(path: string | undefined, token: string, pid: number): void {
+  if (!path) return;
+  const fd = openSync(path, 'a', 0o600);
+  try {
+    const line = Buffer.from(JSON.stringify({ token, pid, state: 'termination-proof' }) + '\n');
+    if (writeSync(fd, line) !== line.length) throw new Error('incomplete termination proof');
+    fsyncSync(fd);
+  }
+  finally { closeSync(fd); }
+}
 const key = (p: Identity) => `${p.pid}:${p.started}`;
 export class ProcessTracker {
   readonly descendants = new Map<string, ProcessSample>();

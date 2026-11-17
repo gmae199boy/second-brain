@@ -35,3 +35,22 @@ it('skips an already failed home for this attempt and cleans independent homes',
     await homes.cleanup(); expect(attempts).toBe(2); expect(registry.get(first)).toBeUndefined(); await expect(stat(first)).rejects.toThrow();
   } finally { await homes.cleanup(); }
 });
+
+it('starts independent cleanup without waiting for a stalled database drop', async () => {
+  let release!: () => void;
+  const stalled = new Promise<void>(resolve => { release = resolve; });
+  let first = '', second = '', secondStarted!: () => void;
+  const secondDrop = new Promise<void>(resolve => { secondStarted = resolve; });
+  const homes = tempHomes(async path => {
+    if (path === first) await stalled;
+    if (path === second) secondStarted();
+  });
+  first = await homes.create('stalled-home-'); second = await homes.create('parallel-home-');
+  const cleanup = homes.cleanup();
+  try {
+    await secondDrop;
+    await expect(stat(first)).resolves.toBeDefined();
+  } finally { release(); await cleanup; }
+  await expect(stat(first)).rejects.toThrow();
+  await expect(stat(second)).rejects.toThrow();
+});

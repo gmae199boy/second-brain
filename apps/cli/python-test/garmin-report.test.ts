@@ -11,6 +11,7 @@ import { runDaemon } from '../src/daemon/run.js';
 import { systemClock } from '../src/runtime/clock.js';
 import { uuidV7IdGen } from '../src/runtime/id-gen.js';
 import { openReportTransactions } from './garmin-report-observer.js';
+import { extensionDatabaseUrl } from '../src/config/codec.js';
 
 const root=fileURLToPath(new URL('../../../extensions/garmin/tests/report-fixture/',import.meta.url));
 const self='01940000-0000-7000-8000-00000000000a';
@@ -122,8 +123,28 @@ it('isolates accounts and leaves no open extension transaction while the model w
   const t=await setup();
   try {
     await writeFile(join(t.control,`hold-${t.account}-day`),'hold'); await writeFile(join(t.control,`hold-${t.other}-day`),'hold');
-    const a=await t.enqueue(t.account), b=await t.enqueue(t.other); await Promise.all([t.waitCall(a,'day'),t.waitCall(b,'day')]);
-    expect(await openReportTransactions(sql=>t.fixture.db.rows(sql),'brain_ext_garmin')).toBe(0);
+    // Each report uses two concurrent scope workers. Hold every non-day scope
+    // before enqueue so neither worker can finish and issue short fenced writes
+    // while the observer checks the still-waiting model calls.
+    for (const scope of ['7d','30d','all']) await writeFile(join(t.control,`hold-${scope}`),'hold');
+    const a=await t.enqueue(t.account), b=await t.enqueue(t.other);
+    const waiting = await Promise.all([t.waitCall(a,'day'),t.waitCall(b,'day'),t.waitCall(a,'7d'),t.waitCall(b,'7d')]);
+    expect(waiting.every(call => pidAlive(call.pid))).toBe(true);
+    const observe = () => openReportTransactions(sql=>t.fixture.db.rows(sql),'brain_ext_garmin');
+    expect(await observe()).toBe(0);
+    // Prove that the same observer detects a real extension transaction while
+    // the four model calls remain blocked; never filter away a genuine leak.
+    const { default: pg } = await import('pg');
+    const probe = new pg.Client({ connectionString: await extensionDatabaseUrl(t.home, 'garmin', t.fixture.db.appUrl) });
+    await probe.connect();
+    try {
+      await probe.query('begin');
+      expect(await observe()).toBe(1);
+      await probe.query('rollback');
+      expect(await observe()).toBe(0);
+    } finally { await probe.end(); }
+    expect(waiting.every(call => pidAlive(call.pid))).toBe(true);
+    for (const scope of ['7d','30d','all']) await unlink(join(t.control,`hold-${scope}`));
     await unlink(join(t.control,`hold-${t.other}-day`)); await t.outcome(b,'succeeded');
     expect((await t.revisions(t.account)).map(row=>row.scope)).not.toContain('day'); expect(await t.revisions(t.other)).toHaveLength(4);
     await unlink(join(t.control,`hold-${t.account}-day`)); await t.outcome(a,'succeeded'); expect(await t.revisions(t.account)).toHaveLength(4);

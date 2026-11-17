@@ -89,3 +89,11 @@ it('diagnoses still-owned fixtures only for a failing test and unregisters after
     unregister(); await diagnoseTestFailure(); expect(phases).toEqual(['test-failure-diagnostic']);
   } finally { unregister(); setFailureProbe(); }
 });
+
+it('produces only validated, non-secret shared database ownership metadata', async () => {
+  const { sharedDatabaseOwner } = await import('../src/index.js');
+  const database = 'brain_test_123456abcdef', fixtureId = 'e'.repeat(24);
+  expect(sharedDatabaseOwner(database, fixtureId, { BRAIN_TEST_RUN_ID: runId, BRAIN_TEST_FILE_ID: fileId, SECRET: 'hidden' })).toEqual({ runId, fileId, fixtureId, database });
+  expect(sharedDatabaseOwner(database, fixtureId, { BRAIN_TEST_RUN_ID: "bad'", BRAIN_TEST_FILE_ID: fileId })).toBeUndefined();
+  expect(sharedDatabaseOwner('postgres', fixtureId, { BRAIN_TEST_RUN_ID: runId, BRAIN_TEST_FILE_ID: fileId })).toBeUndefined();
+});

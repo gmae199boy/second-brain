@@ -219,6 +219,23 @@ it('grants the approved view to a role provisioned before the view migration', a
   }
 });
 
+// The role may have committed even when the subsequent login verification fails.
+// Never remove a role unless its database-specific ownership marker matches.
+async function cleanupMigrationRole(query: (sql: string, values?: string[]) => Promise<{ rows: { marker?: string | null }[] }>, role: string, databaseName: string): Promise<void> {
+  if (!/^brain_ext_x[a-f0-9]{10}$/.test(role)) throw new Error('invalid test role');
+  const result = await query("select shobj_description(oid, 'pg_authid') as marker from pg_roles where rolname=$1", [role]);
+  if (result.rows[0]?.marker === `second-brain extension:${databaseName}`) await query(`drop owned by "${role}"; drop role "${role}"`);
+}
+
+it('cleans a committed migration role only when its fixture ownership marker matches', async () => {
+  const role = 'brain_ext_x0123456789';
+  for (const [marker, shouldDrop] of [['second-brain extension:brain_test_abcdef123456', true], ['second-brain extension:other', false], [null, false]] as const) {
+    const calls: string[] = [];
+    await cleanupMigrationRole(async sql => { calls.push(sql); return { rows: [{ marker }] }; }, role, 'brain_test_abcdef123456');
+    expect(calls.some(sql => sql.startsWith('drop owned'))).toBe(shouldDrop);
+  }
+});
+
 it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한다', async () => {
   const { mkdtemp, readdir, copyFile, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
@@ -228,13 +245,13 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
   const db = await database(false), dir = await mkdtemp(join(tmpdir(), 'brain-v18-role-'));
   const name = `x${randomBytes(5).toString('hex')}`, role = `brain_ext_${name}`, password = randomBytes(24).toString('hex');
   const admin = new pg.Client({ connectionString: db.url });
-  let owned = false;
+  let adminConnected = false;
   try {
-    await admin.connect();
+    await admin.connect(); adminConnected = true;
     const source = fileURLToPath(new URL('../migrations/', import.meta.url));
     for (const file of (await readdir(source)).filter(file => /^\d{4}_/.test(file) && file < '0019')) await copyFile(join(source, file), join(dir, file));
     expect(await runMigrations({ databaseUrl: db.url, clock, owners: [{ owner: 'core', directory: dir }] })).toMatchObject({ ok: true, to: 18 });
-    await provisionExtension(db.url, name, password); owned = true;
+    await provisionExtension(db.url, name, password);
     expect(await runMigrations({ databaseUrl: db.url, clock })).toMatchObject({ ok: true, from: 18, to: CORE_SCHEMA_VERSION });
     await provisionExtension(db.url, name, password);
     const url = new URL(db.url); url.username = role; url.password = password;
@@ -261,7 +278,7 @@ it('v18의 확장 역할을 v19로 이전하고 최소 권한으로 재설정한
       }
     } finally { await ext.end(); }
   } finally {
-    if (owned) await admin.query(`drop owned by "${role}"; drop role "${role}"`);
+    if (adminConnected) await cleanupMigrationRole((sql, values) => admin.query(sql, values), role, new URL(db.url).pathname.slice(1));
     await admin.end(); await db.drop(); await rm(dir, { recursive: true, force: true });
   }
 });

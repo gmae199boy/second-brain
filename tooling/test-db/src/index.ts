@@ -84,6 +84,13 @@ export function requireAdminDatabaseUrl(): string {
   return url;
 }
 
+/** Publicly safe ownership metadata: no URLs, paths, credentials, or free-form values. */
+export function sharedDatabaseOwner(database: string, fixtureId: string, env: NodeJS.ProcessEnv = process.env): { runId: string; fileId: string; fixtureId: string; database: string } | undefined {
+  const runId = env.BRAIN_TEST_RUN_ID, fileId = env.BRAIN_TEST_FILE_ID;
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(runId ?? '') || !/^[a-f0-9]{20}$/.test(fileId ?? '') || !/^[a-f0-9]{24}$/.test(fixtureId) || !/^brain_test_[a-f0-9]{12}$/.test(database)) return undefined;
+  return { runId: runId!, fileId: fileId!, fixtureId, database };
+}
+
 /**
  * Create a throwaway `brain_test_<random>` database,  and hand back its URL plus the way to drop it.
  */
@@ -95,15 +102,17 @@ async function createDatabaseAt(adminUrl: string, telemetry = new FixtureTelemet
   // Capture the owning file at acquisition; later environment changes must not redirect release.
   const journal = telemetry.backend === 'shared' && process.env.BRAIN_TEST_FILE_DIR
     ? join(process.env.BRAIN_TEST_FILE_DIR, 'shared-db.jsonl') : undefined;
+  const name = `brain_test_${randomBytes(6).toString('hex')}`;
+  const owner = sharedDatabaseOwner(name, telemetry.fixtureId, process.env);
   const recordLease = (state: 'acquired' | 'released') => {
-    if (journal) appendFileSync(journal, JSON.stringify({ state, fixtureId: telemetry.fixtureId }) + '\n', { mode: 0o600 });
+    if (journal) appendFileSync(journal, JSON.stringify({ state, fixtureId: telemetry.fixtureId, database: name, ...owner }) + '\n', { mode: 0o600 });
   };
   recordLease('acquired');
-  const name = `brain_test_${randomBytes(6).toString('hex')}`;
 
   try {
     await withAdminClient(adminUrl, async (client) => {
       await telemetry.measure('database-create', () => client.query(`create database "${name}"`));
+      if (telemetry.backend === 'shared' && owner) await client.query(`comment on database "${name}" is '${JSON.stringify(owner)}'`);
     }, telemetry);
   } catch (error) {
     if (lease) await diagnoseSlot(lease, adminUrl, telemetry, error);
@@ -144,8 +153,8 @@ async function createDatabaseAt(adminUrl: string, telemetry = new FixtureTelemet
       if (lease) await diagnoseSlot(lease, adminUrl, telemetry, new Error('pre-drop'), testHasFailed() ? 'test-failure-diagnostic' : 'pre-drop-diagnostic');
       try {
         await telemetry.measure('database-drop', () => withAdminClient(adminUrl, async (admin) => {
-          await admin.query(`drop database if exists "${name}" with (force)`);
-        }));
+          await dropProgress(telemetry.fixtureId, 'ddl', () => admin.query(`drop database if exists "${name}" with (force)`));
+        }, undefined, telemetry.fixtureId));
       } catch (error) { if (lease) await diagnoseSlot(lease, adminUrl, telemetry, error); throw error; }
       dropped = true; unregister();
       try { recordLease('released'); } catch (error) { releaseError = error; throw error; }
@@ -299,18 +308,35 @@ export async function createIsolatedTestDatabase(telemetry = new FixtureTelemetr
   }
 }
 
+async function dropProgress<T>(fixtureId: string, phase: string, action: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  const record = (state: string) => {
+    try {
+      const line = JSON.stringify({ event: 'test-db-drop-progress', fixtureId, phase, state, elapsedMs: Math.round(performance.now() - started) }) + '\n';
+      if (process.env.BRAIN_TEST_METRICS_LOG) appendFileSync(process.env.BRAIN_TEST_METRICS_LOG, line, { mode: 0o600 });
+      else process.stdout.write(line);
+    } catch { /* Diagnostics must not affect resource cleanup. */ }
+  };
+  record('started');
+  try { const result = await action(); record('finished'); return result; }
+  catch (error) { record('failed'); throw error; }
+}
+
 async function withAdminClient(
   adminUrl: string,
   run: (client: pg.Client) => Promise<void>,
   telemetry?: FixtureTelemetry,
+  dropFixtureId?: string,
 ): Promise<void> {
   const client = new pg.Client({ connectionString: adminUrl });
   try {
     if (telemetry) await telemetry.measure('sql-ready', async () => { await client.connect(); await client.query('select 1'); });
+    else if (dropFixtureId) await dropProgress(dropFixtureId, 'admin-connect', () => client.connect());
     else await client.connect();
     await run(client);
   } finally {
-    await client.end();
+    if (dropFixtureId) await dropProgress(dropFixtureId, 'admin-close', () => client.end());
+    else await client.end();
   }
 }
 

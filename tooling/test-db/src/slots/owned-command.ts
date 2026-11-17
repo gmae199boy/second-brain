@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
-import { ProcessTracker, sampleProcesses, terminateGroup, type ProcessSample } from './processes.js';
+import { ProcessTracker, sampleProcesses, terminateGroup, recordTerminationProof, type ProcessSample } from './processes.js';
 
 /** Private infrastructure command. The shell cannot exec the target until its
  * identity and detached group have been sampled and durably journaled. */
@@ -55,7 +55,7 @@ export async function ownedDocker(args: string[], options: { timeout?: number; m
     if (tracker) {
       const state = await terminateGroup(pid, tracker);
       if (state !== 'gone') throw new Error(`owned command termination ${state}`);
-      if (active) record('gone');
+      if (active) { recordTerminationProof(process.env.BRAIN_TEST_PROCESS_LOG, token, pid); record('gone'); }
     } else {
       // The gate has not been released. Do not signal an unverified PID; its
       // unresolved guard record fences recovery for an operator to inspect.

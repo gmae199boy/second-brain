@@ -2492,11 +2492,13 @@ describe('brain sessions ingest claude-code when the database will not take the 
       child.once('error', reject);
       child.once('close', () => reject(new Error(`the lock holder stopped: ${errors}`)));
     });
+    const closed = new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve();
+      else child.once('close', () => resolve());
+    });
     return async () => {
       child.kill('SIGKILL');
-      await new Promise<void>((resolve) => {
-        child.once('close', () => resolve());
-      });
+      await closed;
     };
   }
 

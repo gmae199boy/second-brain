@@ -12,7 +12,8 @@ it('exposes the real parent run and file registration', async () => {
   const db = process.env.OWNERSHIP_LEAK_FIXTURE ? await createIsolatedTestDatabase() : undefined;
   if (process.env.OWNERSHIP_SHARED_TEST && db) {
     process.env.BRAIN_TEST_DATABASE_URL = db.url;
-    await createTestDatabase();
+    const shared = await createTestDatabase();
+    await shared.drop();
     await ownedDocker(['version', '--format', '{{.Client.Version}}']);
   }
   if (process.env.OWNERSHIP_WRITE_CHILD) spawnSync(process.execPath, ['-e', 'process.exit(0)']);
