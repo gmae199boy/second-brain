@@ -12,7 +12,7 @@ import { finished } from 'node:stream/promises';
 import pg from 'pg';
 import { checkClusterBoundary, createCluster, docker, inspectPort, isNoSuchObject, recoverCluster, removeCluster, removeOwnedCluster, type Cluster, type Docker } from './slots/cluster.js';
 import { cleanupHookResources, hookResourcesAbsent } from './slots/hook-compose.js';
-import { ledgerPath, liveness, lookupProcess, readLedger, writeLedger, type Ledger, type Liveness, type Lookup, type Identity } from './slots/ledger.js';
+import { ledgerPath, liveness, validIdentity, lookupProcess, readLedger, writeLedger, type Ledger, type Liveness, type Lookup, type Identity } from './slots/ledger.js';
 import { assertUnprotected } from './slots/protected.js';
 import { ProcessTracker, SharedProcessSampler, terminateGroup, observeAbsentGroups, sampleProcesses, type ProcessSample, type Sampler } from './slots/processes.js';
 
@@ -58,6 +58,7 @@ export function parseArgs(args: string[]): Options {
     else if (arg === '--order') out.order = value;
     else { if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('invalid run ID'); out.runId = value; }
   }
+  if (out.recover && !out.runId) throw new Error('--recover requires --run-id');
   return out;
 }
 export function orderedFiles(files: string[], durations: Record<string, number> = {}): string[] {
@@ -196,7 +197,7 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
     if (onlyRunId && id !== onlyRunId) continue;
     try {
       const ledger = await readLedger(root, id);
-      if (ledger.runId !== id || !ledger.coordinator || !Number.isInteger(ledger.coordinator.pid) || typeof ledger.coordinator.started !== 'string') throw new Error('invalid ledger identity');
+      if (ledger.runId !== id || !ledger.coordinator || !validIdentity(ledger.coordinator)) throw new Error('invalid ledger identity');
       if (ledger.kind !== undefined && ledger.kind !== 'direct' && ledger.kind !== 'coordinator' && ledger.kind !== 'typescript') throw new Error('invalid ledger kind');
       if (ledger.state !== undefined && ledger.state !== 'running' && ledger.state !== 'completed') throw new Error('invalid ledger state');
       if (ledger.state === 'completed') { events.push({ runId: id, state: 'completed', removed: [], ...(ledger.preservedShared ? { preservedShared: true } : {}) }); continue; }
@@ -340,7 +341,7 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
           if (!Number.isInteger(descendant.pid) || typeof descendant.started !== 'string') throw new Error('invalid descendant identity');
           tracker.descendants.set(`${descendant.pid}:${descendant.started}`, descendant);
         }
-        const state = await terminateGroup(child.pgid as number, tracker, { deadlineMs: 10_000 });
+        const state = await terminateGroup(child.pgid as number, tracker, { deadlineMs: 10_000, sampler });
         if (state !== 'gone') throw new Error(`recorded child cleanup ${state}`);
       }
       for (const file of ledger.files) {
@@ -391,10 +392,37 @@ export async function recoverRuns(root: string, run: Docker = docker, lookup: Lo
   }
   return events;
 }
+/** Diagnose prior runs without signalling, Docker access, or changing their ledgers. */
+export async function inspectPriorRuns(root: string, lookup: Lookup = lookupProcess): Promise<{ runId: string; state: string; preservedShared?: boolean }[]> {
+  let entries: string[];
+  try { entries = await readdir(join(root, '.brain-test-runs')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+  return Promise.all(entries.filter(e => /^[a-zA-Z0-9_-]+\.json$/.test(e)).map(async entry => {
+    const runId = entry.slice(0, -5);
+    try {
+      const ledger = await readLedger(root, runId);
+      if (ledger.runId !== runId || !ledger.coordinator || !validIdentity(ledger.coordinator) || !['running', 'completed'].includes(ledger.state ?? '')) throw new Error('invalid ledger identity');
+      return { runId, state: ledger.state === 'completed' ? 'completed' : await liveness(ledger.coordinator, lookup), ...(ledger.preservedShared ? { preservedShared: true } : {}) };
+    } catch { return { runId, state: 'unknown' }; }
+  }));
+}
+
+/** Explicit recovery never visits another run and fails unless cleanup actually completes. */
+export async function recoverTarget(root: string, runId: string, run?: Docker, lookup: Lookup = lookupProcess, sampler?: Sampler): Promise<unknown[]> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(runId)) throw new Error('invalid recovery run ID');
+  const ledger = await readLedger(root, runId);
+  if (ledger.runId !== runId || ledger.state !== 'running' || !ledger.coordinator || !validIdentity(ledger.coordinator)) throw new Error('target is not a running ledger');
+  const events = await recoverRuns(root, run, lookup, runId, undefined, sampler);
+  const failure = events.find(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; });
+  if (failure) throw new Error(`target recovery failed: ${JSON.stringify(failure)}`);
+  if (!events.length || (await readLedger(root, runId)).state !== 'completed') throw new Error('target recovery incomplete: owner or resources unconfirmed');
+  return events;
+}
+
 /** A manual release lifts the run fence but preserves every owned resource. */
 export async function releaseQuarantine(root: string, runId: string, _run: Docker = docker, lookup: Lookup = lookupProcess, sampler: Sampler = sampleProcesses): Promise<unknown[]> {
   const ledger = await readLedger(root, runId);
-  if (ledger.runId !== runId || ledger.kind !== 'typescript' || ledger.state === 'completed' || !ledger.coordinator || !Number.isInteger(ledger.coordinator.pid) || typeof ledger.coordinator.started !== 'string' || await liveness(ledger.coordinator, lookup) !== 'dead') throw new Error('run is not an eligible dead TypeScript owner');
+  if (ledger.runId !== runId || ledger.kind !== 'typescript' || ledger.state === 'completed' || !ledger.coordinator || !validIdentity(ledger.coordinator) || await liveness(ledger.coordinator, lookup) !== 'dead') throw new Error('run is not an eligible dead TypeScript owner');
   ledger.cleanup.push({ action: 'explicit-release', phase: 'before', at: new Date().toISOString() });
   await writeLedger(root, ledger);
   let outcome = 'refused';
@@ -448,7 +476,14 @@ async function fingerprint(): Promise<Record<string, unknown>> {
   return { node: process.version, sha, pnpm, vitest, python314, python312, pnpmLock, uvLock, image, dockerInfo };
 }
 interface Slot { id: string; generation: number; cluster?: Cluster; quarantined: boolean }
-async function runCoordinator(options: Options): Promise<number> {
+export interface CoordinatorDependencies {
+  root?: string; docker?: Docker; lookup?: Lookup; manifest?: typeof manifest; fingerprint?: typeof fingerprint;
+  createCluster?: typeof createCluster; removeOwnedCluster?: typeof removeOwnedCluster; checkClusterBoundary?: typeof checkClusterBoundary;
+}
+async function runCoordinator(options: Options, deps: CoordinatorDependencies = {}): Promise<number> {
+  const { root: repo = fileURLToPath(new URL('../../../', import.meta.url)), docker: dockerRun = docker, lookup: lookupRun = lookupProcess,
+    manifest: getManifest = manifest, fingerprint: getFingerprint = fingerprint, createCluster: createSlot = createCluster,
+    removeOwnedCluster: removeSlot = removeOwnedCluster, checkClusterBoundary: checkBoundary = checkClusterBoundary } = deps;
   const begin = performance.now(), start = new Date().toISOString(), runId = options.runId ?? randomBytes(12).toString('hex');
   const runDir = join(repo, '.brain-test-runs', runId), reportPath = options.report ? resolve(options.report) : options.recover ? join(repo, '.brain-test-runs', 'recovery', `${runId}.json`) : join(runDir, 'report.json');
   const report: RunReport = { runId, sha: '', start, slots: options.slots, files: [], jobs: [], quarantine: [], recovery: [], cleanupErrors: [] };
@@ -457,7 +492,7 @@ async function runCoordinator(options: Options): Promise<number> {
   let signal: NodeJS.Signals | undefined, failed = false, usageError = false, claimed = false;
   let notifySignal!: () => void;
   const interrupted = new Promise<'signal'>(resolvePromise => { notifySignal = () => resolvePromise('signal'); });
-  const started = await lookupProcess(process.pid);
+  const started = await lookupRun(process.pid);
   if (!started) throw new Error('coordinator identity unavailable');
   const ledger: Ledger = { runId, kind: 'coordinator', state: 'running', coordinator: { pid: process.pid, started }, slots: [], files: [], resources: [], cleanup: [] };
   const trackers = new Map<number, ProcessTracker>();
@@ -484,7 +519,7 @@ async function runCoordinator(options: Options): Promise<number> {
     if (metricBusy || boundaryInProgress) return;
     metricBusy = true;
     try {
-      const ids = await listIds(runId);
+      const ids = await listIds(runId, undefined, dockerRun);
       if (ids.length) {
         const sample = await sampleDockerCpu(ids, docker);
         if (sample.record) dockerStatsRecoveries.push(sample.record);
@@ -516,14 +551,14 @@ async function runCoordinator(options: Options): Promise<number> {
   };
   const create = async (slot: Slot) => {
     ledger.slots.push({ slotId: slot.id, generation: slot.generation, name: `brain-slot-${runId}-${slot.id}-${slot.generation}` }); await save();
-    const cluster = await createCluster(runId, slot.id, String(slot.generation));
+    const cluster = await createSlot(runId, slot.id, String(slot.generation));
     slot.cluster = cluster;
     ledger.resources.push({ type: 'container', id: cluster.id, name: cluster.name, slotId: slot.id, port: cluster.port }); await save();
   };
   const dispose = async (slot: Slot) => {
     if (!slot.cluster) return;
     const id = slot.cluster.id;
-    try { await removeOwnedCluster(slot.cluster); ledger.cleanup.push({ id, result: 'removed' }); slot.cluster = undefined; await save(); }
+    try { await removeSlot(slot.cluster); ledger.cleanup.push({ id, result: 'removed' }); slot.cluster = undefined; await save(); }
     catch (e) { slot.quarantined = true; report.quarantine.push(slot.id); error(`remove ${id}`, e); ledger.cleanup.push({ id, error: String(e) }); await save().catch(() => {}); }
   };
   const shardCases = new Map<string, CaseName[]>();
@@ -552,7 +587,7 @@ async function runCoordinator(options: Options): Promise<number> {
       void completion.catch(() => {});
       pid = child.pid;
       if (!pid) throw new Error('child PID unavailable');
-      const identity = await lookupProcess(pid);
+      const identity = await lookupRun(pid);
       if (!identity) throw new Error('child identity unavailable');
       tracker = new ProcessTracker({ pid, started: identity }); trackers.set(pid, tracker); unsubscribe = sampler.subscribe(tracker);
       fileRecord.pid = pid; fileRecord.pgid = pid; fileRecord.started = identity; processRecords.set(pid, fileRecord); await save();
@@ -583,9 +618,9 @@ async function runCoordinator(options: Options): Promise<number> {
         catch (e) { result.cleanup.push({ hookCleanupError: String(e) }); ledger.cleanup.push({ fileId, hookCleanupError: String(e) }); error(`${file} hook cleanup`, e); }
       }
       try {
-        const fixtures = await listIds(runId, fileId);
-        for (const id of fixtures) { ledger.resources.push({ type: 'fixture-container', id, fileId }); await save(); await removeCluster(id); }
-        const remaining = await listIds(runId, fileId);
+        const fixtures = await listIds(runId, fileId, dockerRun);
+        for (const id of fixtures) { ledger.resources.push({ type: 'fixture-container', id, fileId }); await save(); await removeCluster(id, dockerRun); }
+        const remaining = await listIds(runId, fileId, dockerRun);
         result.cleanup.push({ fixturesRemoved: fixtures, remaining });
         if (remaining.length) throw new Error(`fixture containers remain: ${remaining.join(', ')}`);
         if (fixtures.length && result.reason === 'pass') { error(`${file} leaked fixture containers`, fixtures.join(',')); result.reason = 'fail'; }
@@ -593,7 +628,7 @@ async function runCoordinator(options: Options): Promise<number> {
       if (slot?.cluster) {
         boundaryInProgress++;
         while (metricBusy) await new Promise(resolvePromise => setTimeout(resolvePromise, 20));
-        try { const boundary = await checkClusterBoundary(slot.cluster.url); result.cleanup.push({ boundary }); if (!boundary.clean) { if (result.reason === 'pass') error(`${file} boundary`, JSON.stringify(boundary)); result.reason = result.reason === 'pass' ? 'fail' : result.reason; } }
+        try { const boundary = await checkBoundary(slot.cluster.url); result.cleanup.push({ boundary }); if (!boundary.clean) { if (result.reason === 'pass') error(`${file} boundary`, JSON.stringify(boundary)); result.reason = result.reason === 'pass' ? 'fail' : result.reason; } }
         catch (e) { error(`${file} boundary`, e); slot.quarantined = true; }
         finally { boundaryInProgress--; }
       }
@@ -607,8 +642,8 @@ async function runCoordinator(options: Options): Promise<number> {
     }
   };
   try {
-    report.recovery = await recoverRuns(repo);
-    const recoveryIssues = report.recovery.filter(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; });
+    report.recovery = options.recover ? await recoverTarget(repo, options.runId!, dockerRun, lookupRun) : await inspectPriorRuns(repo, lookupRun);
+    const recoveryIssues = report.recovery.filter(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || row.state === 'unknown' || row.state === 'alive' || (!options.recover && row.state === 'dead') || (row.remaining?.length ?? 0) > 0; });
     if (recoveryIssues.length || report.recovery.some(item => (item as { preservedShared?: boolean }).preservedShared)) {
       process.stderr.write(`Warning: previous test resources quarantined: ${JSON.stringify(recoveryIssues)}\n`);
       if (options.recover) failed = true;
@@ -618,7 +653,7 @@ async function runCoordinator(options: Options): Promise<number> {
       await mkdir(runDir, { recursive: false });
       await writeFile(ledgerPath(repo, runId), JSON.stringify(ledger) + '\n', { flag: 'wx', mode: 0o600 });
       claimed = true;
-      const all = await manifest(options.config, manifestAbort.signal);
+      const all = await getManifest(options.config, manifestAbort.signal);
       if (new Set(all).size !== all.length) throw new Error('duplicate manifest paths');
       const files = selectFiles(all, options.files);
       const missing = files.filter(file => !all.includes(file));
@@ -664,7 +699,7 @@ async function runCoordinator(options: Options): Promise<number> {
         durations = Object.fromEntries(prior.files.filter(row => typeof row.file === 'string' && typeof row.wallMs === 'number' && Number.isFinite(row.wallMs)).map(row => [row.file, row.wallMs]));
         for (const job of prior.jobs ?? []) if (typeof job.id === 'string' && Number.isFinite(job.wallMs)) durations[job.id] = job.wallMs;
       }
-      report.environment = await fingerprint();
+      report.environment = await getFingerprint();
       const sha = (report.environment as { sha?: unknown }).sha; report.sha = typeof sha === 'string' ? sha : '';
       const queue = orderedFiles(files.filter(file => file !== hook).flatMap(file => shardCases.has(file) ? shardCases.get(file)!.map(name => `${file}#${name.fullName}`) : [file]), durations);
       sampler.start();
@@ -706,7 +741,7 @@ async function runCoordinator(options: Options): Promise<number> {
         try { if (record.pid && record.processState !== 'gone') throw new Error('hook child termination unconfirmed'); const hookCleanup = await cleanupHookResources(record.hookResourceLog, join(runDir, record.fileId)); const entry = { fileId: record.fileId, finalHookCleanup: hookCleanup }; ledger.cleanup.push(entry); (report.hookCleanup ??= []).push(entry); }
         catch (e) { error('final hook cleanup', e); ledger.cleanup.push({ fileId: record.fileId, hookCleanupError: String(e) }); }
       }
-      try { const remaining = await listIds(runId); ledger.cleanup.push({ finalContainers: remaining }); if (remaining.length) error('remaining run containers', remaining.join(',')); }
+      try { const remaining = await listIds(runId, undefined, dockerRun); ledger.cleanup.push({ finalContainers: remaining }); if (remaining.length) error('remaining run containers', remaining.join(',')); }
       catch (e) { error('verify run containers', e); }
       ledger.cleanup.push({ at: new Date().toISOString(), errors: report.cleanupErrors });
       if (!report.cleanupErrors.length && !report.quarantine.length && ledger.files.every(file => ['gone', 'notStarted'].includes((file as { processState?: string }).processState ?? ''))) ledger.state = 'completed';
@@ -728,7 +763,7 @@ async function runCoordinator(options: Options): Promise<number> {
   }
   return signal ? exitStatus(true, signal) : usageError ? 2 : exitStatus(failed);
 }
-export async function main(args: string[]): Promise<number> {
+export async function main(args: string[], deps: CoordinatorDependencies = {}): Promise<number> {
   if (args[0] === '--release-quarantine') {
     if (args.length !== 3 || args[1] !== '--run-id' || !/^[a-zA-Z0-9_-]+$/.test(args[2] ?? '')) { process.stderr.write('usage: --release-quarantine --run-id ID\n'); return 2; }
     let events: unknown[];
@@ -737,8 +772,16 @@ export async function main(args: string[]): Promise<number> {
     return events.length && !events.some(item => { const row = item as { state?: string; remaining?: string[] }; return row.state === 'error' || (row.remaining?.length ?? 0) > 0; }) ? 0 : 1;
   }
   let options: Options;
-  try { options = parseArgs(args); } catch (e) { process.stderr.write(`${String(e)}\n`); return 2; }
-  try { return await runCoordinator(options); } catch (e) { process.stderr.write(`${String(e)}\n`); return 1; }
+  try { options = parseArgs(args); } catch (e) {
+    process.stderr.write(`${String(e)}\n`);
+    const reportIndex = args.indexOf('--report'), reportPath = reportIndex >= 0 ? args[reportIndex + 1] : undefined;
+    if (reportPath && !reportPath.startsWith('--')) {
+      try { await mkdir(resolve(reportPath, '..'), { recursive: true }); await writeFile(resolve(reportPath), JSON.stringify({ files: [], jobs: [], cleanupErrors: [String(e)] }, null, 2) + '\n'); }
+      catch (error) { process.stderr.write(`report: ${String(error)}\n`); }
+    }
+    return 2;
+  }
+  try { return await runCoordinator(options, deps); } catch (e) { process.stderr.write(`${String(e)}\n`); return 1; }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   for (const key of fileOwnershipKeys) delete process.env[key];

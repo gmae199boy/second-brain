@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -151,3 +151,146 @@ it('recovers Docker CPU sampling only from exact inspected absences', async () =
   const mismatch = await runCase({ [a]: missing(a), [b]: a });
   expect(mismatch.result.disposition).toBe('error'); expect(mismatch.result.error).toContain('ID mismatch');
 });
+
+it('requires a valid explicit target for recovery', () => {
+  expect(() => parseArgs(['--recover'])).toThrow('--recover requires --run-id');
+  expect(() => parseArgs(['--recover', '--run-id', '../other'])).toThrow('invalid run ID');
+  expect(parseArgs(['--recover', '--run-id', 'target']).runId).toBe('target');
+});
+
+it('diagnoses other and unknown ledgers without changing bytes or calling Docker', async () => {
+  const { inspectPriorRuns } = await import('../src/python-slots.js');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'prior-diagnostic-'));
+  try {
+    await writeLedger(root, { runId: 'other', kind: 'coordinator', state: 'running', coordinator: { pid: 41, started: 'old' }, slots: [], files: [], resources: [], cleanup: [] });
+    const path = join(root, '.brain-test-runs', 'other.json'), bad = join(root, '.brain-test-runs', 'unknown.json');
+    await writeFile(bad, '{invalid'); const before = await readFile(path); const unknown = await readFile(bad);
+    const states = await inspectPriorRuns(root, async () => null);
+    expect(states).toEqual(expect.arrayContaining([{ runId: 'other', state: 'dead' }, { runId: 'unknown', state: 'unknown' }]));
+    expect(await readFile(path)).toEqual(before); expect(await readFile(bad)).toEqual(unknown);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('recovers only the requested run with owned resources and a reused child PID', async () => {
+  const { recoverTarget } = await import('../src/python-slots.js');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'target-recovery-')), calls: string[][] = [];
+  const target = 'a'.repeat(64), foreign = 'b'.repeat(64), unknownId = 'c'.repeat(64);
+  const resources = new Set([target, foreign, unknownId]); const signal = vi.spyOn(process, 'kill');
+  try {
+    await writeLedger(root, { runId: 'target', kind: 'coordinator', state: 'running', coordinator: { pid: 42, started: 'old' }, slots: [], files: [{ pid: 444, pgid: 444, started: 'original' }], resources: [{ id: target }], cleanup: [] });
+    await writeLedger(root, { runId: 'other', kind: 'coordinator', state: 'running', coordinator: { pid: 43, started: 'old' }, slots: [], files: [{ pid: 445, pgid: 445, started: 'foreign' }], resources: [{ id: foreign }], cleanup: [] });
+    const other = join(root, '.brain-test-runs', 'other.json'), unknown = join(root, '.brain-test-runs', 'unknown.json');
+    await writeFile(unknown, '{unknown'); const before = await readFile(other), unknownBefore = await readFile(unknown);
+    const docker = async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'ps') return { stdout: args.includes('label=brain.test-run=target') && resources.has(target) ? target : '' };
+      if (args[0] === 'rm') { expect(args[2]).toBe(target); resources.delete(target); return { stdout: target }; }
+      if (args[0] === 'inspect' && args[2] === '{{json .}}') return { stdout: JSON.stringify({ Id: target, Name: '/target-container', Config: { Labels: { 'brain.test-run': 'target' } } }) };
+      if (args[0] === 'inspect' && !resources.has(target)) throw { code: 1, stderr: `Error: No such object: ${target}` };
+      throw new Error('unexpected Docker call');
+    };
+    const reused = async () => [{ pid: 444, ppid: 1, pgid: 444, started: 'reused', cpu: 0, time: '0' }];
+    const events = await recoverTarget(root, 'target', docker, async () => null, reused);
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'target', state: 'dead', removed: [target], remaining: [] })]));
+    expect((JSON.parse(await readFile(join(root, '.brain-test-runs', 'target.json'), 'utf8')) as { state: string }).state).toBe('completed');
+    expect(await readFile(other)).toEqual(before); expect(await readFile(unknown)).toEqual(unknownBefore);
+    expect(resources).toEqual(new Set([foreign, unknownId]));
+    expect(calls.some(args => args[0] === 'rm' && args[2] === target)).toBe(true);
+    expect(calls.some(args => args[0] === 'inspect' && args[2] === '{{.Id}}' && args[3] === target)).toBe(true);
+    expect(calls.every(args => !args.includes('label=brain.test-run=other') && !args.includes('label=brain.test-run=unknown'))).toBe(true); expect(signal).not.toHaveBeenCalled();
+  } finally { signal.mockRestore(); await rm(root, { recursive: true, force: true }); }
+});
+
+it.each([{ pid: 0, started: 'old' }, { pid: -1, started: 'old' }, { pid: 42, started: '' }, { pid: 42, started: '  ' }])('rejects invalid owner identity without side effects: %j', async identity => {
+  const { recoverTarget, inspectPriorRuns } = await import('../src/python-slots.js');
+  const { readFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'invalid-owner-')), calls: string[][] = [], signal = vi.spyOn(process, 'kill');
+  try {
+    for (const runId of ['target', 'other']) await writeLedger(root, { runId, kind: 'coordinator', state: 'running', coordinator: identity, slots: [], files: [], resources: [{ id: 'a'.repeat(64) }], cleanup: [] });
+    const target = join(root, '.brain-test-runs', 'target.json'), other = join(root, '.brain-test-runs', 'other.json');
+    const before = await readFile(target), otherBefore = await readFile(other);
+    const docker = async (args: string[]) => { calls.push(args); return { stdout: '' }; };
+    await expect(recoverTarget(root, 'target', docker, async () => null)).rejects.toThrow();
+    expect(await inspectPriorRuns(root, async () => null)).toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'target', state: 'unknown' })]));
+    expect(await readFile(target)).toEqual(before); expect(await readFile(other)).toEqual(otherBefore); expect(calls).toEqual([]); expect(signal).not.toHaveBeenCalled();
+  } finally { signal.mockRestore(); await rm(root, { recursive: true, force: true }); }
+});
+
+it('rejects missing, completed, live and unknown targets and propagates recovery errors', async () => {
+  const { recoverTarget } = await import('../src/python-slots.js');
+  const root = await mkdtemp(join(tmpdir(), 'target-rejection-')), calls: string[][] = [];
+  const docker = async (args: string[]) => { calls.push(args); throw new Error('synthetic docker failure'); };
+  try {
+    await expect(recoverTarget(root, '../bad', docker)).rejects.toThrow('invalid recovery run ID');
+    await expect(recoverTarget(root, 'missing', docker)).rejects.toThrow();
+    await writeLedger(root, { runId: 'target', kind: 'coordinator', state: 'running', coordinator: { pid: 42, started: 'same' }, slots: [], files: [], resources: [], cleanup: [] });
+    await expect(recoverTarget(root, 'target', docker, async () => 'same')).rejects.toThrow('unconfirmed');
+    await expect(recoverTarget(root, 'target', docker, async () => { throw new Error('unknown'); })).rejects.toThrow('unconfirmed');
+    expect(calls).toEqual([]);
+    // A reused PID has a different start time; recovery is allowed but errors propagate.
+    await expect(recoverTarget(root, 'target', docker, async () => 'reused')).rejects.toThrow('synthetic docker failure');
+    await writeLedger(root, { runId: 'target', kind: 'coordinator', state: 'completed', coordinator: { pid: 42, started: 'same' }, slots: [], files: [], resources: [], cleanup: [] });
+    await expect(recoverTarget(root, 'target', docker)).rejects.toThrow('not a running ledger');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('reports CLI invalid, missing, live, unknown and cleanup errors as nonzero', async () => {
+  const { main } = await import('../src/python-slots.js');
+  const { readFile } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'main-recovery-'));
+  const docker = async () => { throw new Error('synthetic Docker failure'); };
+  const identity = { pid: 424242, started: 'owner' };
+  const lookup = async (pid: number) => pid === process.pid ? 'self' : pid === identity.pid ? 'owner' : null;
+  const run = async (name: string, args: string[], expectedCode: number, expectedError: RegExp, expectedRunId?: string, get = lookup) => {
+    const report = join(root, `${name}.json`);
+    await expect(readFile(report, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    const code = await main([...args, '--report', report], { root, docker, lookup: get });
+    expect(code).toBe(expectedCode);
+    const value = JSON.parse(await readFile(report, 'utf8')) as { runId?: string; cleanupErrors: string[] };
+    if (expectedRunId) expect(value.runId).toBe(expectedRunId);
+    expect(value.cleanupErrors).toEqual(expect.arrayContaining([expect.stringMatching(expectedError)]));
+  };
+  try {
+    await run('missing-option', ['--recover'], 2, /--recover requires --run-id/);
+    await run('invalid-id', ['--recover', '--run-id', '../bad'], 2, /invalid run ID/);
+    await run('missing-target', ['--recover', '--run-id', 'missing'], 1, /ENOENT.*missing\.json/, 'missing');
+    await writeLedger(root, { runId: 'target', kind: 'coordinator', state: 'running', coordinator: identity, slots: [], files: [], resources: [], cleanup: [] });
+    await run('live', ['--recover', '--run-id', 'target'], 1, /target recovery incomplete.*unconfirmed/, 'target');
+    await run('unknown', ['--recover', '--run-id', 'target'], 1, /target recovery incomplete.*unconfirmed/, 'target', async pid => { if (pid === process.pid) return 'self'; throw new Error('unknown'); });
+    await run('docker-error', ['--recover', '--run-id', 'target'], 1, /target recovery failed.*synthetic Docker failure/, 'target', async pid => pid === process.pid ? 'self' : null);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('runs a selected Python coordinator file while preserving foreign ledger and resources', async () => {
+  const { main } = await import('../src/python-slots.js');
+  const { lookupProcess } = await import('../src/slots/ledger.js');
+  const { mkdir, readFile, writeFile, chmod } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'coordinator-isolation-')), bin = join(root, 'bin');
+  const previousPath = process.env.PATH, signal = vi.spyOn(process, 'kill');
+  const own = 'a'.repeat(64), foreign = 'b'.repeat(64), unknown = 'c'.repeat(64), resources = new Set([foreign, unknown]);
+  const calls: string[][] = [], report = join(root, 'report.json');
+  try {
+    await mkdir(bin);
+    await writeFile(join(bin, 'pnpm'), '#!/bin/sh\nsleep 1\nfor arg in "$@"; do case "$arg" in --outputFile=*) out=${arg#--outputFile=};; esac; done\nprintf \'{"numPassedTests":1,"numFailedTests":0,"numPendingTests":0}\' > "$out"\n');
+    await chmod(join(bin, 'pnpm'), 0o755); process.env.PATH = `${bin}:${previousPath ?? ''}`;
+    await writeLedger(root, { runId: 'other', kind: 'coordinator', state: 'running', coordinator: { pid: 424242, started: 'foreign' }, slots: [], files: [], resources: [{ id: foreign }], cleanup: [] });
+    const other = join(root, '.brain-test-runs', 'other.json'), invalid = join(root, '.brain-test-runs', 'unknown.json');
+    await writeFile(invalid, '{invalid'); const before = await readFile(other), invalidBefore = await readFile(invalid);
+    const docker = async (args: string[]) => { calls.push(args); if (args[0] === 'ps') return { stdout: '' }; throw new Error('unexpected Docker operation'); };
+    const code = await main(['--run-id', 'self', '--config', 'test/config.ts', '--files', 'test/example.test.ts', '--report', report], {
+      root, docker, lookup: lookupProcess,
+      manifest: async () => ['test/example.test.ts'], fingerprint: async () => ({ sha: 'synthetic' }),
+      createCluster: async (runId, slotId) => { resources.add(own); return { id: own, name: 'synthetic', runId, slotId, port: 50001, url: 'postgres://unused:unused@127.0.0.1:1/postgres' }; },
+      removeOwnedCluster: async cluster => { expect(cluster.id).toBe(own); resources.delete(own); },
+      checkClusterBoundary: async () => ({ databases: [], roles: [], connections: 0, clean: true }),
+    });
+    expect(code).toBe(0); expect(await readFile(other)).toEqual(before); expect(await readFile(invalid)).toEqual(invalidBefore);
+    expect(resources).toEqual(new Set([foreign, unknown])); expect(calls.every(args => !args.includes('label=brain.test-run=other') && !args.includes('label=brain.test-run=unknown'))).toBe(true);
+    const ledger = JSON.parse(await readFile(join(root, '.brain-test-runs', 'self.json'), 'utf8')) as { state: string; files: { processState: string }[] };
+    expect(ledger.state).toBe('completed'); expect(ledger.files[0]?.processState).toBe('gone');
+    expect(JSON.parse(await readFile(report, 'utf8')).files[0].reason).toBe('pass');
+    expect(signal.mock.calls.every(([pid]) => Math.abs(pid) !== 424242)).toBe(true);
+  } finally { signal.mockRestore(); if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; await rm(root, { recursive: true, force: true }); }
+}, 45000);
