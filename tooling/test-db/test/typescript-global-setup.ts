@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { TestProject } from 'vitest/node';
 import { lookupProcess, writeLedger, type Ledger } from '../src/slots/ledger.js';
 import { validateExternalRun } from '../src/slots/external-contract.js';
-import { recoverRuns } from '../src/python-slots.js';
+import { inspectPriorRuns, recoverRuns } from '../src/python-slots.js';
 import type { Docker } from '../src/slots/cluster.js';
 import type { Lookup } from '../src/slots/ledger.js';
 
@@ -26,10 +26,10 @@ export async function prepareOwnership(project: TestProject, options: OwnershipO
     if (failure) throw new Error('external test run contract rejected', { cause: failure });
     project.provide('brainTestRunId', ''); return async () => {};
   }
-  const recovery = await recoverRuns(root, run, lookup);
+  const recovery = await inspectPriorRuns(root, lookup);
   process.stderr.write(`Test resource recovery: ${JSON.stringify(recovery)}\n`);
   const siblingRuns = closeState(project).runs;
-  if (recovery.some(item => { const row = item as { runId?: string; state?: string; remaining?: string[]; preservedShared?: boolean }; return !siblingRuns.has(row.runId ?? '') && (row.preservedShared || row.state === 'error' || row.state === 'alive' || row.state === 'unknown' || (row.remaining?.length ?? 0) > 0); })) {
+  if (recovery.some(item => { const row = item as { runId?: string; state?: string; remaining?: string[]; preservedShared?: boolean }; return !siblingRuns.has(row.runId ?? '') && (row.preservedShared || row.state === 'error' || row.state === 'alive' || row.state === 'dead' || row.state === 'unknown' || (row.remaining?.length ?? 0) > 0); })) {
     preserveShared.add(project);
     process.stderr.write('Warning: prior test resources remain quarantined; shared database teardown is disabled.\n');
   }

@@ -6,12 +6,14 @@ import { parseProcesses } from './processes.js';
 
 export interface Identity { pid: number; started: string }
 export type Liveness = 'alive' | 'dead' | 'unknown';
+export function validIdentity(value: Identity): boolean { return Number.isSafeInteger(value?.pid) && value.pid > 0 && typeof value.started === 'string' && value.started.trim().length > 0; }
 export type Lookup = (pid: number) => Promise<string | null>;
 export const lookupProcess: Lookup = async pid => {
   const rows = parseProcesses(await fixedProcessSnapshot());
   return rows.find(row => row.pid === pid)?.started ?? null;
 };
 export async function liveness(identity: Identity, lookup: Lookup = lookupProcess): Promise<Liveness> {
+  if (!validIdentity(identity)) return 'unknown';
   try { const started = await lookup(identity.pid); return started === null || started !== identity.started ? 'dead' : 'alive'; } catch { return 'unknown'; }
 }
 export interface Ledger { runId: string; kind?: 'coordinator' | 'direct' | 'typescript'; state?: 'running' | 'completed'; coordinator: Identity; slots: unknown[]; files: unknown[]; resources: unknown[]; cleanup: unknown[]; [key: string]: unknown }

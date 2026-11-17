@@ -211,3 +211,20 @@ it('preserves shared resources across explicit release and the next setup and cl
     expect(JSON.parse(await readFile(join(root, '.brain-test-runs', 'prior.json'), 'utf8'))).toMatchObject({ state: 'completed', preservedShared: true });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+it('starts without mutating or recovering another dead or unknown run', async () => {
+  const { prepareOwnership } = await import('./typescript-global-setup.js');
+  const { writeLedger } = await import('../src/slots/ledger.js');
+  const root = await mkdtemp(join(tmpdir(), 'ownership-readonly-prior-'));
+  const calls: string[][] = [];
+  const project = { provide: () => {}, vitest: { onClose: () => {} } } as unknown as import('vitest/node').TestProject;
+  try {
+    await writeLedger(root, { runId: 'other', kind: 'coordinator', state: 'running', coordinator: { pid: 51, started: 'old' }, slots: [], files: [], resources: [], cleanup: [] });
+    const path = join(root, '.brain-test-runs', 'other.json'), bad = join(root, '.brain-test-runs', 'unknown.json');
+    await writeFile(bad, 'invalid'); const before = await readFile(path), unknown = await readFile(bad);
+    const cleanup = await prepareOwnership(project, { root, env: {}, lookup: async pid => pid === process.pid ? 'current' : null, run: async args => { calls.push(args); return { stdout: '' }; } });
+    expect(await readFile(path)).toEqual(before); expect(await readFile(bad)).toEqual(unknown); expect(calls).toEqual([]);
+    await cleanup(); expect(await readFile(path)).toEqual(before); expect(await readFile(bad)).toEqual(unknown);
+    expect(calls.every(args => !args.includes('label=brain.test-run=other') && args[0] !== 'rm')).toBe(true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

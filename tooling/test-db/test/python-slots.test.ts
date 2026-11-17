@@ -48,7 +48,7 @@ it('records shared database use under the coordinator child, not the parent file
     expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -60,7 +60,7 @@ it('reports metrics for a held database connection and cleans the run', async ()
     const metrics = (await readReport(path)).metrics!;
     for (const value of [metrics.nodeCpuPeak, metrics.dockerCpuPeak, metrics.pgConnectionsPeak]) { expect(Number.isFinite(value)).toBe(true); expect(value).toBeGreaterThanOrEqual(0); }
     expect(metrics.pgConnectionsPeak).toBeGreaterThanOrEqual(1); expect(metrics.errors).toEqual([]); expect(await containers(runId)).toEqual([]);
-  } finally { if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json')); await rm(dir, { recursive: true, force: true }); }
+  } finally { if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId); await rm(dir, { recursive: true, force: true }); }
 }, 600_000);
 async function readReport(path: string): Promise<Report> { return JSON.parse(await readFile(path, 'utf8')) as Report; }
 async function waitFor(path: string, done: Promise<unknown>): Promise<void> {
@@ -76,7 +76,7 @@ async function run(files: string[], slots = 1, timeout = 30_000, coordinateSenti
   const proc = launch(runId, path, files, slots, timeout, coordinateSentinel ? { BRAIN_SLOT_SENTINEL_MARKER: join(dir, 'sentinel-started') } : {}, order);
   try { const result = await proc.done; const report = await readReport(path); expect(await containers(runId)).toEqual([]); return { ...result, report, runId }; }
   finally {
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -130,12 +130,12 @@ it('stops a detached descendant or quarantines the slot', async () => {
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
     if (identity && await lookupProcess(identity.pid).catch(() => null) === identity.started) { try { process.kill(identity.pid, 'SIGKILL'); } catch {} }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
-async function recover(report: string): Promise<{ code: number | null; report: Report }> {
-  const child = spawn(process.execPath, ['tooling/test-db/dist/python-slots.js', '--recover', '--report', report], { cwd: root, stdio: 'ignore' });
+async function recover(report: string, runId: string): Promise<{ code: number | null; report: Report }> {
+  const child = spawn(process.execPath, ['tooling/test-db/dist/python-slots.js', '--recover', '--run-id', runId, '--report', report], { cwd: root, stdio: 'ignore' });
   const code = await new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', value => resolve(value)); });
   return { code, report: await readReport(report) };
 }
@@ -148,7 +148,7 @@ it.each([['SIGTERM', 143], ['SIGINT', 130]] as const)('handles %s and leaves no 
     expect((await readReport(path)).signal).toBe(signal); expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -158,13 +158,13 @@ it('recovers a SIGKILL run and a new run succeeds', async () => {
   try {
     await waitFor(marker, proc.done); proc.child.kill('SIGKILL');
     expect((await proc.done).signal).toBe('SIGKILL');
-    const result = await recover(recoveryPath);
+    const result = await recover(recoveryPath, runId);
     expect(result.code).toBe(0); expect(result.report.recovery.some(item => item.runId === runId && item.state === 'dead' && item.remaining?.length === 0)).toBe(true);
     expect(await containers(runId)).toEqual([]);
     const fresh = await run(['sentinel']); expect(fresh.code, fresh.output).toBe(0);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGKILL'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -191,7 +191,7 @@ it.each([1, 2])('runs each independent case exactly once with %i slots', async s
     expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -211,7 +211,7 @@ it('rejects duplicate collected case names before allocating slots', async () =>
     expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -240,7 +240,7 @@ it('preserves mixed shard results and reuses the failed slot for a sentinel', as
     expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -256,7 +256,7 @@ it('retains a passing case when another shard times out', async () => {
     expect(summary.completedCases).toBe(1); expect(summary.expectedCases).toBe(2); expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -279,7 +279,7 @@ it('executes nested names once and records the collection policy', async () => {
     expect(policy.jobIds).toHaveLength(report.jobs.length); expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -291,7 +291,7 @@ it('runs forbidden conditional skip as a whole file', async () => {
     const report = await readReport(path); expect(report.jobs).toHaveLength(1); expect(report.jobs[0]?.id).toBe(fixture('skip-cases')); expect(row(report, 'skip-cases').cases).toEqual({ pass: 0, fail: 0, skip: 1 }); expect(report.policy?.shardModes[fixture('skip-cases')]).toEqual({ shardMode: 'file', reason: 'forbidden-modifier-text' }); expect(report.policy?.collection.status).toBe('complete'); expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
@@ -315,7 +315,7 @@ it('runs later shard and sentinel on a fresh generation after timeout', async ()
     expect(await containers(runId)).toEqual([]);
   } finally {
     if (proc.child.exitCode === null && proc.child.signalCode === null) { proc.child.kill('SIGTERM'); await proc.done; }
-    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'));
+    if ((await containers(runId)).length) await recover(join(dir, 'cleanup-recovery.json'), runId);
     await rm(dir, { recursive: true, force: true });
   }
 }, 600_000);
