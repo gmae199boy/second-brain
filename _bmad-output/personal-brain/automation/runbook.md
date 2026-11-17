@@ -128,7 +128,7 @@ uv run _bmad/method/scripts/tickets.py find <ticket-ref>
 
 중앙은 다음 지휘자 명세에 유예 규칙과21.8의 시험 인계를 명시한다.21.8 built·원격main반영·실제 실행 증거를 확인하기 전21.7을 배정하지 않는다. 컴팩션 후 state의garmin_regression_gate가21.8을 가리키는지 대조한다.
 
-모든 필수 조건 충족 후 계획 상태를 `built`로 기록한다. 지휘자는 티켓 범위의 소스·시험·계획만 stage하고 커밋한 뒤 자기 브랜치를 원격에 push한다. app-ref 변경 시 같은 커밋의 플러그인 version 증가와 이전 커밋 참조 규칙을 지킨다. 원격 브랜치가 해당 commit을 포함하는지 확인한다. 강제 푸시는 하지 않는다.
+모든 필수 조건 충족 후 계획 상태를 `built`로 기록한다. 지휘자는 티켓 범위의 소스·시험·계획만 stage하고 커밋한 뒤 자기 브랜치를 원격에 push한다. app-ref 변경 시 같은 커밋의 플러그인 version 증가와 이전 커밋 참조 규칙을 지킨다. Garmin manifest의 plugin_version을 포함해 패키지 내용이 바뀌면 패키지 version도 올리고 공식 build.mjs로 digest를 생성한다. 릴리스 직전 `node tooling/package-garmin/check-release-identity.mjs <last-published-ref>`로 마지막 공개 릴리스와 신원을 비교한다. 원격 브랜치가 해당 commit을 포함하는지 확인한다. 강제 푸시는 하지 않는다.
 
 최종 보고는 티켓 ref·기준 SHA·commit SHA·원격 브랜치·검증 명령/결과·리뷰/후속 리뷰 보고 경로·미해결 항목을 포함한다. 실패 시에도 부분 작업과 재개 지점을 보존하고 실제 실패로 보고한다. 전송 성공 영수증만으로 실제 작업 성공을 판단하지 않는다.
 

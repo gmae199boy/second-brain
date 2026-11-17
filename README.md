@@ -1143,6 +1143,20 @@ git config core.hooksPath .githooks
 로컬 marketplace(상대 경로 `source`)는 복사하지 않고 그 자리에서 읽으므로 개발
 중에는 `version`이 영향을 주지 않습니다. 그래서 잊기 쉽습니다.
 
+Garmin 패키지는 manifest의 `plugin_version`을 포함한 모든 패키지 바이트가
+신원 digest에 들어갑니다. 따라서 Garmin 플러그인 버전을 바꾸면 기능 변경이
+없어도 패키지 버전도 올립니다. 패키지 내용이 바뀌는 다른 경우에도 같은 규칙을
+적용합니다. 릴리스 직전 `node tooling/package-garmin/build.mjs`로 패키지를 만들고,
+마지막으로 공개한 릴리스의 Git ref를 지정하여 아래 검사를 실행하세요. 중간
+비릴리스 커밋이 아니라 실제 공개 릴리스를 기준으로 선택합니다.
+
+```sh
+node tooling/package-garmin/check-release-identity.mjs <last-published-ref>
+```
+
+이 검사는 같은 패키지 버전에서 digest가 달라지는 것을 거부합니다. 기준 ref와
+현재 패키지가 올바른지 별도로 확인하고 패키지 무결성 시험도 실행하세요.
+
 ## Mac 설치본 격리 검증 준비
 
 Node 24.16 이상, pnpm, Docker와 인증된 Claude CLI가 필요합니다. 운영 Brain 홈과 DB는 사용하지 않습니다. 다음 명령은 두 커밋의 조상 관계를 확인하고 임시 홈, Claude 설정, 플러그인과 시험 fixture를 만듭니다. 출력된 디렉터리와 소유권 영수증을 보관하세요.

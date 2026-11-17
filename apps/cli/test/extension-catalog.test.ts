@@ -19,7 +19,7 @@ it('고정 Garmin만 일반 목록에 넣고 격리 harness에서만 testext를 
   const f = await fixture();
   expect((await readCatalogCandidates(f.home, {})).map(item => item.name)).toEqual(['garmin']);
   expect(await readCatalogCandidates(f.home, f.env)).toEqual([
-    expect.objectContaining({ name: 'garmin', version: '1.2.14', description: expect.any(String), login_required: true }),
+    expect.objectContaining({ name: 'garmin', version: '1.2.15', description: expect.any(String), login_required: true }),
     expect.objectContaining({ name: 'testext', description: '시험용 확장', login_required: false }),
   ]);
   expect((await catalogCandidates(join(homedir(), '.second_brain'), f.env)).map(item => item.name)).toEqual(['garmin']);
