@@ -74,6 +74,7 @@ export function codexParser(): Parser {
       const ordinals = new Map<string, number>();
       let lastMessage: string | null = null;
       let startCwd: string | null = null;
+      let seenMeta = false;
       let model: string | null = null;
       let branch: string | null = null;
       let cwd: string | null = null;
@@ -81,8 +82,12 @@ export function codexParser(): Parser {
         const entry = line.value;
         if (!entry) continue;
         const payload = object(entry['payload']);
+        if (entry['type'] === 'session_meta' && !seenMeta) {
+          const initial = str(payload?.['cwd']);
+          startCwd = initial && initial.trim() !== '' ? initial : null;
+          seenMeta = true;
+        }
         if (entry['type'] === 'session_meta' && payload) {
-          if (startCwd === null && str(payload['cwd'])) startCwd = str(payload['cwd']);
           if (cwd === null) cwd = str(payload['cwd']);
           if (branch === null) branch = str(object(payload['git'])?.['branch']);
         }
