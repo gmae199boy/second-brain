@@ -43,10 +43,11 @@ export function transcriptChanges(
   listing: readonly TranscriptListing[],
   rows: readonly TranscriptFile[],
 ): readonly TranscriptListing[] {
-  const stored = new Map(rows.map((row) => [historyKey(row.harness, row.path), row.sizeBytes]));
+  const stored = new Map(rows.map((row) => [historyKey(row.harness, row.path), row]));
   return listing.filter((file) => {
     const was = stored.get(historyKey(file.harness, file.path));
-    return was === undefined || was !== file.sizeBytes;
+    return was === undefined || was.sizeBytes !== file.sizeBytes ||
+      (file.fingerprint !== undefined && file.fingerprint !== was.fingerprint);
   });
 }
 
