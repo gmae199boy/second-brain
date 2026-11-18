@@ -3,7 +3,7 @@ title: 'Codex 증분 수집과 폴더 스캔'
 type: feature
 ticket: '3'
 created: '2026-11-17'
-status: in-progress
+status: built
 baseline_revision: 'e2fd29956b0feadd348541fcd9275306aeb48ba3'
 route: full
 route_source: pinned
@@ -163,3 +163,8 @@ Codex 활성·보관 파일을 메타 ID로 발견해 drain에서 수집하고, 
 수락 실측: 루프백 합성 응답·allowlist·가짜키·임시 Codex 환경에서 notify 종료7을 실제 관측했다. 실제 생성 합성 기록은 전용 Brain의 drain/read 종료0으로 복구됐고, 대상 합성 발화는 양쪽 조회에서 정확히 한 건, 두 번째 새 일감은0이었다. 래퍼 종료0 및 자기 잠금/정확 전용 컨테이너 정리를 확인했다. 원시 증거는 `.brain-automation/tickets/23.3/validation/failed-trigger/`에 있다. 합성 실행은 환경 맥락 메시지도 생성하므로 전체 메시지가 한 건이라는 뜻은 아니다.
 
 잔여 한계·운영 조치: 합성 hook/notify는 신뢰 우회가 있는 병행 실측에서 함께 관측됐고 앞선 시도에서는 notify가 관측되지 않았다. 안전한 일반 설정 공존은 입증하지 못해 실제 hook/notify를 연결하지 않았으며 명세의 안전 연결 보류 분기를 적용한다. 이는 안전공존 성공이나 23.5 connect/doctor·23.6 운영 설치 완료가 아니다. Store/스키마·Claude 저장 결과 및23.4 cwd/정체성 소유 블록은 보존했다. 동일 원문 반복의 임의 삽입·삭제 후 역사적 물리 개체 식별은 보장하지 않고 occurrence 일대일 대응을 사용한다. 기존 부모링크/output원문 필드 부재 및 동일시각 순서미정도 유지한다.
+
+
+### 중앙 결합 수락 — 2026-11-18
+
+본문 Auto Run Result와 달리 frontmatter에 남아 있던 in-progress를 중앙 수락 후 built로 일치시켰다. 원본23.3 2464d4a3와23.4 e8881fb9의 결합 ab1118f6에서 독립 통합 리뷰 지적0, 전체 TS278파일5752사례 → Python12파일55사례29jobs가 순차 각1회 모두 통과했다. 실패/skip/누락0·후속시험0이며 원시 JSON과 실행·자원정리 증거는 중앙 archive 및 automation/follow-ups.md에 연결했다. 앞 절의 전체 회귀 미실행은 개별 브랜치 보고 당시 이력이다. 사람 인수 전 done으로 올리지 않는다.
