@@ -36,7 +36,7 @@ export type ParseResult =
        * (follow-up review #18).
        */
       startSource: SessionStartSource | null;
-      /** First non-empty cwd in the whole session content, independent of cursor. */
+      /** Harness-defined session-start cwd evidence, independent of cursor, or null when absent. */
       startCwd: string | null;
       /**
        * How many lines of what this parse read were not kept, by reason: a
@@ -108,4 +108,6 @@ export interface Parser {
    * a session does.
    */
   parse(content: string, cursor?: ParserCursor | null): ParseResult;
+  /** Reconcile file-local IDs with already stored IDs without changing the store. */
+  reconcile?(content: string, cursor: ParserCursor | null, storedIds: readonly string[]): { result: ParseResult; messageIds: ReadonlyMap<string, string> };
 }

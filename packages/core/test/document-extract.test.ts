@@ -650,6 +650,26 @@ describe('추출기 버전이 오르면 drain이 한 번 더 읽는다', () => {
     const count=extractItems(subject).length, rows=await generations(subject);await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+10000});await drain(subject);await enqueueUnsupportedCarry(args,{deadline:subject.clock.now().getTime()+10000});expect(extractItems(subject)).toHaveLength(count);expect(await generations(subject)).toEqual(rows);expect(rows.filter(row=>row.status==='ok')).toHaveLength(1);
   });
 
+  it('첫 queue의 경고를 unsupported carry 두 번째 queue와 합친다', async () => {
+    const bytes = Uint8Array.of(37, 80, 68, 70, 45);
+    let probes = 0, extractions = 0, enabled = false;
+    const probe: DocumentExtractor = {
+      name: 'synthetic-carry',
+      detectCarry: async () => { if (!enabled) return null; probes++; return true; },
+      detect: () => 'application/synthetic',
+      extract: async () => { extractions++; return {ok:true, pieces:[{body:'carried',page:null,chunkLocator:{type:'docx',block:1}}]}; },
+    };
+    const subject = await kit({bytes, documentExtractors:[probe]});
+    await readAt(subject, 'doc/old', []);
+    enabled = true;
+    const now = subject.clock.now();
+    await subject.store.addWork({id:subject.idGen.next(),kind:'synthetic-warning',targetKind:'file',targetId:'synthetic',createdAt:now,nextAttemptAt:now});
+    const report = await drain(subject, {'synthetic-warning':async () => ({ok:true,warnings:['TRANSCRIPT_LINES_SKIPPED']})});
+    expect(probes).toBe(1); expect(extractions).toBe(1);
+    expect(report).toMatchObject({claimed:2,completed:2,failed:0,stopped:'empty',warnings:['TRANSCRIPT_LINES_SKIPPED']});
+    expect((await currentChunks(subject))[0]?.body).toBe('carried');
+  });
+
   it('비대상 bytes는 같은 버전에서 다시 읽지 않고 판정 실패는 재시도',async()=>{
     const subject=await kit({bytes:Uint8Array.of(0,1,2)});await readAt(subject,'doc/old',[]);
     let result:boolean|null=null;const probe:DocumentExtractor={name:'probe',detectCarry:async()=>result,detect:()=>null,extract:async()=>({ok:true,pieces:[]})};

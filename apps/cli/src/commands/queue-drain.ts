@@ -1,4 +1,4 @@
-import { DRAIN_BUDGET_MS, type BrainDrainReport } from 'second_brain';
+import { DRAIN_BUDGET_MS, type BrainDrainReport, type WarningCode } from 'second_brain';
 import type { CommandSpec } from '../dispatch.js';
 
 /**
@@ -44,6 +44,7 @@ export interface QueueDrainData {
   spooled: number;
   /** `empty`, `budget` or `unwritable`. */
   stopped: string;
+  scan_stopped?: string;
 }
 
 /** The widest and narrowest budget the flag accepts, in seconds. */
@@ -89,15 +90,15 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
       };
     }
 
+    const warnings: WarningCode[] = [...(report.warnings ?? [])];
+    if (report.reextractUnreachable > 0) warnings.push('FILE_SOURCE_UNREACHABLE');
     return {
       ok: true as const,
       // A file that is behind and out of reach is nothing this command can fix
       // and nothing anything else will queue, so the result is degraded and
       // says so under its own code (NFR-2, AD-24). A redacted one is not: there
       // are no bytes to read on purpose, which is the system working.
-      ...(report.reextractUnreachable > 0
-        ? { warnings: ['FILE_SOURCE_UNREACHABLE'] as const }
-        : {}),
+      ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}),
       data: {
         replayed: report.replayed,
         spool_failed: report.spoolFailed,
@@ -113,8 +114,9 @@ export const queueDrainCommand: CommandSpec<QueueDrainData> = {
         lost: report.lost,
         spooled: report.spooled,
         stopped: report.stopped,
+        ...(report.scanStopped === undefined ? {} : { scan_stopped: report.scanStopped }),
       },
-      text: [`${counts(report)} ${reasons[report.stopped]}`],
+      text: [`${counts(report)} ${reasons[report.stopped]}${report.scanStopped === undefined ? '' : ` 스캔 중단: ${report.scanStopped}`}`],
     };
   },
 };

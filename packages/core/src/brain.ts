@@ -754,7 +754,7 @@ async function drain(
     if (clock.now().getTime() >= deadline) queue = { ...queue, stopped: 'budget' };
     else if (created > 0) {
       const carry = await drainQueue({ store, spool, clock, idGen }, { budgetMs: deadline - clock.now().getTime(), handlers: input.handlers });
-      queue = { ...carry, claimed: queue.claimed + carry.claimed, completed: queue.completed + carry.completed, retried: queue.retried + carry.retried, failed: queue.failed + carry.failed, released: queue.released + carry.released, lost: queue.lost + carry.lost, spooled: queue.spooled + carry.spooled };
+      queue = { ...carry, ...((queue.warnings?.length || carry.warnings?.length) ? { warnings: [...new Set([...(queue.warnings ?? []), ...(carry.warnings ?? [])])] } : {}), claimed: queue.claimed + carry.claimed, completed: queue.completed + carry.completed, retried: queue.retried + carry.retried, failed: queue.failed + carry.failed, released: queue.released + carry.released, lost: queue.lost + carry.lost, spooled: queue.spooled + carry.spooled };
     }
   }
   if(dependencies.sourceCleanup)await cleanupSourceTemps(dependencies.sourceCleanup.temp,dependencies.sourceCleanup.store,clock);

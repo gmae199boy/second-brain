@@ -520,3 +520,13 @@ describe('FAILURE_RETRY_KINDS', () => {
     });
   });
 });
+
+describe('optional listing fingerprint', () => {
+  it('detects same-size rewrites while preserving size-only listings', () => {
+    const old = row('session-a', 10);
+    const unchanged = listing('session-a', 10);
+    expect(transcriptChanges([unchanged], [old])).toEqual([]);
+    expect(transcriptChanges([{ ...unchanged, fingerprint: old.fingerprint }], [old])).toEqual([]);
+    expect(transcriptChanges([{ ...unchanged, fingerprint: 'sha256:changed' }], [old])).toHaveLength(1);
+  });
+});

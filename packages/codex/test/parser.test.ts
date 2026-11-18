@@ -129,3 +129,38 @@ describe('Codex JSONL parser', () => {
     expect(result.toolNotes).toMatchObject([{ ordinal: -1, ok: false, callId: 'early', harnessMessageId: result.messages[0]!.harnessMessageId }]);
   });
 });
+
+describe('Codex stored ID reconciliation', () => {
+  const reconcile = (content: string, cursor: Parameters<NonNullable<ReturnType<typeof codexParser>['reconcile']>>[1], ids: string[]) => {
+    const result = codexParser().reconcile!(content, cursor, ids).result;
+    if (!result.ok) throw new Error(result.message);
+    return result;
+  };
+  it('retains legacy and canonical repeated messages through a prefix insertion, truncation and append', () => {
+    const same = message('user', 'same');
+    const initial = jsonl(meta(), same, same);
+    const legacy = parse(initial).messages[0]!.harnessMessageId;
+    const first = reconcile(initial, null, [legacy]);
+    const ids = first.messages.map(m => m.harnessMessageId);
+    expect(ids[0]).toBe(legacy); expect(ids[1]).toMatch(/^codex:v2:/); expect(new Set(ids).size).toBe(2);
+    const shifted = jsonl(meta(), {type:'event_msg'}, same, same);
+    const reset = reconcile(shifted, first.cursor, ids);
+    expect(reset.cursorReset).toBe(true); expect(reset.messages.map(m => m.harnessMessageId)).toEqual(ids);
+    const appended = reconcile(shifted + jsonl(message('assistant', 'new')), reset.cursor, ids);
+    expect(appended.cursorReset).toBe(false); expect(appended.messages[0]?.harnessMessageId).toBe(ids[1]);
+    const truncated = reconcile(jsonl(meta(), same), appended.cursor, [...ids, appended.messages.at(-1)!.harnessMessageId]);
+    expect(truncated.cursorReset).toBe(true); expect(truncated.messages[0]?.harnessMessageId).toBe(legacy);
+  });
+  it('uses the same canonical ID in concurrent snapshots with different prefixes and maps late notes', () => {
+    const turn = message('user', 'first');
+    const call = item('function_call', { call_id:'late', name:'shell', arguments:'{}' });
+    const a = jsonl(meta(), turn, call);
+    const b = jsonl(meta(), {type:'event_msg'}, turn, call);
+    const first = reconcile(a, null, []), other = reconcile(b, null, []);
+    expect(first.messages[0]!.harnessMessageId).toBe(other.messages[0]!.harnessMessageId);
+    const late = reconcile(b + jsonl(item('function_call_output', {call_id:'late', output:shellOutput(0)})), other.cursor, [other.messages[0]!.harnessMessageId]);
+    expect(late.cursorReset).toBe(false);
+    expect(late.toolNotes[0]?.harnessMessageId).toBe(other.messages[0]!.harnessMessageId);
+    expect(late.cursor?.lastHarnessMessageId).toBe(other.messages[0]!.harnessMessageId);
+  });
+});

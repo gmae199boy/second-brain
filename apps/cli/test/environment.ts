@@ -46,6 +46,7 @@ export function withoutHarnessFolders(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     ...env,
     SHELL: FAKE_LOGIN_SHELL,
     [CLAUDE_CONFIG_DIR_ENV]: EMPTY_CONFIG_DIR,
+    CODEX_HOME: EMPTY_CONFIG_DIR,
     SECOND_BRAIN_LAUNCHCTL: fileURLToPath(new URL('./fixtures/fake-launchctl.sh', import.meta.url)),
     SECOND_BRAIN_LAUNCH_AGENTS: EMPTY_LAUNCH_AGENTS,
     FAKE_LAUNCHCTL_DIR,

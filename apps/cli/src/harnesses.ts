@@ -3,6 +3,7 @@ import {
   type Connector,
   claudeCodeParser,
   codexParser,
+  codexTranscriptFolder,
   claudeCodeTranscriptFolder,
   claudeCodeProjectsFolder,
   readClaudeCodeHookInput,
@@ -57,7 +58,8 @@ export function transcriptFolders(
   env: NodeJS.ProcessEnv,
   registry: readonly Harness[] = harnesses,
 ): readonly TranscriptFolder[] {
-  return registry.map((harness) => harness.transcriptFolder(env));
+  return [...registry.map((harness) => harness.transcriptFolder(env)),
+    codexTranscriptFolder({ configDir: env['CODEX_HOME'] || undefined })];
 }
 
 /**

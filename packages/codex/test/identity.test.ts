@@ -23,4 +23,16 @@ describe('Codex start identity evidence', () => {
     expect(result.startCwd).toBeNull();
     expect(result.messages[0]?.cwd).toBe('/synthetic/turn');
   });
+  it('preserves start evidence and turn cwd through ID reconciliation and a prefix rewrite', () => {
+    const parser = codexParser();
+    const initial = [meta('/synthetic/start'), turn('/synthetic/turn'), message].map(line).join('');
+    const first = parser.reconcile!(initial, null, []).result;
+    if (!first.ok) throw new Error(first.message);
+    const rewritten = [meta('/synthetic/start'), { type: 'event_msg', payload: {} }, turn('/synthetic/turn'), message].map(line).join('');
+    const next = parser.reconcile!(rewritten, first.cursor, first.messages.map(m => m.harnessMessageId)).result;
+    if (!next.ok) throw new Error(next.message);
+    expect(next).toMatchObject({ startCwd: '/synthetic/start', cursorReset: true });
+    expect(next.messages[0]).toMatchObject({ cwd: '/synthetic/turn', harnessMessageId: first.messages[0]!.harnessMessageId });
+    expect(next.cursor?.lastHarnessMessageId).toBe(first.messages[0]!.harnessMessageId);
+  });
 });
