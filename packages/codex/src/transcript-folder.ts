@@ -15,18 +15,18 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
     async list() {
       const files = new Map<string, TranscriptListing>();
       try {
-        async function visit(directory: string): Promise<void> {
+        async function visit(directory: string, root: boolean): Promise<void> {
           let entries;
           try { entries = await readdir(directory, { withFileTypes: true }); }
           catch (error) {
-            if (missing(error)) return;
+            if (missing(error) || (!root && notDirectory(error))) return;
             throw error;
           }
           entries.sort((a, b) => a.name.localeCompare(b.name));
           for (const entry of entries) {
             const path = join(directory, entry.name);
             // Do not traverse links: cycles and external trees are not Codex roots.
-            if (entry.isDirectory()) { await visit(path); continue; }
+            if (entry.isDirectory()) { await visit(path, false); continue; }
             if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
             try {
               const bytes = await readFile(path);
@@ -40,13 +40,13 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
               if (prior && prior.fingerprint !== fingerprint) throw new Error(`Codex 세션 ID가 서로 다른 기록에 중복됩니다: ${id}`);
               if (!prior) files.set(id, { harness: CODEX_HARNESS, harnessSessionId: id, path, sizeBytes: bytes.length, modifiedAt: info.mtime, fingerprint });
             } catch (error) {
-              if (missing(error)) continue;
+              if (missing(error) || notDirectory(error)) continue;
               throw error;
             }
           }
         }
-        await visit(join(home, 'sessions'));
-        await visit(join(home, 'archived_sessions'));
+        await visit(join(home, 'sessions'), true);
+        await visit(join(home, 'archived_sessions'), true);
         return { ok: true, files: [...files.values()] };
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : String(error) };
@@ -57,5 +57,9 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
 
 function missing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return code === 'ENOENT';
+}
+
+function notDirectory(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOTDIR';
 }

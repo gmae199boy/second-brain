@@ -14,3 +14,5 @@ description: Brain 설치 진단, 데몬 시작·중지·상태, 대기열 조�
 변경 뒤 해당 상태·목록을 다시 읽는다. `requested`, 재시도 접수, 시간 예산 종료는 완료가 아니다. 종료 코드와 오류 코드, 관찰한 건수·상태 및 남은 일을 보고한다. 실패한 변경을 무한 반복하지 않는다. 비밀·인증 정보나 원문을 보고에 복사하지 않는다.
 
 `brain failures retry`는 현재 등록된 확장 일감의 원본 실행 맥락을 안전하게 확인할 수 있을 때 재등록한다. 등록되지 않았거나 원본을 확인할 수 없는 실패와 예약 occurrence가 연결된 실패는 건너뛴다.
+
+`brain doctor run --json`의 codex-folders는 폴더 발견과 scan-only 지원을, codex-transcripts는 미수집·미해결 수집 실패·마지막 성공 수집의 기록 시각을 표시한다. 확인 불가 또는 skip은 0건이 아니다. 수집은 `brain queue drain --json`, 명시 파일은 `brain sessions ingest codex --json`, 실패 재시도는 `brain failures retry --target-kind session --json`의 범위와 영향을 확인한 뒤 실행한다. 이 필터는 Codex 전용이 아니며 Claude를 포함한 모든 세션 실패에 적용된다.

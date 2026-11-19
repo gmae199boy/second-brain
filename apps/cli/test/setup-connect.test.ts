@@ -215,7 +215,7 @@ describe('brain setup connect', () => {
     const envelope = JSON.parse(run.stdout) as Envelope;
     expect(envelope.ok).toBe(false);
     expect(envelope.error?.code).toBe('USAGE');
-    expect(envelope.error?.message).toContain('아는 하네스: demo.');
+    expect(envelope.error?.message).toContain('아는 하네스: demo, codex (scan-only).');
     expect(demo.entries()).toEqual([]);
   });
 
@@ -263,7 +263,7 @@ describe('brain setup connect', () => {
     const run = await runConnect([], ['setup', 'connect', 'anything', '--json'], home);
 
     expect(run.code).toBe(2);
-    expect((JSON.parse(run.stdout) as Envelope).error?.message).toContain('아직 커넥터를 등록하지 않습니다');
+    expect((JSON.parse(run.stdout) as Envelope).error?.message).toContain('codex (scan-only)');
   });
 
   it('reports SHIM_MISSING and writes nothing when the shim is gone', async () => {
@@ -358,4 +358,57 @@ describe('plugin connections', () => {
     expect(envelope.warnings).toEqual([]);
     expect(envelope.data).toMatchObject({ plugin_root: '/current/plugin', changed: false });
   });
+});
+
+describe('Codex scan-only setup', () => {
+  it('reports absent and present roots without changing existing settings on repeated calls', async () => {
+    const home = await emptyHome();
+    const codex = join(home, 'codex');
+    await mkdir(codex);
+    const config = join(codex, 'config.toml');
+    const hooks = join(codex, 'hooks.json');
+    await writeFile(config, 'notify = ["echo", "untouched"]\n');
+    await writeFile(hooks, '{"hooks":{"user":"untouched"}}');
+    const env = { ...withoutHarnessFolders({ [HOME_ENV]: home }), CODEX_HOME: codex };
+    const invoke = async (json: boolean) => {
+      let stdout = '';
+      const code = await dispatch([setupConnectCommand([])], ['setup', 'connect', 'codex', ...(json ? ['--json'] : [])], { env, clock: systemClock, stdout: value => { stdout += value; }, stderr: () => {} });
+      return { code, stdout };
+    };
+    const missing = await invoke(true);
+    expect(missing.code).toBe(0);
+    expect(JSON.parse(missing.stdout).data).toMatchObject({ changed: false, mode: 'scan-only', folders: 'missing' });
+    await mkdir(join(codex, 'archived_sessions'));
+    expect(JSON.parse((await invoke(true)).stdout).data).toMatchObject({ changed: false, folders: 'present' });
+    expect((await invoke(false)).stdout).toContain('자동 hook/notify 연결은 없습니다');
+    expect(await readFile(config, 'utf8')).toBe('notify = ["echo", "untouched"]\n');
+    expect(await readFile(hooks, 'utf8')).toBe('{"hooks":{"user":"untouched"}}');
+    await writeFile(join(codex, 'sessions'), 'not a directory');
+    expect(JSON.parse((await invoke(true)).stdout).data.folders).toBe('unknown');
+  });
+});
+
+it('exposes Codex scan-only through the built CLI in JSON and text', async () => {
+  const home = await emptyHome();
+  const codex = join(home, 'codex');
+  await mkdir(codex);
+  const env = { ...childEnvironment(), [HOME_ENV]: home, CODEX_HOME: codex };
+  const json = await spawned(process.execPath, [binPath, 'setup', 'connect', 'codex', '--json'], env);
+  expect(json.code).toBe(0);
+  expect(JSON.parse(json.stdout).data).toMatchObject({ folders: 'missing', mode: 'scan-only', changed: false });
+  const text = await spawned(process.execPath, [binPath, 'setup', 'connect', 'codex'], env);
+  expect(text.code).toBe(0);
+  expect(text.stdout).toContain('scan-only');
+});
+
+it.each(['unset', 'empty'])('uses the isolated default Codex home when CODEX_HOME is %s', async mode => {
+  const home = await emptyHome();
+  const codex = join(home, '.codex');
+  await mkdir(join(codex, 'archived_sessions'), { recursive: true });
+  const env: NodeJS.ProcessEnv = { ...childEnvironment(), HOME: home, [HOME_ENV]: join(home, 'brain') };
+  if (mode === 'unset') delete env.CODEX_HOME;
+  else env.CODEX_HOME = '';
+  const result = await spawned(process.execPath, [binPath, 'setup', 'connect', 'codex', '--json'], env);
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout).data).toMatchObject({ target: codex, folders: 'present', mode: 'scan-only', changed: false });
 });

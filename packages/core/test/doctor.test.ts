@@ -622,3 +622,123 @@ it('관측한 플러그인 package가 설치본보다 뒤처지면 경고하고 
   observed = { name: 'testext', version: '2.0.0', pluginVersion: '2.0.0', digest: 'a'.repeat(64) };
   expect((await report()).checks.find(check => check.id === 'extensions')).toMatchObject({ status: 'ok' });
 });
+
+describe('Codex capture diagnostics', () => {
+  it('uses scan comparison and filters failures by harness and stage', async () => {
+    const store = memoryStore();
+    const original = store.listFailures.bind(store);
+    store.listFailures = async options => {
+      const result = await original(options);
+      if (!result.ok) return result;
+      const base = { id: 'x', targetKind: 'session', targetId: 'private', stage: 'session_ingest', fingerprint: 'x', harness: 'codex', sessionId: null, code: 'x', message: 'x', occurredAt: new Date(), resolvedAt: null, firstOccurredAt: new Date(), occurrences: 1 };
+      return { ok: true, failures: [base, { ...base, harness: 'claude-code' }, { ...base, stage: 'other' }] };
+    };
+    const folder = { harness: 'codex', list: async () => ({ ok: true as const, files: [{ harness: 'codex', harnessSessionId: 'private', path: '/synthetic/a', sizeBytes: 1, modifiedAt: new Date(), fingerprint: 'sha256:new' }] }) };
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [folder] });
+    const check = report.checks.find(item => item.id === 'codex-transcripts');
+    expect(check).toMatchObject({ status: 'warn' });
+    expect(check?.detail).toContain('미수집 1건, 미해결 수집 실패 1건, 마지막 성공 수집 기록 시각 미기록');
+    expect(check?.detail).not.toContain('private');
+  });
+  it('reports the latest successful read and does not count unchanged fingerprints', async () => {
+    const store = memoryStore();
+    await store.recordTranscriptFile({ id: 'one', harness: 'codex', path: '/synthetic/a', sizeBytes: 1, fingerprint: 'sha256:same', cursor: null, scannedAt: new Date('2026-01-01T00:00:00Z'), reset: false });
+    const folder = { harness: 'codex', list: async () => ({ ok: true as const, files: [{ harness: 'codex', harnessSessionId: 'synthetic', path: '/synthetic/a', sizeBytes: 1, modifiedAt: new Date(), fingerprint: 'sha256:same' }] }) };
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [folder] });
+    expect(report.checks.find(item => item.id === 'codex-transcripts')?.detail).toContain('미수집 0건, 미해결 수집 실패 0건, 마지막 성공 수집 기록 시각 2026-01-01T00:00:00.000Z');
+  });
+  it('reports history and failure read errors instead of zero', async () => {
+    const folder = { harness: 'codex', list: async () => ({ ok: true as const, files: [] }) };
+    for (const failure of ['history', 'failures'] as const) {
+      const store = memoryStore();
+      if (failure === 'history') store.listTranscriptFiles = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'unavailable' });
+      else store.listFailures = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'unavailable' });
+      const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [folder] });
+      expect(report.checks.find(item => item.id === 'codex-transcripts')).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE' });
+    }
+  });
+  it('does not claim zero when listing fails', async () => {
+    const folder = { harness: 'codex', list: async () => ({ ok: false as const, message: 'private ID collision' }) };
+    const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, folders: [folder] });
+    expect(report.checks.find(item => item.id === 'codex-transcripts')).toMatchObject({ status: 'warn', detail: expect.stringContaining('Codex 목록 확인 불가') });
+    expect(report.checks.find(item => item.id === 'transcripts')?.detail).not.toContain('0건');
+    expect(JSON.stringify(report)).not.toContain('private ID collision');
+  });
+});
+
+it('shares one observation and retains independent history and failures when Codex listing fails', async () => {
+  const store = memoryStore();
+  const now = new Date('2026-03-04T05:06:07Z');
+  for (const [path, date] of [['a', '2026-01-01'], ['b', '2026-03-01'], ['c', '2026-02-01']]) {
+    await store.recordTranscriptFile({ id: path!, harness: 'codex', path: `/synthetic/${path}`, sizeBytes: 1, fingerprint: 'same', cursor: null, scannedAt: new Date(date!), reset: false });
+  }
+  for (const harness of ['codex', 'claude-code']) await store.recordFailure({ id: harness, targetKind: 'session', targetId: `${harness}:synthetic`, stage: 'session_ingest', fingerprint: 'x', harness, sessionId: null, code: 'TRANSCRIPT_UNREADABLE', message: '합성', occurredAt: now });
+  let lists = 0, histories = 0, failures = 0;
+  const originalHistory = store.listTranscriptFiles.bind(store), originalFailures = store.listFailures.bind(store);
+  store.listTranscriptFiles = async query => { histories++; return originalHistory(query); };
+  store.listFailures = async query => { failures++; return originalFailures(query); };
+  const codex = { harness: 'codex', list: async () => { lists++; return { ok: false as const, message: 'private ID' }; } };
+  const claude = { harness: 'claude-code', list: async () => ({ ok: true as const, files: [{ harness: 'claude-code', harnessSessionId: 'x', path: '/synthetic/claude', sizeBytes: 1, modifiedAt: now }] }) };
+  const report = () => runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [codex, claude] });
+  const first = await report();
+  expect([lists, histories, failures]).toEqual([1, 2, 1]);
+  expect(first.checks.find(c => c.id === 'transcripts')?.detail).toContain('미수집 건수 확인 불가');
+  expect(first.checks.find(c => c.id === 'failures')?.detail).toContain('session 2건');
+  const detail = first.checks.find(c => c.id === 'codex-transcripts')?.detail;
+  expect(detail).toContain('미수집 확인 불가, 미해결 수집 실패 1건, 마지막 성공 수집 기록 시각 2026-03-01T00:00:00.000Z');
+  expect(detail).not.toContain('private');
+  await store.resolveFailures({ targetKind: 'session', targetId: 'codex:synthetic', stage: 'session_ingest', now });
+  const after = await report();
+  expect(after.checks.find(c => c.id === 'codex-transcripts')?.detail).toContain('미해결 수집 실패 0건');
+  expect(after.checks.find(c => c.id === 'failures')?.detail).toContain('session 1건');
+});
+
+it('shares the same listing for aggregate and Codex counts', async () => {
+  let calls = 0;
+  const folder = { harness: 'codex', list: async () => { calls++; return { ok: true as const, files: [{ harness: 'codex', harnessSessionId: 'x', path: '/synthetic/x', sizeBytes: 1, modifiedAt: new Date() }] }; } };
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store: memoryStore(), folders: [folder] });
+  expect(calls).toBe(1);
+  for (const id of ['transcripts', 'codex-transcripts']) expect(report.checks.find(c => c.id === id)?.detail).toContain('미수집 1건');
+});
+
+it('keeps successful observations when either database read fails', async () => {
+  const folder = { harness: 'codex', list: async () => ({ ok: true as const, files: [] }) };
+  const store = memoryStore();
+  await store.recordTranscriptFile({ id: 'a', harness: 'codex', path: '/synthetic/a', sizeBytes: 1, fingerprint: 'same', cursor: null, scannedAt: new Date('2026-03-01'), reset: false });
+  store.listFailures = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: 'unavailable' });
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [folder] });
+  const check = report.checks.find(c => c.id === 'codex-transcripts');
+  expect(check).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE' });
+  expect(check?.detail).toContain('미수집 0건, 미해결 수집 실패 확인 불가, 마지막 성공 수집 기록 시각 2026-03-01T00:00:00.000Z');
+});
+
+it('retains observed Claude retention warning when Codex listing fails', async () => {
+  const claude = { harness: 'claude-code', list: async () => ({ ok: true as const, files: [{ harness: 'claude-code', harnessSessionId: 'old', path: '/synthetic/old', sizeBytes: 1, modifiedAt: new Date('2026-01-01') }] }) };
+  const codex = { harness: 'codex', list: async () => ({ ok: false as const, message: 'synthetic failure' }) };
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store: memoryStore(), folders: [claude, codex] });
+  const check = report.checks.find(c => c.id === 'transcripts');
+  expect(check).toMatchObject({ status: 'warn' });
+  expect(check?.detail).toContain('미수집 건수 확인 불가');
+  expect(check?.detail).toContain('확인된 1건은 하네스가 30일 뒤 지우는 기한에 가까워졌습니다');
+});
+
+it('preserves the recorded Codex failure count when history cannot be read', async () => {
+  const store = memoryStore();
+  await store.recordFailure({ id: 'synthetic', targetKind: 'session', targetId: 'codex:synthetic', stage: 'session_ingest', fingerprint: 'synthetic', harness: 'codex', sessionId: null, code: 'TRANSCRIPT_UNREADABLE', message: '합성', occurredAt: new Date() });
+  store.listTranscriptFiles = async () => ({ ok: false, code: 'DB_UNAVAILABLE', message: '합성' });
+  const folder = { harness: 'codex', list: async () => ({ ok: true as const, files: [] }) };
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store, folders: [folder] });
+  expect(report.checks.find(c => c.id === 'codex-transcripts')).toMatchObject({ status: 'fail', code: 'DB_UNAVAILABLE', detail: expect.stringContaining('미해결 수집 실패 1건') });
+  expect(report.checks.find(c => c.id === 'codex-transcripts')?.detail).toContain('마지막 성공 수집 기록 시각 확인 불가');
+});
+
+
+it('does not apply Claude retention warning to Codex when Claude listing fails', async () => {
+  const claude = { harness: 'claude-code', list: async () => ({ ok: false as const, message: 'synthetic failure' }) };
+  const codex = { harness: 'codex', list: async () => ({ ok: true as const, files: [{ harness: 'codex', harnessSessionId: 'old', path: '/synthetic/codex-old', sizeBytes: 1, modifiedAt: new Date('2026-01-01') }] }) };
+  const report = await runDoctor(fakeStore(healthy()), { ...OPTIONS, store: memoryStore(), folders: [claude, codex] });
+  const check = report.checks.find(c => c.id === 'transcripts');
+  expect(check).toMatchObject({ status: 'warn', detail: expect.stringContaining('미수집 건수 확인 불가') });
+  expect(check?.detail).not.toContain('30일');
+  expect(check?.detail).not.toContain('기한에 가까워졌습니다');
+});

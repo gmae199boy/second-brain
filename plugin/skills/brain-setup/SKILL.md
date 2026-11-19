@@ -12,3 +12,5 @@ description: Personal Brain core 설치·재설정, 하네스 연결 또는 설�
 `brain setup uninstall --json`은 데몬·설치 흔적을 제거하므로 대상과 영향을 제시하고 명시적 확인을 받은 뒤에만 실행한다. PostgreSQL 볼륨은 기본 보존이다. 볼륨 삭제를 요청해도 복구 불가한 데이터 손실 범위를 별도로 명시해 확인받은 뒤에만 schema의 `--delete-volume --yes`를 사용한다. 단순 제거 문의를 삭제 동의로 쓰지 않는다.
 
 비밀번호·MFA·토큰을 대화에서 요청·출력·저장하지 않으며 사용자가 터미널에 직접 입력한다. 출력의 개인 경로나 비밀을 보고에 복사하지 않는다. 종료 코드와 공개 오류 코드, 설치기의 실제 완료/미완료 결과를 보고한다. 실패한 설치나 제거를 반복하지 않는다.
+
+Codex는 `brain setup connect codex --json`으로 활성·보관 폴더 상태와 scan-only 지원을 확인한다. 설정이나 notify, hooks를 바꾸지 않으며 자동 hook 연결은 없다. `brain queue drain --json`은 실제 수집을 수행하고, `brain sessions ingest codex --json`은 stdin에 파일 고유 id와 transcript_path를 전달하는 명시 수집이다.

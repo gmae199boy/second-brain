@@ -121,7 +121,7 @@ export function brainDependencies<S extends SessionIngestStore>(assembly: BrainA
     // because it is the one name a person reading a report would recognise.
     machine: hostname(),
     // One list, for the dispatcher and the installer both: see `doctor/checks`.
-    checks: [...runtimeChecks({ home, config, clock }), codexPathCheck(store as unknown as SettingsStore, systemExecutablePort(env)), agentPathCheck(store as unknown as SettingsStore, systemExecutablePort(env), 'claude')],
+    checks: [...runtimeChecks({ home, config, clock, env }), codexPathCheck(store as unknown as SettingsStore, systemExecutablePort(env)), agentPathCheck(store as unknown as SettingsStore, systemExecutablePort(env), 'claude')],
     // Kinds beyond Core's own, which `createBrain` merges in. Empty for every
     // real invocation of this build (AD-21).
     workHandlers,

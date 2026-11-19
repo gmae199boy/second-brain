@@ -166,7 +166,7 @@ export async function runDoctor(
     if (check.status === 'fail' && failedPrerequisite === undefined) failedPrerequisite = check.id;
   }
   if (failedPrerequisite !== undefined) {
-    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
+    for (const id of ['db', ...(options.adapterProbeIds ?? []), 'schema-version', 'failures', 'untagged', 'transcripts', ...(options.folders?.some(folder => folder.harness === 'codex') ? ['codex-transcripts'] : []), 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) checks.push({ id, status: 'skip', detail: prereqFailed(failedPrerequisite) });
     for (const source of options.checks ?? []) checks.push(await registered(source));
     return { checks, summary: summarise(checks) };
   }
@@ -176,14 +176,15 @@ export async function runDoctor(
     // Everything a store would have answered is skipped under the same reason,
     // so a reader never has to work out from what is missing whether a check
     // was skipped or never existed.
-    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) {
+    for (const id of ['schema-version', 'failures', 'untagged', 'transcripts', ...(options.folders?.some(folder => folder.harness === 'codex') ? ['codex-transcripts'] : []), 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', ...(options.extensionStore ? ['extensions'] : []), ...(options.channelControl ? ['channels'] : [])]) {
       checks.push({ id, status: 'skip', detail: prereqFailed('db') });
     }
   } else {
     checks.push({ id: 'db', status: 'ok', detail: health.serverVersion });
     checks.push(...health.source.probes.map(probeCheck));
     checks.push(await schemaCheck(store, options.schemaVersions));
-    checks.push(await failuresCheck(options.store));
+    const failures = await options.store.listFailures({ includeResolved: false });
+    checks.push(failuresCheck(failures));
     if (options.channelControl) {
       const channels = await options.channelControl.health();
       checks.push(channels.ok ? { id: 'channels', status: channels.unrouted ? 'warn' : 'ok', detail: `메신저 ${channels.channels}, 메신저 자격 증명 설정 ${channels.configured}, 경로 ${channels.routes}, 구독 ${channels.subscriptions}, 보관 이벤트 ${channels.archivedEvents}, 예약 ${channels.scheduled}, 미경로 ${channels.unrouted}${channels.unrouted ? ' (channels send-pending으로 명시적 발신)' : ''}` } : { id: 'channels', status: 'fail', code: channels.code, detail: channels.message });
@@ -192,7 +193,12 @@ export async function runDoctor(
     checks.push(untagged.ok
       ? { id: 'untagged', status: 'ok', detail: `${String(untagged.count)}건` }
       : { id: 'untagged', status: 'fail', code: untagged.code, detail: untagged.message });
-    checks.push(await transcriptsCheck(options));
+    const observations = await Promise.all((options.folders ?? []).map(async folder => ({
+      folder, listed: await folder.list(), history: await options.store.listTranscriptFiles({ harness: folder.harness }),
+    })));
+    checks.push(transcriptsCheck(options, observations));
+    const codex = observations.find(item => item.folder.harness === 'codex');
+    if (codex) checks.push(codexTranscriptsCheck(codex, failures));
     checks.push(...await workAttemptChecks(options.store));
     checks.push(await modelUsageCheck(options));
     if (options.extensionStore) checks.push(await extensionsCheck(options.extensionStore, options.readPackageObservation));
@@ -263,8 +269,7 @@ async function schemaCheck(store: SchemaStore, expected: SchemaVersions): Promis
  * Conventions table, and inventing a code for it would mean every surface had
  * to learn a word that says no more than the count does (Boundaries).
  */
-async function failuresCheck(store: DoctorReadStore): Promise<DoctorCheck> {
-  const read = await store.listFailures({ includeResolved: false });
+function failuresCheck(read: Awaited<ReturnType<DoctorReadStore['listFailures']>>): DoctorCheck {
   if (!read.ok) {
     return { id: 'failures', status: 'fail', code: read.code, detail: read.message };
   }
@@ -315,8 +320,14 @@ async function workAttemptChecks(store: DoctorReadStore): Promise<DoctorCheck[]>
  * No folders is a `skip`, naming why: a build whose capture switch is off is
  * not a build with nothing to collect, and `ok` would say it was (Boundaries).
  */
-async function transcriptsCheck(options: DoctorOptions): Promise<DoctorCheck> {
-  const folders = options.folders ?? [];
+type TranscriptObservation = {
+  folder: TranscriptFolder;
+  listed: Awaited<ReturnType<TranscriptFolder['list']>>;
+  history: Awaited<ReturnType<DoctorReadStore['listTranscriptFiles']>>;
+};
+
+function transcriptsCheck(options: DoctorOptions, observations: readonly TranscriptObservation[]): DoctorCheck {
+  const folders = observations;
   if (folders.length === 0) {
     return {
       id: 'transcripts',
@@ -327,13 +338,11 @@ async function transcriptsCheck(options: DoctorOptions): Promise<DoctorCheck> {
 
   const uncollected: TranscriptListing[] = [];
   const problems: string[] = [];
-  for (const folder of folders) {
-    const listed = await folder.list();
+  for (const { folder, listed, history } of folders) {
     if (!listed.ok) {
-      problems.push(`"${folder.harness}" 폴더를 읽을 수 없습니다: ${listed.message}`);
+      problems.push(folder.harness === 'codex' ? 'Codex 폴더를 읽을 수 없습니다' : `"${folder.harness}" 폴더를 읽을 수 없습니다: ${listed.message}`);
       continue;
     }
-    const history = await options.store.listTranscriptFiles({ harness: folder.harness });
     if (!history.ok) {
       problems.push(`"${folder.harness}" 내역을 읽을 수 없습니다: ${history.message}`);
       continue;
@@ -342,14 +351,16 @@ async function transcriptsCheck(options: DoctorOptions): Promise<DoctorCheck> {
   }
 
   const count = `미수집 ${String(uncollected.length)}건`;
-  if (problems.length > 0) {
-    return { id: 'transcripts', status: 'warn', detail: `${count}, ${problems.join('. ')}` };
-  }
-
   const deadlineMs =
     options.clock.now().getTime() -
     (TRANSCRIPT_RETENTION_DAYS - TRANSCRIPT_DEADLINE_WARN_DAYS) * DAY_MS;
   const overdue = uncollected.filter((file) => file.modifiedAt.getTime() < deadlineMs);
+  if (problems.length > 0) {
+    const claudeOverdue = overdue.filter(file => file.harness === 'claude-code');
+    const warning = claudeOverdue.length > 0 ? `, 확인된 ${String(claudeOverdue.length)}건은 하네스가 ${String(TRANSCRIPT_RETENTION_DAYS)}일 뒤 지우는 기한에 가까워졌습니다` : '';
+    return { id: 'transcripts', status: 'warn', detail: `미수집 건수 확인 불가, ${problems.join('. ')}${warning}` };
+  }
+
   if (overdue.length > 0) {
     return {
       id: 'transcripts',
@@ -360,6 +371,19 @@ async function transcriptsCheck(options: DoctorOptions): Promise<DoctorCheck> {
     };
   }
   return { id: 'transcripts', status: 'ok', detail: count };
+}
+
+function codexTranscriptsCheck(observation: TranscriptObservation, failures: Awaited<ReturnType<DoctorReadStore['listFailures']>>): DoctorCheck {
+  const id = 'codex-transcripts';
+  const { listed, history } = observation;
+  const count = listed.ok && history.ok ? String(transcriptChanges(listed.files, history.files).length) + '건' : '확인 불가';
+  const failed = failures.ok ? failures.failures.filter(f => f.harness === 'codex' && f.targetKind === 'session' && f.stage === 'session_ingest').length : null;
+  const last = history.ok ? history.files.reduce<Date | null>((latest, file) => latest === null || file.scannedAt > latest ? file.scannedAt : latest, null) : null;
+  const lastDetail = history.ok ? (last?.toISOString() ?? '미기록') : '확인 불가';
+  const errors = [!listed.ok ? 'Codex 목록 확인 불가' : '', !history.ok ? 'Codex 수집 내역 확인 불가' : '', !failures.ok ? 'Codex 실패 내역 확인 불가' : ''].filter(Boolean);
+  const code = !history.ok ? history.code : !failures.ok ? failures.code : undefined;
+  const changed = listed.ok && history.ok && transcriptChanges(listed.files, history.files).length > 0;
+  return { id, status: code ? 'fail' : errors.length > 0 || changed || (failed !== null && failed > 0) ? 'warn' : 'ok', ...(code ? { code } : {}), detail: `미수집 ${count}, 미해결 수집 실패 ${failed === null ? '확인 불가' : `${failed}건`}, 마지막 성공 수집 기록 시각 ${lastDetail}${errors.length ? `. ${errors.join(', ')}` : ''}. 복구: \`brain queue drain\`; 실패 재시도: \`brain failures retry --target-kind session\` (Claude를 포함한 모든 세션 실패)` };
 }
 
 /** One day in milliseconds, for the retention arithmetic above. */
