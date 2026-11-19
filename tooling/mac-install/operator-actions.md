@@ -13,6 +13,7 @@ unset BRAIN_DATABASE_URL
 export SECOND_BRAIN_HOME="$BRAIN_VERIFY_ROOT/brain-home"
 export CLAUDE_CONFIG_DIR="$BRAIN_VERIFY_ROOT/claude-config"
 export SECOND_BRAIN_TEST_EXTENSIONS="$BRAIN_VERIFY_ROOT/fixtures"
+export SECOND_BRAIN_TEST_CATALOG=1
 export SECOND_BRAIN_REPO="$(node -e 'console.log(require("node:url").pathToFileURL(process.cwd()).href)')"
 export CLAUDE_PLUGIN_ROOT="$BRAIN_VERIFY_ROOT/plugin"
 export SECOND_BRAIN_LAUNCHCTL="$(pwd)/apps/cli/test/fixtures/fake-launchctl.sh"

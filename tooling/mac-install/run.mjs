@@ -25,11 +25,13 @@ function prepare() {
   const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0, 12)}`;
   for (const name of ['brain-home', 'claude-config', 'launch-agents', 'evidence', 'fixtures']) mkdirSync(join(root, name), { recursive: true, mode: 0o700 });
   cpSync(join(repo, 'plugin'), join(root, 'plugin'), { recursive: true });
-  cpSync(join(repo, 'apps/cli/test/fixtures/extensions/testext'), join(root, 'fixtures/testext'), { recursive: true });
-  const fixture = join(root, 'fixtures/testext');
+  const fixture = join(root, 'fixtures/catalog/testext');
+  cpSync(join(repo, 'apps/cli/test/fixtures/extensions/catalog/testext'), fixture, { recursive: true });
   const manifestPath = join(fixture, 'manifest.json');
   const manifest = json(manifestPath);
   manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
+  manifest.login_required = true;
+  manifest.files = [...manifest.files, 'bin/login.mjs'].sort();
   manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
   manifest.default_schedules = [{ kind: 'testext.sync', target_kind: 'account', target_id: 'default', local_time: '09:00' }];
   manifest.error_codes = ['LOGIN_REQUIRED'];
@@ -41,6 +43,13 @@ mkdirSync(dir, { recursive: true });
 if (!existsSync(dir + '/ready')) console.log(JSON.stringify({ abi: 1, type: 'error', code: 'LOGIN_REQUIRED', retryable: false, message: '시험 로그인 미완료' }));
 else console.log(JSON.stringify({ abi: 1, type: 'result' }));
 `);
+  const digest = createHash('sha256');
+  for (const file of manifest.files) {
+    const name = Buffer.from(file);
+    const bytes = readFileSync(join(fixture, file));
+    digest.update(`f${name.length}:`).update(name).update(`:${bytes.length}:`).update(bytes);
+  }
+  writeFileSync(join(fixture, 'digest'), `${digest.digest('hex')}\n`);
   const suffix = createHash('sha256').update(home).digest('hex').slice(0, 12);
   const receipt = { format: 1, id: randomUUID(), root, home, label, project: `second-brain-${suffix}`, volume: `second-brain-pg-${suffix}`, baseline, candidate: newRef, phase: 'prepared' };
   write(join(root, receiptName), receipt);
@@ -66,7 +75,7 @@ function setup(rootArg) {
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
     SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
-  delete env.BRAIN_DATABASE_URL; delete env.SECOND_BRAIN_TEST_EXTENSIONS;
+  delete env.BRAIN_DATABASE_URL; delete env.SECOND_BRAIN_TEST_EXTENSIONS; delete env.SECOND_BRAIN_TEST_CATALOG;
   const result = spawnSync('sh', [join(plugin, 'bin/session-start.sh')], { env, cwd: root, encoding: 'utf8', timeout: 900000, maxBuffer: 16 * 1024 * 1024 });
   writeFileSync(join(root, 'evidence/bootstrap.txt'), result.stdout + result.stderr, { mode: 0o600 });
   if (result.error || result.status !== 0) throw new Error(`bootstrap 실행 실패: ${result.error?.message ?? result.status}. 영수증과 기록을 보존합니다.`);
@@ -105,7 +114,7 @@ async function verify(rootArg) {
   const plugin = join(root, 'plugin'), evidence = join(root, 'evidence');
   const env = { ...process.env, SECOND_BRAIN_HOME: home, SECOND_BRAIN_REPO: pathToFileURL(repo).href,
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
-    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'),
+    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_TEST_CATALOG: '1',
     SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
   delete env.BRAIN_DATABASE_URL;
@@ -203,7 +212,8 @@ function upgrade(rootArg) {
   const plugin = join(root, 'plugin');
   const env = { ...process.env, SECOND_BRAIN_HOME: home, SECOND_BRAIN_REPO: pathToFileURL(repo).href,
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
-    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
+    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_TEST_CATALOG: '1',
+    SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
   delete env.BRAIN_DATABASE_URL;
   const cli = () => {
