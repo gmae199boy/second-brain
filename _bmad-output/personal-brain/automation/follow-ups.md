@@ -765,3 +765,11 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 - 정상 OrbStack/context, 합성 Brain/Claude/Codex/XDG/launchctl 격리, 공용 잠금의 정확 소유 획득/해제, 전용PG tmpfs·run/file라벨·랜덤loopback과 정확ID 부재/worker출생시각 종료를 확인한 원시기록을 보존했다. 자원 감사 최초 경로오류·sandbox ps 거절과 올바른 재감사종료0을 구별하며 시험 반복은 없다. 타/불명 장부는 보존했다.
 - 안전한 일반 hook/notify 공존은 미입증이므로 자동 연결하지 않았다. 격리 notify 실패 뒤 스캔 회수·멱등은 검증했다. 실제 운영 설정·기록 수집/연결은23.5·23.6의 명시 범위로 판단하며 이번 시험 통과로 대신하지 않는다. 동일 원문 반복의 역사적 물리 개체 식별 한계와 기존 부모링크/output원문/동일시각순서 제약도 유지한다. 수락조건 미충족·deferred0.
 - 23.3 완료보고는 run_not_found로 전달되지 않아 중앙 대기에서 지연됐다. 사용자 상태 요청으로 source 보고·원격SHA를 복구하고 결합 검증을 진행했다. 통합 최종메시지가 가리킨 보고 경로 부재/체크포인트 지연은 기존 지휘자에게 문서 보완을 요청했다. 실제 실행증거는 별도 terra-full-gate-report.md·원시파일과 최종메시지로 인수했으며, 부재 문서를 읽었다고 주장하지 않는다.
+
+## 23.5 — Codex 연결 안내·수집 진단 수락 (2026-11-19)
+
+근거는 [연결·진단 계획](../tickets/epic-codex-capture/tickets/story-setup-connect-codex-doctor-codex-plan.md)과 티켓 커밋 `a077c755`이다. 중앙 통합 검증 로그와 자원 정리 기록은 로컬 `.brain-automation/tickets/23.5/integration-verification/`에 보존했다.
+
+- 연결 안내는 Codex를 scan-only로 표시하고 활성·보관 폴더 상태를 보고한다. 미수집, 미해결 실패, 마지막 성공 수집의 기록 시각을 진단한다. 한 루트의 목록 오류나 상이한 세션 ID 충돌은 목록 오류로 표시한다. 기존 hook·notify 설정은 건드리지 않는다. 일반 hook·notify 공존과 운영 설치·실제 기록 검증은 23.6의 판단 범위다.
+- 티켓 직접 시험 9파일 211사례가 통과했다. 독립 리뷰 35건 중 28건을 해결했고 7건은 근거를 대조해 기각했다. 최종 후속 리뷰의 신규 지적과 보류 항목은 0건이다.
+- 통합 TypeScript 전체 실행은 278파일 5,776사례 중 5,775건 통과, 1건 실패였다. 실패한 `packages/postgres/test/document-recall.test.ts`는 티켓 변경 범위 밖이었고, 전용 DB에서 해당 파일만 재실행해 7건이 모두 통과했다. 최초 실패 원인은 확인하지 못했다. Python 전체 실행은 12파일·29작업·55사례가 모두 통과했다. 두 전체 명령은 공용 잠금 아래 순차로 각 1회 실행했다. 전용 DB와 잠금은 정리했다.
