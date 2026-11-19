@@ -1,5 +1,6 @@
 ---
 type: epic
+status: built
 title: "Codex 대화 수집: Codex 세션도 Claude Code처럼 빠짐없이 쌓이고 찾아 읽힌다"
 parent: personal-brain
 covers: []

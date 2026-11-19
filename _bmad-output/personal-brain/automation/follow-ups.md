@@ -777,3 +777,7 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 ## 23.7 — Codex 수집 에픽 보류 항목 정리 수락 (2026-11-19)
 
 [23.7 계획](../tickets/epic-codex-capture/tickets/story-refactor-sweep-plan.md)의 대조에서 23.2~23.5의 계획·리뷰 보류와 미충족 수락조건은 각각 0건이었다. 독립 리뷰 지적 한 건을 반영했고 후속 리뷰에서 신규 지적은 없었다. 제품·시험이 23.5 통합 검증 시점과 같아 위의 회귀 결과와 실패 파일의 재검증 기록을 적용했다. 운영 설치·실제 Codex 기록 대조는 23.6에 남아 있다.
+
+## 23.6 — 이 Mac의 Codex 수집 운영 검증 및 에픽 수락 (2026-11-19)
+
+[운영 검증 계획](../tickets/epic-codex-capture/tickets/story-codex-mac-operational-verification-plan.md)의 설치 커밋은 `b4e088c0`이다. 비교 가능한 실제 세션 2,637개와 DB의 ID 집합이 일치했다. 명시 초기 수집 뒤 데몬이 새 세션 8개를 자동 수집했다. 재수집·증분·태그·검색·읽기·가림을 실제 표본으로 검증했다. 한 파일의 메타 ID가 모호한 파일 5개는 원본을 보존하고 경고로 표시한다. 통합 회귀의 최초 실패, 영향 파일 재검증과 자원 정리는 계획에 기록했다. 운영 설치에 대한 배포 플러그인의 `PLUGIN_BEHIND`와 이전부터 있던 Garmin 패키지 충돌 경고가 남았다.
