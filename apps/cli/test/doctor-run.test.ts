@@ -81,6 +81,7 @@ describe('PG doctor', () => {
     const code = await dispatch(commands, ['doctor', 'run', '--json'], { env: kit.env, clock: { now: () => new Date() }, stdout: s => { stdout += s; }, runner: async request => { calls.push(request.command); return { ok: true, stdout: 'Stopped', stderr: '' }; } });
     expect(code).toBe(1); expect(calls).toEqual(['orb']);
     expect(JSON.parse(stdout).data.checks).toContainEqual({ id: 'db', status: 'skip', detail: '앞선 점검 실패: orbstack' });
+    expect(JSON.parse(stdout).data.checks).toContainEqual({ id: 'codex-transcripts', status: 'skip', detail: '앞선 점검 실패: orbstack' });
   });
   it('reports a spool entry and keeps healthy DB checks', async () => {
     const kit = await world(); await mkdir(join(kit.home, 'spool')); await writeFile(join(kit.home, 'spool', 'invalid.jsonl'), 'invalid\n');
@@ -119,8 +120,8 @@ describe('brain doctor run without a configuration it can read', () => {
       expect(checks).toContainEqual(expect.objectContaining({ id, status: 'ok' }));
     }
     expect(checks.map((check: { id: string }) => check.id)).toEqual([
-      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', 'extensions',
-      'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'drive-refresh-lock', 'garmin-backlog', 'daemon', 'agent-codex-path', 'agent-claude-path',
+      'orbstack', 'container', 'db', 'schema-version', 'failures', 'untagged', 'transcripts', 'codex-transcripts', 'work-stalled', 'work-died', 'work-unknown', 'work-last-error', 'work-model-usage', 'extensions',
+      'codex-folders', 'config', 'config-timezone', 'shim', 'node-path', 'node-version', 'plugin', 'last-hook', 'spool', 'drive-refresh-lock', 'garmin-backlog', 'daemon', 'agent-codex-path', 'agent-claude-path',
     ]);
     expect(checks).toContainEqual({ id: 'schema-version', status: 'skip', detail: '앞선 점검 실패: db' });
     expect(envelope.warnings).toEqual(['DB_UNAVAILABLE']);
@@ -160,7 +161,7 @@ describe('brain doctor run without a configuration it can read', () => {
     expect(run.stdout).toContain('schema-version: skip 앞선 점검 실패: db');
     expect(run.stdout).toContain('node-path: skip 앞선 점검 실패: shim');
     expect(run.stdout).toContain('spool: ok 0건');
-    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 8, 경고 3, 실패 3, 건너뜀 12');
+    expect(run.stdout.trimEnd().split('\n').at(-1)).toBe('요약: 통과 9, 경고 3, 실패 3, 건너뜀 13');
     expect(run.stderr).not.toContain('CONFIG_MISSING');
     assertKoreanLines(run.stdout);
   });
@@ -187,4 +188,107 @@ it('shows stalled, died, unknown and last error from PostgreSQL in doctor JSON',
     const unavailable = JSON.parse((await kit.run()).stdout).data.checks;
     for (const id of ['work-stalled', 'work-died', 'work-unknown', 'work-last-error']) expect(unavailable).toContainEqual({ id, status: 'skip', detail: '앞선 점검 실패: db' });
   } finally { await store.close(); }
+});
+
+it.each(['json', 'text'])('reports isolated Codex discovery and uncollected count in %s', async mode => {
+  const kit = await world();
+  const codex = join(kit.home, 'synthetic-codex');
+  await mkdir(join(codex, 'sessions'), { recursive: true });
+  await writeFile(join(codex, 'sessions', 'sample.jsonl'), JSON.stringify({ type: 'session_meta', payload: { id: 'synthetic' } }) + '\n');
+  kit.env.CODEX_HOME = codex;
+  const result = await kit.run(mode === 'json' ? ['doctor', 'run', '--json'] : ['doctor', 'run']);
+  expect(result.code).toBe(0);
+  if (mode === 'json') {
+    const checks = JSON.parse(result.stdout).data.checks;
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-folders', detail: expect.stringContaining('Codex 폴더 발견') }));
+    expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-transcripts', detail: expect.stringContaining('미수집 1건') }));
+  } else {
+    expect(result.stdout).toContain('Codex 폴더 발견');
+    expect(result.stdout).toContain('미수집 1건');
+    expect(result.stdout).toContain('자동 hook/notify 연결은 없습니다');
+  }
+});
+
+it('reports a Codex ID collision without a partial zero count or exposing the ID', async () => {
+  const kit = await world();
+  const codex = join(kit.home, 'synthetic-codex');
+  await mkdir(join(codex, 'sessions'), { recursive: true });
+  await mkdir(join(codex, 'archived_sessions'));
+  const meta = JSON.stringify({ type: 'session_meta', payload: { id: 'private-synthetic-id' } });
+  await writeFile(join(codex, 'sessions', 'a.jsonl'), meta + '\n' + '{"a":1}\n');
+  await writeFile(join(codex, 'archived_sessions', 'b.jsonl'), meta + '\n' + '{"a":2}\n');
+  kit.env.CODEX_HOME = codex;
+  const result = await kit.run();
+  expect(result.code).toBe(0);
+  const checks = JSON.parse(result.stdout).data.checks;
+  expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-transcripts', status: 'warn', detail: expect.stringContaining('Codex 목록 확인 불가') }));
+  expect(JSON.stringify(checks)).not.toContain('private-synthetic-id');
+  const text = await kit.run(['doctor', 'run']);
+  expect(text.code).toBe(0);
+  expect(text.stdout).toContain('Codex 목록 확인 불가');
+  expect(text.stdout).not.toContain('private-synthetic-id');
+});
+
+it('reports absent Codex roots and DB skip in both public output modes', async () => {
+  const kit = await world();
+  kit.env.CODEX_HOME = join(kit.home, 'absent-codex');
+  const json = await kit.run();
+  expect(json.code).toBe(0);
+  expect(JSON.parse(json.stdout).data.checks).toContainEqual(expect.objectContaining({ id: 'codex-folders', detail: expect.stringContaining('미발견') }));
+  const text = await kit.run(['doctor', 'run']);
+  expect(text.code).toBe(0);
+  expect(text.stdout).toContain('Codex 폴더 미발견');
+  expect(text.stdout).toContain('scan-only');
+  kit.env.BRAIN_DATABASE_URL = 'postgresql://unused@127.0.0.1:1/unavailable';
+  const unavailable = await kit.run();
+  expect(unavailable.code).toBe(1);
+  expect(JSON.parse(unavailable.stdout).data.checks).toContainEqual({ id: 'codex-transcripts', status: 'skip', detail: '앞선 점검 실패: db' });
+  const unavailableText = await kit.run(['doctor', 'run']);
+  expect(unavailableText.code).toBe(1);
+  expect(unavailableText.stdout).toContain('codex-transcripts: skip');
+});
+
+it.each(['json', 'text'])('reports synthetic Codex success and open failure alongside Claude in %s', async mode => {
+  const kit = await world();
+  kit.env.CODEX_HOME = join(kit.home, 'synthetic-codex');
+  await mkdir(join(kit.env.CODEX_HOME, 'sessions'), { recursive: true });
+  const store = postgresStore({ databaseUrl: pgDatabaseUrl(kit.home) });
+  const idGen = sequenceIdGen({ timestampMs: Date.now() });
+  const now = new Date('2026-03-04T05:06:07.000Z');
+  try {
+    expect(await store.recordTranscriptFile({ id: idGen.next(), harness: 'codex', path: '/synthetic/completed.jsonl', sizeBytes: 1, fingerprint: 'sha256:synthetic', cursor: null, scannedAt: now, reset: false })).toMatchObject({ ok: true });
+    for (const harness of ['codex', 'claude-code']) {
+      expect(await store.recordFailure({ id: idGen.next(), targetKind: 'session', targetId: `${harness}:synthetic`, stage: 'session_ingest', fingerprint: 'sha256:synthetic', harness, sessionId: null, code: 'TRANSCRIPT_UNREADABLE', message: '합성 실패', occurredAt: now })).toMatchObject({ ok: true });
+    }
+    const result = await kit.run(mode === 'json' ? ['doctor', 'run', '--json'] : ['doctor', 'run']);
+    expect(result.code).toBe(0);
+    if (mode === 'json') {
+      const checks = JSON.parse(result.stdout).data.checks;
+      expect(checks).toContainEqual(expect.objectContaining({ id: 'failures', detail: expect.stringContaining('session 2건') }));
+      const detail = checks.find((c: { id: string }) => c.id === 'codex-transcripts').detail;
+      expect(detail).toContain('미해결 수집 실패 1건');
+      expect(detail).toContain('2026-03-04T05:06:07.000Z');
+      expect(detail).toContain('--target-kind session');
+    } else {
+      expect(result.stdout).toContain('미해결 수집 실패 1건');
+      expect(result.stdout).toContain('2026-03-04T05:06:07.000Z');
+      expect(result.stdout).toContain('Claude를 포함한 모든 세션 실패');
+    }
+  } finally { await store.close(); }
+});
+
+it('reports a file root as unknown in public doctor output', async () => {
+  const kit = await world();
+  const codex = join(kit.home, 'synthetic-codex');
+  await mkdir(codex);
+  await writeFile(join(codex, 'sessions'), 'not a directory');
+  kit.env.CODEX_HOME = codex;
+  const json = await kit.run();
+  expect(json.code).toBe(0);
+  const checks = JSON.parse(json.stdout).data.checks;
+  expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-folders', status: 'warn', detail: expect.stringContaining('확인 불가') }));
+  expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-transcripts', status: 'warn', detail: expect.stringContaining('미수집 확인 불가') }));
+  const text = await kit.run(['doctor', 'run']);
+  expect(text.code).toBe(0);
+  expect(text.stdout).toContain('Codex 폴더 확인 불가');
 });

@@ -134,3 +134,16 @@ it('Codex 명시 파일 수집은 배포 세션 스킬에 입력과 범위를 �
   expect(internal.some(entry => entry.command === 'sessions ingest')).toBe(false);
   for (const term of ['`brain sessions ingest codex --json`', '`id`', '`transcript_path`', '`session_meta.payload.id`', '`session_id`', '명시적으로 요청', '폴더 스캔']) expect(text).toContain(term);
 });
+
+it('Codex 연결과 진단 안내는 실제 공개 명령과 상태를 덮는다', () => {
+  const setup = body('plugin/skills/brain-setup/SKILL.md');
+  const status = body('plugin/skills/brain-status/SKILL.md');
+  expect(setup).toContain('`brain setup connect codex --json`');
+  expect(setup).toContain('scan-only');
+  expect(setup).toContain('`brain sessions ingest codex --json`');
+  expect(status).toContain('codex-folders');
+  expect(status).toContain('codex-transcripts');
+  expect(status).toContain('Claude를 포함한 모든 세션 실패');
+  expect(status).toContain('`brain failures retry --target-kind session --json`');
+  expect(status).toContain('`brain queue drain --json`');
+});

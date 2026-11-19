@@ -61,7 +61,7 @@ async function installedHome(): Promise<string> {
  */
 async function report(options: RuntimeChecksOptions): Promise<Map<string, DoctorCheck>> {
   const checks = new Map<string, DoctorCheck>();
-  for (const source of runtimeChecks(options)) {
+  for (const source of runtimeChecks({ ...options, env: { CODEX_HOME: options.home } })) {
     const check = await source.run();
     assertKoreanLine(check.detail ?? '', { label: `${check.id} detail` });
     checks.set(source.id, check);
@@ -85,6 +85,7 @@ beforeAll(() => {
 describe('runtimeChecks', () => {
   it('registers the machine checks, in the order they are reported', () => {
     expect(runtimeChecks({ home: '/nowhere' }).map((source) => source.id)).toEqual([
+      'codex-folders',
       'config',
       'config-timezone',
       'shim',

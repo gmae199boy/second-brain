@@ -1,7 +1,21 @@
 import { mkdtemp, mkdir, writeFile, rename, rm, copyFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const race = vi.hoisted(() => ({ parent: '', child: '' }));
+vi.mock('node:fs/promises', async (load) => {
+  const fs = await load<typeof import('node:fs/promises')>();
+  return { ...fs, readdir: async (...args: Parameters<typeof fs.readdir>) => {
+    const entries = await fs.readdir(...args);
+    if (String(args[0]) === race.parent) {
+      race.parent = '';
+      await fs.rm(race.child, { recursive: true });
+      await fs.writeFile(race.child, 'replacement');
+    }
+    return entries;
+  } };
+});
 import { codexTranscriptFolder } from '../src/index.js';
 
 const dirs: string[] = [];
@@ -58,4 +72,22 @@ describe('Codex transcript discovery', () => {
     expect(listed.ok && listed.files.map(file => file.harnessSessionId)).toEqual(['valid']);
   });
 
+});
+
+it('reports a root that is a file as unreadable rather than empty', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'codex-root-file-')); dirs.push(home);
+  await writeFile(join(home, 'sessions'), 'not a directory');
+  const result = await codexTranscriptFolder({ configDir: home }).list();
+  expect(result.ok).toBe(false);
+});
+
+it('skips a child directory replaced by a file after enumeration', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'codex-race-')); dirs.push(home);
+  const root = join(home, 'sessions');
+  const child = join(root, 'replaced');
+  await mkdir(child, { recursive: true });
+  await writeFile(join(root, 'valid.jsonl'), content('valid'));
+  race.parent = root; race.child = child;
+  const result = await codexTranscriptFolder({ configDir: home }).list();
+  expect(result.ok && result.files.map(file => file.harnessSessionId)).toEqual(['valid']);
 });

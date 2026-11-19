@@ -1,3 +1,4 @@
+import { codexRoots, codexGuidance } from '../doctor/codex-folders.js';
 import type { Connector } from 'second_brain';
 import { configHome } from '../config/paths.js';
 import type { CommandSpec, StandaloneCommandContext } from '../dispatch.js';
@@ -21,6 +22,9 @@ export interface SetupConnectData {
   /** False when the harness already said exactly this. */
   changed: boolean;
   plugin_root: string | null;
+  mode?: string;
+  folders?: string;
+  guidance?: string;
 }
 
 /**
@@ -36,8 +40,8 @@ export function setupConnectCommand(
     nsDescription: '설치하고, 다시 설정하고, 하네스를 연결합니다',
     usedFor: '이 brain을 하네스 하나에 등록합니다',
     required: ['harness'],
-    examples: ['brain setup connect claude-code'],
-    output: '연결한 하네스 `harness`, 설정 파일 `target`, 바뀌었는지인 `changed`, 플러그인 폴더 `plugin_root`(없으면 null)',
+    examples: ['brain setup connect claude-code', 'brain setup connect codex'],
+    output: '하네스 `harness`, Claude 설정 파일 또는 Codex 홈 디렉터리 `target`, 변경 여부 `changed`, 플러그인 폴더 `plugin_root`(없으면 null). Codex는 `mode`(scan-only), `folders`(present/missing/unknown), 지원 명령 안내 `guidance`도 반환합니다',
     risk: 'write',
     hook: false,
     dryRun: false,
@@ -47,6 +51,11 @@ export function setupConnectCommand(
     async run(context: StandaloneCommandContext) {
       const available = typeof registry === 'function' ? registry(context.env) : registry;
       const name = context.args[0] ?? '';
+      if (name === 'codex') {
+        const roots = await codexRoots(context.env);
+        const detail = roots.state === 'present' ? '발견' : roots.state === 'missing' ? '미발견' : '확인 불가';
+        return { ok: true as const, data: { harness: 'codex', target: roots.home, changed: false, plugin_root: null, mode: 'scan-only', folders: roots.state, guidance: codexGuidance }, warnings: [], text: [`Codex 폴더 ${detail}. ${codexGuidance}`] };
+      }
       const connector = available.find((candidate) => candidate.harness === name);
       if (connector === undefined) {
         return {
@@ -79,6 +88,6 @@ export function setupConnectCommand(
 
 /** The names this build accepts, for the `USAGE` message. */
 function known(registry: readonly Connector[]): string {
-  if (registry.length === 0) return '이 빌드는 아직 커넥터를 등록하지 않습니다 (epic 2).';
-  return `아는 하네스: ${registry.map((connector) => connector.harness).join(', ')}.`;
+  const names = registry.map((connector) => connector.harness);
+  return `아는 하네스: ${[...names, 'codex (scan-only)'].join(', ')}.`;
 }

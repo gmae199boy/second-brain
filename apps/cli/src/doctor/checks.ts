@@ -1,3 +1,4 @@
+import { codexRoots, codexGuidance } from './codex-folders.js';
 import { runtimeFencePath, RUNTIME_FENCE_RECOVERY } from '../install/runtime-fence.js';
 import { daemonLiveness, daemonDeadReason } from '../daemon/liveness.js';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -66,6 +67,7 @@ export type NodeRun = { ok: true; stdout: string } | { ok: false; message: strin
 export type RunNode = (path: string) => Promise<NodeRun>;
 
 export interface RuntimeChecksOptions {
+  env?: NodeJS.ProcessEnv;
   clock?: Clock;
   harnessNames?: readonly string[];
   /** The configuration folder these checks are about. */
@@ -133,6 +135,11 @@ export function runtimeChecks(options: RuntimeChecksOptions): readonly DoctorChe
   const config = once(async () => options.config ?? (await readConfig(home)));
 
   return [
+    { id: 'codex-folders', run: async () => {
+      const roots = await codexRoots(options.env ?? process.env);
+      const detail = roots.state === 'present' ? '발견' : roots.state === 'missing' ? '미발견' : '확인 불가';
+      return { id: 'codex-folders', status: roots.state === 'unknown' ? 'warn' : 'ok', detail: `Codex 폴더 ${detail}. ${codexGuidance}` };
+    } },
     { id: 'config', run: async () => configCheck(home, await config()) },
     { id: 'config-timezone', run: async () => {
       const read = await config();
