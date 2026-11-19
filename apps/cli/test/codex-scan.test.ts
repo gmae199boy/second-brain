@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createIsolatedTestDatabase } from '@second-brain/test-db';
 import { HOME_ENV } from '../src/config/paths.js';
 import { withoutHarnessFolders } from './environment.js';
-import { pgHome } from './pg-home.js';
+import { pgHome, pgRunner } from './pg-home.js';
+import { dispatch, type DatabaseCommandSpec } from '../src/dispatch.js';
+import { doctorRun } from '../src/commands/doctor-run.js';
 import { PgTestClient } from './pg-client.js';
 import { tempHomes } from './temp-home.js';
 
@@ -46,6 +48,35 @@ describe('Codex folder scan', () => {
     await writeFile(a, meta('one') + message('conflict', 1));
     const conflict = await drain(home); expect(conflict.data.scan_stopped).toContain('중복');
     const text = await invoke(home, ['queue', 'drain']); expect(text.code).toBe(0); expect(text.stdout).toContain('중복');
+  });
+  it('collects valid sessions while excluding ambiguous metadata', async () => {
+    const home = await homes.create('brain-codex-excluded-'); const dbFixture = await pgHome(home, true, createIsolatedTestDatabase);
+    const env = withoutHarnessFolders({ ...process.env, ...dbFixture.env, [HOME_ENV]: home, HOME: home, XDG_CONFIG_HOME: join(home, 'xdg') });
+    env.CODEX_HOME = join(home, 'codex');
+    delete env.SECOND_BRAIN_DATABASE_URL; delete env.BRAIN_TEST_DATABASE_URL;
+    delete env.DOCKER_HOST;
+    const active = join(home, 'codex', 'sessions'); await mkdir(active, {recursive: true});
+    await writeFile(join(active, 'valid.jsonl'), meta('valid') + message('synthetic valid', 1));
+    await writeFile(join(active, 'ambiguous.jsonl'), meta('ambiguous-a') + meta('ambiguous-b') + message('synthetic excluded', 2));
+    const check = async () => {
+      let stdout = '', stderr = '';
+      const code = await dispatch([{...(doctorRun as DatabaseCommandSpec), drain: false}], ['doctor', 'run', '--json'], {
+        env, clock: {now: () => new Date()}, runner: pgRunner, stdout: text => { stdout += text; }, stderr: text => { stderr += text; },
+      });
+      expect(code, stderr).toBe(0);
+      return JSON.parse(stdout).data.checks.find((item: {id: string}) => item.id === 'codex-transcripts');
+    };
+    const before = await check(); expect(before.detail).toContain('미수집 1건'); expect(before.detail).toContain('제외 1건');
+    const drained = await drain(home);
+    expect(drained.data).toMatchObject({enqueued: 1, failed: 0}); expect(drained.data).not.toHaveProperty('scan_stopped');
+    const after = await check(); expect(after.status).toBe('warn'); expect(after.detail).toContain('미수집 0건');
+    expect(after.detail).toContain('미해결 수집 실패 0건'); expect(after.detail).toContain('제외 1건');
+    expect(await bodies(home, 'valid')).toEqual(['synthetic valid']);
+    const db = new PgTestClient(home);
+    try {
+      const rows = await db.prepare("select harness_session_id from sessions where harness='codex'").all();
+      expect(rows).toEqual([expect.objectContaining({harness_session_id: 'valid'})]);
+    } finally { await db.close(); }
   });
   it('reconciles prefix insertion and same-size rewrites, then accepts an append', async () => {
     const home = await homes.create('brain-codex-rewrite-'); await pgHome(home, true, createIsolatedTestDatabase);

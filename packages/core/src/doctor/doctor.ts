@@ -383,7 +383,8 @@ function codexTranscriptsCheck(observation: TranscriptObservation, failures: Awa
   const errors = [!listed.ok ? 'Codex 목록 확인 불가' : '', !history.ok ? 'Codex 수집 내역 확인 불가' : '', !failures.ok ? 'Codex 실패 내역 확인 불가' : ''].filter(Boolean);
   const code = !history.ok ? history.code : !failures.ok ? failures.code : undefined;
   const changed = listed.ok && history.ok && transcriptChanges(listed.files, history.files).length > 0;
-  return { id, status: code ? 'fail' : errors.length > 0 || changed || (failed !== null && failed > 0) ? 'warn' : 'ok', ...(code ? { code } : {}), detail: `미수집 ${count}, 미해결 수집 실패 ${failed === null ? '확인 불가' : `${failed}건`}, 마지막 성공 수집 기록 시각 ${lastDetail}${errors.length ? `. ${errors.join(', ')}` : ''}. 복구: \`brain queue drain\`; 실패 재시도: \`brain failures retry --target-kind session\` (Claude를 포함한 모든 세션 실패)` };
+  const excluded = listed.ok ? listed.excludedCount ?? 0 : null;
+  return { id, status: code ? 'fail' : errors.length > 0 || changed || (excluded !== null && excluded > 0) || (failed !== null && failed > 0) ? 'warn' : 'ok', ...(code ? { code } : {}), detail: `미수집 ${count}, 미해결 수집 실패 ${failed === null ? '확인 불가' : `${failed}건`}, 마지막 성공 수집 기록 시각 ${lastDetail}, 메타데이터 오류로 제외 ${excluded === null ? '확인 불가' : `${excluded}건`}${errors.length ? `. ${errors.join(', ')}` : ''}. 미수집 복구: \`brain queue drain\`; 메타데이터가 유효해진 파일은 다시 스캔됩니다. 실패 재시도: \`brain failures retry --target-kind session\` (Claude를 포함한 모든 세션 실패)` };
 }
 
 /** One day in milliseconds, for the retention arithmetic above. */

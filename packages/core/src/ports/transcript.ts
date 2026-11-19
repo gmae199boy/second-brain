@@ -71,7 +71,7 @@ export interface TranscriptListing {
  * found nothing, and neither of those is helped by a code nobody can act on.
  */
 export type ListTranscriptsResult =
-  | { ok: true; files: readonly TranscriptListing[] }
+  | { ok: true; files: readonly TranscriptListing[]; excludedCount?: number }
   | { ok: false; message: string };
 
 /**
