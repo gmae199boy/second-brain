@@ -1,6 +1,6 @@
 ---
 title: '이 Mac에서 검색·원문·건강 수치의 실제 질문 검증'
-type: story
+type: feature
 ticket: '7'
 created: '2026-11-19'
 status: blocked
