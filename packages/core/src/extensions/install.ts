@@ -215,7 +215,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   };
   const cancelled = async () => {
     if (!signal?.aborted) return null;
-    if (progress?.authWorkId && progress.stages.login?.status !== 'succeeded') {
+    if (!manifest.auth?.probe_on_install && progress?.authWorkId && progress.stages.login?.status !== 'succeeded') {
       if (!deps.store.requestWorkCancel || !deps.store.getWork) return { ok: false as const, code: 'EXTENSION_CANCEL_UNCONFIRMED' as const, message: '인증 취소를 확인할 수 없습니다' };
       const requested = await deps.store.requestWorkCancel({ id: progress.authWorkId, now: deps.clock.now() });
       if (!requested.ok) return requested;
@@ -391,8 +391,41 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
   if (!self.ok) { const saved = await mark(manifest.auth ? 'login' : 'configuration', 'failed', self.code); return saved.ok ? self : saved; }
   if (!manifest.auth) {
     if (!completed('login')) { const saved = await mark('login', 'skipped', 'EXTENSION_AUTH_NOT_REQUIRED'); if (!saved.ok) return saved; }
-  } else if (!completed('login')) {
-    if (!progress || !deps.store.getWork || !deps.store.addWork) return { ok: false as const, code: 'EXTENSION_AUTH_FAILED' as const, message: '인증 일감 저장소를 사용할 수 없습니다' };
+  } else if (manifest.auth.probe_on_install || !completed('login')) {
+    if (!progress) return { ok: false as const, code: 'EXTENSION_AUTH_FAILED' as const, message: '인증 설치 기록을 사용할 수 없습니다' };
+    // An opt-in auth adapter can verify a stored credential without prompting.
+    // Existing supervised extensions retain their original queue-only contract.
+    if (manifest.auth.probe_on_install) {
+      const prior = progress.stages.login;
+      if (prior?.status === 'failed' && (prior.code === 'EXTENSION_AUTH_FAILED' || prior.code === 'AUTH_CANCELLED')) return { ok: false as const, code: prior.code, message: prior.code === 'AUTH_CANCELLED' ? '확장 로그인이 취소되었습니다' : '확장 로그인을 다시 완료하세요' };
+      const declarations = manifest.settings ?? [];
+      const snapshot = await acquireExtensionSnapshot({ extension: name, userId: self.userId, stage: 'auth', declarations, getSettings: deps.store.getSettings?.bind(deps.store), readSecrets: runtime.readSecrets?.bind(runtime), machineValues: () => runtime.machineValues?.(name) ?? {} });
+      if (!snapshot.ok) return { ok: false as const, code: 'EXTENSION_CONFIG_INVALID' as const, message: '확장 인증 설정을 확인하세요' };
+      let databaseUrl: string;
+      try { databaseUrl = await runtime.databaseUrl(name); } catch { return { ok: false as const, code: 'DB_UNAVAILABLE' as const, message: '확장 인증을 확인할 수 없습니다' }; }
+      const env = { [PROCESS_ABI_ENV.version]: '1', [PROCESS_ABI_ENV.databaseUrl]: databaseUrl,
+        [PROCESS_ABI_ENV.workId]: deps.idGen.next(), [PROCESS_ABI_ENV.attemptToken]: deps.idGen.next(),
+        [PROCESS_ABI_ENV.workKind]: manifest.auth.kind, [PROCESS_ABI_ENV.targetKind]: 'extension',
+        [PROCESS_ABI_ENV.targetId]: name, [PROCESS_ABI_ENV.runGeneration]: '1',
+        BRAIN_SETTINGS_SNAPSHOT: snapshot.serialized, BRAIN_EXTENSION_HOME: installedDir };
+      const verdict = await runExtensionCheck({ ...runtime, ...(signal ? { signal } : {}), clock: deps.clock,
+        protection: { extension: name, declarations: Object.fromEntries(declarations.map(setting => [setting.key, setting.type])), errorCodes: manifest.error_codes ?? [], required: declarations.filter(setting => setting.required.includes('auth')).map(setting => setting.key), secrets: declarations.filter(setting => setting.secret).map(setting => setting.key) },
+        spec: { command: manifest.auth.runtime === 'python' ? `${installedDir}/.venv/bin/python` : 'node', args: [`${installedDir}/${manifest.auth.entry}`], env } });
+      if (verdict.code === 'EXTENSION_INSTALL_CANCELLED') { const stopped = await cancelled(); if (stopped) return stopped; }
+      if (verdict.outcome === 'succeeded') {
+        const saved = await mark('login', 'succeeded'); if (!saved.ok) return saved;
+      } else if (verdict.code === 'LOGIN_REQUIRED') {
+        progress.result = 'login_required'; progress.failedStage = null;
+        progress.stages.login = { status: 'pending', code: 'LOGIN_REQUIRED', at: deps.clock.now().toISOString() };
+        const saved = await save(); if (!saved.ok) return saved;
+        return { ok: false as const, code: 'EXTENSION_LOGIN_REQUIRED' as const, message: '확장 인증을 완료한 뒤 설치를 다시 실행하세요' };
+      } else {
+        const code = verdict.code === 'GARMIN_BINDING_RECOVERY_REQUIRED' ? 'GARMIN_BINDING_RECOVERY_REQUIRED' as const : verdict.code === 'GARMIN_ACCESS_TOKEN_UNCONFIRMED' ? 'GARMIN_ACCESS_TOKEN_UNCONFIRMED' as const : 'AUTH_UNAVAILABLE' as const;
+        const saved = await mark('login', 'failed', code); if (!saved.ok) return saved;
+        return { ok: false as const, code, message: code === 'GARMIN_BINDING_RECOVERY_REQUIRED' ? '기존 Garmin 계정 결합의 인증 복구가 필요합니다' : code === 'GARMIN_ACCESS_TOKEN_UNCONFIRMED' ? '저장된 Garmin 액세스 토큰을 확인하지 못했습니다' : '확장 인증을 확인하지 못했습니다. 잠시 뒤 설치를 다시 실행하세요' };
+      }
+    } else {
+    if (!deps.store.getWork || !deps.store.addWork) return { ok: false as const, code: 'EXTENSION_AUTH_FAILED' as const, message: '인증 일감 저장소를 사용할 수 없습니다' };
     let current = progress.authWorkId ? await deps.store.getWork(progress.authWorkId) : null;
     if (current && !current.ok) return current;
     const afterAuthRead = await cancelled(); if (afterAuthRead) return afterAuthRead;
@@ -428,6 +461,7 @@ async function installExtensionUnlocked(deps: ExtensionDependencies, name: strin
         const afterAuthSave = await cancelled(); if (afterAuthSave) return afterAuthSave;
         return { ok: false as const, code: 'EXTENSION_LOGIN_REQUIRED' as const, message: '확장 인증을 완료한 뒤 설치를 다시 실행하세요' };
       }
+    }
     }
   }
   const afterLogin = await cancelled(); if (afterLogin) return afterLogin;

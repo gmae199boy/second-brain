@@ -1,6 +1,6 @@
 {
   "name": "garmin",
-  "version": "1.2.15",
+  "version": "1.2.16",
   "core": 1,
   "abi": 1,
   "migrations": "migrations",
@@ -315,7 +315,13 @@
     "REPORT_FAILED",
     "ANALYSIS_AGENT_NOT_FOUND",
     "REPORT_UNAVAILABLE",
-    "COLLECT_INCOMPLETE"
+    "COLLECT_INCOMPLETE",
+    "LOGIN_REQUIRED",
+    "AUTH_CANCELLED",
+    "AUTH_UNAVAILABLE",
+    "GARMIN_BINDING_RECOVERY_REQUIRED",
+    "GARMIN_BOUND_LOGIN_REFUSED",
+    "GARMIN_ACCESS_TOKEN_UNCONFIRMED"
   ],
   "commands": [
     {
@@ -996,5 +1002,12 @@
     }
   ],
   "description": "Garmin 건강 및 운동 데이터를 수집하고 분석합니다.",
-  "login_required": true
+  "login_required": true,
+  "auth": {
+    "kind": "garmin.auth",
+    "execution": "supervised",
+    "runtime": "python",
+    "entry": "src/auth.py",
+    "probe_on_install": true
+  }
 }

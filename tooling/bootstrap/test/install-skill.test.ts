@@ -38,10 +38,20 @@ describe('확장 설치 스킬', () => {
     expect(skill).toContain('사용자가 이름을 선택할 때까지 기다리며 임의로 정하거나 설치하지 않는다');
     expect(skill).toContain('조회가 실패하거나 목록이 비어 있으면 그대로 보고하고 중단한다');
     expect(skill).toContain('카탈로그의 `login_required`는 인증 필요 여부이지 현재 로그인 상태가 아니다');
-    expect(skill).toContain('Garmin은 현재 패키지에 인증 실행 항목이 없어');
-    expect(loginSkill).toContain('Garmin은 현재 패키지에 인증 실행 항목이 없으므로');
-    expect(loginSkill).toContain('로그인 필요를 명시한 상태가 있을 때만 인증 미완료로 보고');
-    expect(loginSkill).toContain('기존 connected와 login skipped는 그대로 보고한다');
+    expect(skill).toContain('현재 배포 Garmin 패키지는 터미널 인증을 선언한다');
+    expect(loginSkill).toContain('Garmin의 현재 배포 패키지는 터미널 인증을 선언한다');
+    expect(loginSkill).toContain('이미 connected이고 login이 succeeded 또는 skipped인 상태를 그대로 보고');
+    expect(loginSkill).toContain('카탈로그의 `login_required`는 패키지 메타데이터이지 현재 로그인 상태가 아니다');
+    expect(loginSkill).toContain('기존 설치 입력을 그대로 사용해 한 번 재개한다');
+    expect(loginSkill).toContain('`brain ext install --package <path> --json`');
+    expect(loginSkill).toContain('브라우저나 다른 외부 원본');
+    expect(loginSkill).toContain('원본을 모르면 확인 전까지 재개하지 않는다');
+    expect(loginSkill).toContain('실패·취소이거나 사용자의 응답이 없으면 설치를 재개하지 않는다');
+    for (const code of ['LOGIN_REQUIRED', 'AUTH_CANCELLED', 'AUTH_UNAVAILABLE', 'EXTENSION_AUTH_FAILED', 'EXTENSION_INVALID', 'EXTENSION_NOT_INSTALLED']) expect(loginSkill).toContain(code);
+    expect(loginSkill).toContain('수집 계정 준비 또는 예약 발화의 증거가 아니다');
+    expect(skill).toContain('기존 connected와 login skipped는 그대로 보고한다');
+    expect(skill).toContain('수집 계정 준비나 예약 발화가 완료됐다는 근거로 삼지 않는다');
+    expect(skill).not.toContain('인증 실행 항목이 없어');
   });
 
   it('인증 비밀과 우회 설치 및 별도 예약을 금지한다', () => {

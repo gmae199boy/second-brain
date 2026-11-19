@@ -161,6 +161,9 @@
         },
         "entry": {
           "$ref": "#/$defs/path"
+        },
+        "probe_on_install": {
+          "type": "boolean"
         }
       }
     },

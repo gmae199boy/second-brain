@@ -12,7 +12,7 @@ export interface ExtensionManifest {
   settings?: ExtensionSettingDeclaration[];
   error_codes?: string[];
   work?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; manual?: string; input_schema?: Record<string, unknown>; followup?: string; missed?: 'latest' | 'coalesce' | 'skip'; public_report?: { counts: string[]; checks: string[] }; required_settings?: string[] }[];
-  auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string };
+  auth?: { kind: string; execution: 'supervised'; runtime: 'node' | 'python'; entry: string; probe_on_install?: boolean };
   default_schedules?: { kind: string; target_kind: string; target_id: string; target_setting?: string; after_schedule?: string; key?: string; local_time?: string; cron?: string; time_zone?: string }[];
   requires?: ('channel.send')[];
   raw_views?: string[];
@@ -124,7 +124,7 @@ function decodeManifestUnchecked(text: string, validateSchema?: (schema: Record<
   }
   if (v['auth'] !== undefined) {
     const auth = v['auth'];
-    if (!object(auth) || !keys(auth, ['kind', 'execution', 'runtime', 'entry']) || typeof auth['kind'] !== 'string' ||
+    if (!object(auth) || !['kind', 'execution', 'runtime', 'entry'].every(k => Object.hasOwn(auth, k)) || !Object.keys(auth).every(k => ['kind', 'execution', 'runtime', 'entry', 'probe_on_install'].includes(k)) || (auth['probe_on_install'] !== undefined && typeof auth['probe_on_install'] !== 'boolean') || typeof auth['kind'] !== 'string' ||
         !auth['kind'].startsWith(`${v['name']}.`) || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(auth['kind']) ||
         auth['execution'] !== 'supervised' || !['node', 'python'].includes(auth['runtime'] as string) || !inside(auth['entry']) ||
         (Array.isArray(v['work']) && v['work'].some(work => object(work) && work['kind'] === auth['kind']))) return invalid;

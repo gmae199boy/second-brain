@@ -2316,5 +2316,109 @@
       "description": "제목\r\n"
     },
     "expect": "invalid"
+  },
+  {
+    "name": "auth-probe-enabled",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "bin/sync.mjs"
+        }
+      ],
+      "auth": {
+        "kind": "testext.login",
+        "execution": "supervised",
+        "runtime": "node",
+        "entry": "bin/login.mjs",
+        "probe_on_install": true
+      },
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:30"
+        }
+      ],
+      "raw_views": [
+        "samples"
+      ],
+      "settings": [
+        {
+          "key": "testext.tokenstore",
+          "type": "string",
+          "required": [
+            "auth",
+            "work"
+          ],
+          "machine": "tokenstore"
+        }
+      ]
+    },
+    "expect": "valid"
+  },
+  {
+    "name": "auth-probe-invalid",
+    "manifest": {
+      "name": "testext",
+      "version": "1.0",
+      "core": 1,
+      "abi": 1,
+      "migrations": "migrations",
+      "connection_check": {
+        "runtime": "node",
+        "entry": "check.mjs"
+      },
+      "work": [
+        {
+          "kind": "testext.sync",
+          "execution": "supervised",
+          "runtime": "node",
+          "entry": "bin/sync.mjs"
+        }
+      ],
+      "auth": {
+        "kind": "testext.login",
+        "execution": "supervised",
+        "runtime": "node",
+        "entry": "bin/login.mjs",
+        "probe_on_install": "true"
+      },
+      "default_schedules": [
+        {
+          "kind": "testext.sync",
+          "target_kind": "account",
+          "target_id": "default",
+          "local_time": "09:30"
+        }
+      ],
+      "raw_views": [
+        "samples"
+      ],
+      "settings": [
+        {
+          "key": "testext.tokenstore",
+          "type": "string",
+          "required": [
+            "auth",
+            "work"
+          ],
+          "machine": "tokenstore"
+        }
+      ]
+    },
+    "expect": "invalid"
   }
 ]

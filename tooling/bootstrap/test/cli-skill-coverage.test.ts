@@ -42,6 +42,18 @@ it('설치 가능한 확장 목록은 공개 설치 스킬이 직접 덮는다',
   expect(internal.some(entry => entry.command === 'ext catalog')).toBe(false);
 });
 
+it('Garmin 설치 및 공통 로그인 스킬이 공식 로그인과 이름 재개를 직접 덮는다', () => {
+  const login = body('plugin/skills/brain-login/SKILL.md');
+  const install = body('plugins/garmin/skills/brain-garmin-install/SKILL.md');
+  for (const [text, suffix] of [[login, '<name>'], [install, 'garmin']] as const) {
+    expect(text).toContain(`brain ext login ${suffix}`);
+    expect(text).toContain(`brain ext install ${suffix} --json`);
+    expect(mentions(text, 'guide schema')).toBe(true);
+    expect(mentions(text, 'ext status')).toBe(true);
+  }
+  expect(internal.some(entry => entry.command === 'ext login')).toBe(false);
+});
+
 it('Garmin의 두 manifest에 있는 manual과 공개 조회 명령도 Garmin 배포 스킬이 덮는다', () => {
   for (const path of ['plugins/garmin/package/manifest.json', 'extensions/garmin/manifest.json']) {
     const manifest = JSON.parse(read(path)) as { work: { kind: string; manual?: string }[]; commands: { name: string }[]; settings: { key: string }[]; files?: string[] };
