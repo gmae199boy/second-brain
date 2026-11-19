@@ -1,5 +1,6 @@
 ---
 type: epic
+status: built
 title: "확장 설치와 install 스킬"
 parent: personal-brain
 covers: [R1, R16, R17]
@@ -74,6 +75,8 @@ Garmin을 쓰지 않는 사용자는 아무것도 더 설치하지 않는다. �
 - research — _bmad-output/personal-brain/tickets/epic-extensions/epic-extensions-research-code.md (2026-10-28 정적 코드 조사)
 
 ## Notes
+
+- 수락(2026-11-19): 13.1~13.8은 done, 13.9는 dropped, 13.10~13.12는 built다. 13.10의 새 Codex 세션에서 공식 배포 설치 스킬, 카탈로그, 합성 확장의 이름 설치·시험 로그인 재개·연결 및 활성 공용 예약을 확인했다. 설치·갱신·비활성 보존·Python 없는 진단의 기존 격리 증거와 함께 에픽 수락 근거로 삼았다. 13.12의 Garmin 공식 터미널 인증은 합성 입력으로 검증했다. 실제 Garmin 계정 결합·수집·예약 발화와 추가 릴리스는 별도다.
 
 - Waits on epic-postgres-primary because: 확장 DDL을 받을 마이그레이션 실행기, 사용자·확장 설정 DB, PostgreSQL 위 설치 흐름이 필요하다.
 - Waits on epic-jobs-and-scheduler because: install 스킬의 예약 단계가 공통 스케줄러의 등록 API를 부르고, 연결 확인이 감독자와 프로세스 ABI v1로 테스트 확장의 명령을 자식 프로세스로 부른다.
