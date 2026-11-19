@@ -338,3 +338,4 @@ export type { ChannelControlStore, ChannelControlFailure, ChannelRoute, ChannelS
 export * from './executable.js';
 
 export type { ProfilePatch } from './settings/garmin-analysis-profile.js';
+export { driveMigrationKey } from './files/drive-migrate-work.js';

@@ -429,9 +429,19 @@ describe('failures.retry', () => {
 });
 
 it('retries a failed Drive recovery as Drive recovery even for a redacted file', async () => {
-  const store=await holding(failure({targetKind:'file',targetId:'redacted-file',stage:'drive_migrate',code:'FILES_UNAVAILABLE',fingerprint:'drive-recovery'}));
+  const {failureFingerprint}=await import('../src/domain/failure.js');const store=memoryStore(),workId='01940000-0000-7000-8000-000000000331';
+  expect(await store.addWork({id:workId,kind:'drive_migrate',targetKind:'file',targetId:'redacted-file',createdAt:NOW,nextAttemptAt:NOW})).toMatchObject({ok:true});
+  expect(await store.claimWork({now:NOW,kinds:['drive_migrate'],claimedBy:'worker'})).toMatchObject({ok:true,item:{id:workId,serializationKey:null}});
+  expect(await store.recordFailure(failure({targetKind:'file',targetId:'redacted-file',stage:'drive_migrate',code:'FILES_UNAVAILABLE',fingerprint:failureFingerprint({stage:'drive_migrate',input:'file:redacted-file',code:'FILES_UNAVAILABLE'}),closeWork:{id:workId,claimedBy:'worker',now:NOW}}))).toMatchObject({ok:true,outcome:'recorded'});
+  expect(store.snapshot().workItems).toEqual(expect.arrayContaining([expect.objectContaining({id:workId,outcome:'failed',completedAt:NOW,serializationKey:null})]));
   expect(await retryFailures(retryDependencies(store),{targetKind:'file'})).toMatchObject({ok:true,added:1,redacted:0});
-  expect(store.snapshot().workItems).toEqual(expect.arrayContaining([expect.objectContaining({kind:'drive_migrate',targetKind:'file',targetId:'redacted-file'})]));
+  expect(store.snapshot().workItems.filter(item=>item.completedAt===null)).toEqual([expect.objectContaining({kind:'drive_migrate',targetKind:'file',targetId:'redacted-file',serializationKey:null})]);
+});
+
+it('skips a Drive failure without an identifiable closed original',async()=>{
+  const store=await holding(failure({targetKind:'file',targetId:'redacted-file',stage:'drive_migrate',code:'FILES_UNAVAILABLE',fingerprint:'drive-recovery'}));
+  expect(await retryFailures(retryDependencies(store),{targetKind:'file'})).toMatchObject({ok:true,added:0,skipped:[{targetKind:'file',count:1}]});
+  expect(store.snapshot().workItems).toEqual([]);
 });
 
 it('keeps core retries independent from extension retry errors and deduplicates unknown stages', async () => {

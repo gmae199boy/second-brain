@@ -72,3 +72,23 @@ it('aborts a stalled error body, releases its reader and hides remote text',asyn
  await reading;controller.abort();const error=await pending;
  expect(cancelled).toBe(true);expect(response.body?.locked).toBe(false);expect(error).toBeInstanceOf(DriveRequestError);expect(error.code).toBe('TEMPORARY');expect(JSON.stringify(error)).not.toContain('private synthetic');
 });
+
+it.each([['token','root'],['refresh','root'],['token','claim'],['refresh','claim']] as const)('Drive upload rechecks %s wait and %s before every fetch',async (mode,which)=>{
+ let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});let valid=true,calls=0,claims=0;
+ const auth={async token(){if(mode==='token'){entered();await hold;}return {ok:true as const,accessToken:'synthetic'};},async retryAfter401(){entered();await hold;return {ok:true as const,accessToken:'synthetic-new'};}};
+ const store=driveFileStore({baseUrl:'http://local',rootFolderId:'root',uploads:memoryDriveUploads(),clock:fakeClock(),auth,authorize:async()=>which==='claim'||valid,fetch:async()=>{calls++;return new Response('',{status:401});}});
+ const pending=store.put(new TextEncoder().encode('synthetic'),{continueUpload:async()=>{claims++;return which==='root'||valid;}});
+ try {await ready;valid=false;release();expect(await pending).toMatchObject({ok:false});expect(calls).toBe(mode==='token'?0:1);expect(claims).toBeGreaterThan(0);}finally{release();}
+});
+
+it.each(['token','refresh'] as const)('Drive DELETE의 %s 대기 중 청구 취소는 전송과 tombstone을 막는다',async mode=>{
+ const clock=fakeClock(start.toISOString()),bytes=new TextEncoder().encode('synthetic-delete'),hash=contentHashOfBytes(bytes),locator=hash.slice(7),submissionId='019a0000-0000-7000-8000-000000000003';let valid=true,deletes=0;
+ let entered!:()=>void,release!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});
+ const uploads=memoryDriveUploads({isDeleteFenceValid:()=>valid});const identity={rootFolderId:'root',contentHash:hash,remoteId:'remote'};
+ await uploads.save({...identity,state:'reserved',at:start});await uploads.start({...identity,submissionId});await uploads.save({...identity,state:'uploaded',submissionId,at:start});
+ let submitted=false;const guardedUploads={...uploads,async submitDelete(input:Parameters<typeof uploads.submitDelete>[0]){const result=await uploads.submitDelete(input);if(result.ok&&result.upload?.deleteSubmittedAt)submitted=true;return result;}};
+ const auth={async token(){if(mode==='token'&&submitted){entered();await hold;}return {ok:true as const,accessToken:'synthetic'};},async retryAfter401(){entered();await hold;return {ok:true as const,accessToken:'new'};}};
+ const drive=driveFileStore({rootFolderId:'root',baseUrl:'http://local',uploads:guardedUploads,clock,auth,deleteSourceFence:{sourceId:'source',generation:1,account:'account'},fetch:async(_url,init)=>{if(init?.method==='DELETE'){deletes++;return new Response('',{status:401});}return new Response(JSON.stringify({id:'remote',name:locator,parents:['root'],sha256Checksum:locator}),{status:200});}});
+ const pending=drive.delete({storeKind:'drive',ownership:'brain',locator},{workId:'work',locationId:'location',claimedBy:'worker',claimedAt:start,attempts:1});
+ try{await reached;valid=false;release();expect(await pending).toMatchObject({ok:false});expect(deletes).toBe(mode==='token'?0:1);expect(await uploads.read(identity)).toMatchObject({ok:true,upload:{deletedAt:null,deleteSubmittedAt:expect.any(Date)}});}finally{release();}
+});

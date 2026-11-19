@@ -53,7 +53,7 @@ export const failuresRetryCommand: CommandSpec<FailuresRetryData> = {
   ],
 
   async run(context) {
-    const targetKind = textOf(context.options['target-kind']);
+    const targetKind = textOf(context.options['targetKind']);
     const result = await context.brain.failures.retry(
       targetKind === undefined ? {} : { targetKind },
     );

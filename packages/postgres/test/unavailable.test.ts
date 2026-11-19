@@ -177,6 +177,7 @@ const calls = {
   readDriveLocatorRoot: s => s.readDriveLocatorRoot('a'.repeat(64)),
   ensureDriveRedaction: s => s.ensureDriveRedaction({fileId:id,rootFolderId:'root',workId:id,at:now}),
   beginDriveMigration: s => s.beginDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',locationId:id,locator:'a'.repeat(64),workId:id,at:now}),
+  requestDriveMigration: s => s.requestDriveMigration({fileId:id,rootFolderId:'root',sourceFence:{sourceId:id,generation:1},workId:id,at:now}),
   readDriveRetention: s => s.readDriveRetention(id),
   withDriveLocalDelete: s => s.withDriveLocalDelete({workId:id,localLocationId:id,claimedBy:id,claimedAt:now,attempts:1,now},async()=>null),
   commitDriveMigration: s => s.commitDriveMigration({fileId:id,expectedHomeId:id,contentHash:'sha256:'+'a'.repeat(64),rootFolderId:'root',remoteId:'remote',locationId:id,locator:'a'.repeat(64),workId:id,verifiedAt:now,dueAt:now,migrationClaim:{workId:id,claimedBy:'worker',claimedAt:now,attempts:1,now,nowAtLock:()=>now}}),

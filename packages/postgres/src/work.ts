@@ -201,6 +201,18 @@ export function postgresWorkStore(connect: PgConnect): WorkStore {
       const opened = connect();
       if (!opened.ok) return { ok: false, code: 'DB_UNAVAILABLE', message: opened.message };
       const result = await withWrite(opened.connection, async held => {
+        const driveFailure=(await sql<{stage:string;target_kind:string;target_id:string;occurred_at:string;code:string;message:string;fingerprint:string}>`select stage,target_kind,target_id,occurred_at,code,message,fingerprint from brain.failures where id=${input.failureId} and stage='drive_migrate' and target_kind='file' and resolved_at is null`.execute(held)).rows[0];
+        if(driveFailure){
+          if(driveFailure.fingerprint!==failureFingerprint({stage:driveFailure.stage,input:`${driveFailure.target_kind}:${driveFailure.target_id}`,code:driveFailure.code}))return 'skipped' as const;
+          const originals=await sql<WorkItemRow>`select * from brain.work_items where kind='drive_migrate' and target_kind='file' and target_id=${driveFailure.target_id} and outcome='failed' and completed_at=${driveFailure.occurred_at} and last_error=${driveFailure.message} limit 2`.execute(held);
+          if(originals.rows.length!==1)return 'skipped' as const;
+          const original=originals.rows[0]!;
+          await sql`savepoint drive_retry`.execute(held);
+          const queued=await ensureWork(held,{id:input.id,kind:original.kind,targetKind:original.target_kind,targetId:original.target_id,serializationKey:original.serialization_key,createdAt:input.now,nextAttemptAt:input.now});
+          const active=await sql`select 1 from brain.failures where id=${input.failureId} and resolved_at is null and occurred_at=${driveFailure.occurred_at} and fingerprint=${driveFailure.fingerprint} and message=${driveFailure.message} for update`.execute(held);
+          if(!active.rows.length||queued.row.serialization_key!==original.serialization_key||queued.row.cancel_requested_at!==null){await sql`rollback to savepoint drive_retry`.execute(held);return 'skipped' as const;}
+          await sql`release savepoint drive_retry`.execute(held);return queued.created?'created' as const:'open' as const;
+        }
         // Lock the registry row against replacement/removal until insertion commits.
         const failure = (await sql<{stage:string;target_kind:string;target_id:string;occurred_at:string;code:string;message:string;fingerprint:string}>`
           select f.stage,f.target_kind,f.target_id,f.occurred_at,f.code,f.message,f.fingerprint

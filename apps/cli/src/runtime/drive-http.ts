@@ -24,7 +24,7 @@ async function errorBody(response:Response,signal?:AbortSignal|null):Promise<str
 }
 function retryDeadline(response:Response,body:string,now:Date):Date|undefined{const header=parseRetryAfter(response.headers.get('retry-after'),now);if(header)return header;const iso=/retry\s+after[^0-9]{0,24}(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d))/i.exec(body)?.[1];const parsed=iso?Date.parse(iso):NaN;const candidate=Number.isFinite(parsed)?parsed:now.getTime()+60_000;const time=Math.max(now.getTime(),candidate)+3000;return Number.isFinite(time)?new Date(time):undefined;}
 /** A single request owns at most one 401 refresh; bodies and errors are private. */
-export async function driveRequest(input:{url:string;init?:RequestInit;fetch?:typeof fetch;headers?:()=>Promise<Record<string,string>>;auth?:DriveAuthProvider;clock?:Clock}):Promise<Response> {
+export async function driveRequest(input:{url:string;init?:RequestInit;fetch?:typeof fetch;headers?:()=>Promise<Record<string,string>>;auth?:DriveAuthProvider;clock?:Clock;beforeFetch?:()=>Promise<boolean>}):Promise<Response> {
   const fetcher=input.fetch??fetch, init=input.init??{};
   let token:string|undefined;
   const getToken=async(forceAfter?:string)=>{
@@ -35,7 +35,7 @@ export async function driveRequest(input:{url:string;init?:RequestInit;fetch?:ty
   };
   try {
     await getToken();
-    const send=async()=>{const headers=new Headers(await input.headers?.());new Headers(init.headers).forEach((value,key)=>headers.set(key,value));if(token)headers.set('authorization',`Bearer ${token}`);return fetcher(input.url,{...init,headers});};
+    const send=async()=>{const headers=new Headers(await input.headers?.());new Headers(init.headers).forEach((value,key)=>headers.set(key,value));if(token)headers.set('authorization',`Bearer ${token}`);if(input.beforeFetch&&!await input.beforeFetch())throw new DriveRequestError('TEMPORARY');return fetcher(input.url,{...init,headers});};
     let response=await send();
     if(response.status===401&&input.auth&&token){void response.body?.cancel().catch(()=>{});await getToken(token);response=await send();}
     if(response.status===401){void response.body?.cancel().catch(()=>{});throw new DriveRequestError('AUTH_LOGIN_REQUIRED');}

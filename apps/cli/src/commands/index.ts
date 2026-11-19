@@ -1,3 +1,4 @@
+import { filesMigrateDriveCommand } from './files-migrate-drive.js';
 import { messengersAddCommand, messengersListCommand } from './messengers-add.js';
 import { channelsRouteCommand, channelsSubscribeCommand, channelsSendCommand, channelsSendPendingCommand } from './channels-control.js';
 import { sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesDisconnectCommand } from './sources-control.js';
@@ -80,7 +81,7 @@ export const commands: readonly CommandSpec[] = [
   configGetCommand,
   configSetCommand, configPatchCommand,
   messagesRedactCommand,
-  filesRedactCommand, filesShowCommand, sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesSyncCommand,sourcesDisconnectCommand,
+  filesRedactCommand, filesShowCommand, filesMigrateDriveCommand, sourcesConnectCommand,sourcesAddCommand,sourcesListCommand,sourcesRemoveCommand,sourcesSyncCommand,sourcesDisconnectCommand,
   failuresListCommand,
   failuresRetryCommand,
   // A function, not the list: `guide schema` describes the registry it is in,
