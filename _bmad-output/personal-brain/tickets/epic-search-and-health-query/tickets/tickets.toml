@@ -83,3 +83,14 @@ after = [1, 2, 3, 4, 5, "21.7"]
 hitl = false
 risk = "medium"
 references = ["_bmad-output/personal-brain/tickets/epic-search-and-health-query/epic-search-and-health-query-research-code.md, §9(Done when 4), 스토리 후보 T6"]
+
+[[entry]]
+id = 8
+type = "story"
+title = "대화 recall 스킬에서 연속 리터럴 검색과 명시 범위를 안내한다"
+description = "대화 검색 스킬이 질문에서 구별력 있는 짧은 연속 구절을 고르고, 사전에 확인된 프로젝트·워크트리 범위에만 기존 근접도 옵션을 쓰고, 오류·빈 결과·순위 밖 추가 결과·크기 제한 생략·원문 미확인을 구별하도록 보완한다. 17.7의 최초 2/10·보정 4/10과 7/10 수락선, CLI/SQL 순위·출처·응답 크기 및 건강 경로를 유지한다."
+verify = "별개 합성 질문에서 연속 구절, 범위가 있을 때만 기존 CLI 옵션을 사용한 검색, 추가·생략 판독과 반환 출처 기반 원문 읽기를 확인한다. 후속 17.7용 독립 맹검 절차를 공개 계획에 고정하며 운영 표본 실행과 설치·릴리스는 별도다."
+covers = ["E17-6", "E17-7"]
+after = [3, 5, "22.3"]
+hitl = false
+risk = "low"

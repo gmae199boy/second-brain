@@ -9,7 +9,7 @@ const skill = read('../../../plugin/skills/brain-recall/SKILL.md');
 const manifest = JSON.parse(read('../../../extensions/garmin/manifest.json')) as {commands:{name:string; input_schema:{properties:Record<string, unknown>}}[]};
 
 it('recall 명령과 입력은 등록된 명세에 있고 필수 안내를 포함한다', () => {
-  const calls = [...skill.matchAll(/`(brain [^`]+)`/g)].map(match => match[1]!.split(/\s+/));
+  const calls = [...skill.matchAll(/`(brain [^`]+)`/g)].map(match => match[1]!.match(/'[^']*'|\S+/g)!);
   expect(calls.length).toBeGreaterThan(0);
   expect(new Set(calls.map(c => c.slice(1, 3).join(' ')))).toEqual(new Set(['recall chunks', 'recall tools', 'recall docs', 'recall expand', 'sessions read', 'files show', 'ext status', 'config get', 'guide schema', 'ext garmin']));
   for (const [, ns, verb, ...args] of calls) {
@@ -48,4 +48,17 @@ it('recall 명령과 입력은 등록된 명세에 있고 필수 안내를 포�
   expect(skill).not.toMatch(/`(?:psql|curl|sqlite3)\b/i);
   expect(skill).not.toMatch(/비활성[^\n]*(?:삭제|제외)하/);
   for (const phrase of ['기록 0건', '모두 비어 있음', '0 아님', '미설치', '비활성', '오류']) expect(skill).toContain(phrase);
+});
+
+it('대화 질문의 연속 구절과 근거 있는 근접 옵션, 원문 확인을 안내한다', () => {
+  const command = commands.find(c => c.ns === 'recall' && c.verb === 'chunks');
+  expect(command).toBeDefined();
+  const flags = (command!.options ?? []).map(option => option.flags);
+  expect(flags).toContain('--project <id>');
+  expect(flags).toContain('--worktree <id>');
+  const question = '등대 점검 일정을 언제 정했지?';
+  const literal = '등대 점검';
+  expect(question).toContain(literal);
+  expect(skill).toContain(`brain recall chunks '${literal}' --json`);
+  for (const phrase of ['연속해서 나타날', '떨어진 단어를 이어 붙이지 않는다', '독립적으로 확인한', '불명확하면 두 옵션 없이', '범위 필터가 아니므로', '정상 검색 후 근거가 부족할 때만', '최대 한 번 재질의', '오류는 오류로 보고', '`meta.has_more`', '요청 건수 한도 밖 추가 후보', '`meta.omitted.count`', '빠진 행 수', '`RESULT_TRUNCATED`', '생략 행 수가 0일 때도', '`meta.next`', '첫 잘림 또는 생략 출처', '다음 검색 페이지가 아니다', '원문 확장도 부분 응답이면', '허용된 조회 한도 안에서 안내된 원문', '실제 읽은 범위와 원문 잘림', '원문을 읽기 전에는 결론을 내리지 않으며', '기록의 부재를 단정하지 않는다']) expect(skill).toContain(phrase);
 });
