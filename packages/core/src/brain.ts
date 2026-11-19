@@ -248,6 +248,7 @@ export interface BrainMessages {
 }
 
 export interface BrainFiles {
+  migrateDrive(input:{fileId:string}):Promise<{ok:true;state:'queued';workId:string}|{ok:true;state:'already'}|{ok:false;code:string;message:string}>;
   show(input: ShowDocumentInput): ReturnType<typeof showDocument>;
   /**
    * Take one stored file's content out of the brain: Brain's copy of the bytes,
@@ -564,7 +565,11 @@ export function createBrain(dependencies: BrainDependencies): Brain {
     recall: { docs: async input => { const result = await searchDocuments(store, input, store, resolveDocumentLocation); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, chunks: async input => { const result = await searchRecall(store, 'chunks', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, tools: async input => { const result = await searchRecall(store, 'tools', input, store); return result.ok ? result : withExtensionMetadata(store, result, input.sources); }, expand: input => expandRecall(store, input) },
     ext: { command: async input => withExtensionMetadata(store, await executeExtensionCommand(dependencies, input), [input.name]), run: input => runExtension(dependencies, input), publicStatus: input => publicExtensionStatus(dependencies, input), enable: input => setExtensionEnabled(dependencies, { ...input, enabled: true }), disable: input => setExtensionEnabled(dependencies, { ...input, enabled: false }), install: input => installExtension({ ...dependencies, cron, readTimeZone }, input), status: input => publicExtensionStatus(dependencies, input), list: () => listExtensions(dependencies), catalog: () => catalogExtensions(dependencies) },
     messages: { redact: (input) => redactMessage({ store, clock, idGen }, input) },
-    files: { show: input => showDocument(store, input, async (fileId, extractionId) => {
+    files: { migrateDrive: async ({fileId}) => {
+      if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(fileId))return {ok:false,code:'INVALID_ARGUMENT',message:'파일 ID가 올바르지 않습니다'};
+      if(!drive?.sourceFence)return {ok:false,code:'SOURCE_UNAVAILABLE',message:'연결된 Drive가 없습니다'};
+      return drive.store.requestDriveMigration({fileId:fileId.toLowerCase(),rootFolderId:drive.rootFolderId,sourceFence:drive.sourceFence,workId:idGen.next(),at:clock.now()});
+    }, show: input => showDocument(store, input, async (fileId, extractionId) => {
       const state=await store.readFileExtractionState(fileId);
       if (!state.ok) return {ok:false,code:state.code === 'DB_LOCKED' ? 'DB_LOCKED' : 'DB_UNAVAILABLE',message:state.message};
       if (state.redactedAt !== null) return {ok:false,code:'FILES_UNAVAILABLE',message:'가린 파일입니다'};

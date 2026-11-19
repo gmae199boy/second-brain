@@ -480,3 +480,269 @@ it('checksum-free oversized verification during put cannot publish a Drive home'
  const f=await fixture();f.server.checksum='none';let cancelled=false;const drive=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,fetch:async(input,init)=>{if(String(input).includes('alt=media'))return new Response(new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(f.bytes.length+1));},cancel(){cancelled=true;}}));return fetch(input,init);}});
  expect(await migrateFileToDrive({store:f.store,uploads:f.store.driveUploads,local:f.local,drive,settings:f.settings,rootFolderId:'brain-root',clock:f.clock,idGen:f.idGen},f.fileId)).toMatchObject({ok:false});expect(cancelled).toBe(true);expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'submitting'}});expect(await f.db.rows(`select home_location_id::text from brain.files where id='${f.fileId}'`)).toEqual([{home_location_id:f.localId}]);expect(await f.db.rows(`select id from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`)).toEqual([]);
 });
+
+
+it('공개 이전 요청은 첨부만 합쳐 예약하고 worker가 검증 후 이전하며 보관 경계를 지킨다',async()=>{
+  const f=await fixture();
+  const sourceId=f.idGen.next(), session=f.idGen.next(), message=f.idGen.next(), attachment=f.idGen.next();
+  const source=await f.store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'brain-root'});if(!source.ok)throw Error('source missing');
+  const self=await f.store.readSelfUser();if(!self.ok||!self.user)throw Error('self missing');
+  for(const [key,value] of [['drive.account_id','synthetic'],['drive.root_folder_id','brain-root']] as const)await f.store.setSetting({userId:self.user.id,key,value,updatedAt:f.clock.now()});
+  await f.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source,first_cwd) values ('${session}','claude-code','synthetic-migrate','${self.user.id}','synthetic',now(),'import','/synthetic/workspace'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','migrate','user','synthetic',now()); insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${attachment}','${message}',0,'file','${f.fileId}','stored')`);
+  const driveFactory=(s:Parameters<NonNullable<import('../src/dispatch.js').DispatchRuntime['driveFactory']>>[0]):BrainDependencies['drive']=>{const pgStore=s as PostgresStore;return {store:pgStore,uploads:pgStore.driveUploads,files:driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:pgStore.driveUploads,clock:f.clock}),rootFolderId:'brain-root',sourceFence:{sourceId,generation:source.source.generation}};};
+  const cli=async(id:string)=>{let stdout='',stderr='';const code=await dispatch(commands,['files','migrate-drive',id,'--json'],{env:f.env,clock:f.clock,runner:pgRunner,driveFactory,stdout:t=>{stdout+=t;},stderr:t=>{stderr+=t;}});return {code,body:JSON.parse(stdout||stderr)};};
+  const other=f.idGen.next();await f.store.addWork({id:other,kind:'schedule_probe',targetKind:'probe',targetId:'synthetic-unrelated',createdAt:f.clock.now(),nextAttemptAt:f.clock.now()});
+  const external=f.idGen.next(),externalLocation=f.idGen.next(),externalAttachment=f.idGen.next();
+  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${external}','sha256:${'a'.repeat(64)}',1,now()); insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${externalLocation}','${external}','local','~/synthetic','external',now()); insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${externalAttachment}','${message}',1,'file','${external}','stored')`);
+  expect((await cli(external)).body).toMatchObject({ok:false,error:{code:'LOCATION_REFUSED'}});
+  expect(await f.db.rows(`select id from brain.work_items where kind='drive_migrate' and target_id='${external}'`)).toEqual([]);
+  // The schema disallows an external-owned home, so the supported external-only
+  // attachment has no Brain home and is refused without fabricating one.
+  await expect(f.db.query(`update brain.files set home_location_id='${externalLocation}' where id='${external}'`)).rejects.toThrow();
+  const invalid=f.idGen.next(),invalidLocation=f.idGen.next(),invalidAttachment=f.idGen.next();
+  await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${invalid}','sha256:${'b'.repeat(64)}',1,now()); insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${invalidLocation}','${invalid}','local','not-a-brain-locator','brain',now()); update brain.files set home_location_id='${invalidLocation}' where id='${invalid}'; insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${invalidAttachment}','${message}',2,'file','${invalid}','stored')`);
+  const invalidExtraction=f.idGen.next();await f.db.query(`insert into brain.document_extractions(id,file_id,extractor_version,attempt,status,started_at,finished_at) values ('${invalidExtraction}','${invalid}','${DOCUMENT_EXTRACTOR_VERSION}',1,'unsupported','2026-01-01Z','2026-01-01Z')`);
+  expect((await cli(invalid)).body).toMatchObject({ok:false,error:{code:'LOCATION_REFUSED'}});
+  expect(await f.db.rows(`select id from brain.work_items where kind='drive_migrate' and target_id='${invalid}'`)).toEqual([]);
+  const first=await cli(f.fileId),second=await cli(f.fileId);expect(first.code).toBe(0);expect(first.body.data).toMatchObject({state:'queued',work_id:expect.any(String)});expect(second.body.data).toEqual(first.body.data);
+  expect(new Set([f.fileId,f.localId,f.extractionId,sourceId,session,message,attachment,other,external,externalLocation,externalAttachment,invalid,invalidLocation,invalidAttachment,invalidExtraction,first.body.data.work_id]).size).toBe(16);
+  expect(f.server.requests).toHaveLength(0);expect(await f.db.rows(`select attempts from brain.work_items where id='${other}'`)).toEqual([{attempts:0}]);
+  await f.db.query(`update brain.work_items set next_attempt_at='2027-01-01Z' where id='${other}'`);
+  const brain=createBrain({...f.dependencies,drive:{...f.integration,sourceFence:{sourceId,generation:source.source.generation}}});
+  expect(await brain.queue.drain({budgetMs:60000})).toMatchObject({failed:0});expect(f.server.files.size).toBe(1);expect([...f.server.files.values()][0]!.bytes).toEqual(Buffer.from(f.bytes));
+  expect(await f.db.rows(`select outcome from brain.work_items where id='${first.body.data.work_id}'`)).toEqual([{outcome:'succeeded'}]);
+  expect(await f.db.rows(`select r.root_folder_id from brain.files f join brain.drive_location_roots r on r.location_id=f.home_location_id where f.id='${f.fileId}'`)).toEqual([{root_folder_id:'brain-root'}]);
+  const otherRoot=createBrain({...f.dependencies,drive:{...f.integration,rootFolderId:'other-root',sourceFence:{sourceId,generation:source.source.generation}}});expect(await otherRoot.files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false});
+  await f.db.query(`update brain.work_items set next_attempt_at='2026-01-01Z' where id='${other}'`);
+  const after=await cli(f.fileId);expect(after.body.data).toEqual({state:'already'});expect(f.server.files.size).toBe(1);expect(await f.db.rows(`select attempts from brain.work_items where id='${other}'`)).toEqual([{attempts:0}]);
+  await brain.queue.drain({budgetMs:5000});expect(await f.db.rows(`select outcome,attempts from brain.work_items where id='${other}'`)).toMatchObject([{outcome:'succeeded',attempts:1}]);
+  f.clock.set('2026-01-30T23:59:59.999Z');await brain.queue.drain({budgetMs:5000});expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+  const retention=await f.db.rows<{id:string}>(`select id::text from brain.work_items where kind='drive_local_delete' and target_id='${f.localId}'`);expect(retention).toHaveLength(1);
+  f.server.files.clear();f.clock.set('2026-01-31T00:00:00.000Z');const before=f.server.requests.length;await brain.queue.drain({budgetMs:5000});expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});expect(f.server.requests.length).toBeGreaterThan(before);expect(await f.db.rows(`select attempts,completed_at from brain.work_items where id='${retention[0]!.id}'`)).toMatchObject([{attempts:1,completed_at:null}]);
+  expect((await cli(f.idGen.next())).code).not.toBe(0);
+  await f.store.disconnectSource({id:sourceId,now:f.clock.now()});expect((await cli(f.fileId)).body).toMatchObject({ok:false,error:{code:'SOURCE_UNAVAILABLE'}});
+},120000);
+
+it('공개 이전 요청은 무관한 파일과 가린 첨부를 거절한다',async()=>{
+  const f=await fixture();const sourceId=f.idGen.next();const source=await f.store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'brain-root'});if(!source.ok)throw Error('source missing');
+  const brain=createBrain({...f.dependencies,drive:{...f.integration,sourceFence:{sourceId,generation:source.source.generation}}});
+  expect(await createBrain({...f.dependencies,drive:undefined}).files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'SOURCE_UNAVAILABLE'});
+  const self=await f.store.readSelfUser();if(!self.ok||!self.user)throw Error('self missing');
+  for(const [key,value] of [['drive.account_id','synthetic'],['drive.root_folder_id','brain-root']] as const)await f.store.setSetting({userId:self.user.id,key,value,updatedAt:f.clock.now()});
+  expect(await brain.files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'LOCATION_REFUSED'});
+  const session=f.idGen.next(),message=f.idGen.next(),attachment=f.idGen.next();
+  await f.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source) values ('${session}','claude-code','synthetic-refuse','${self.user.id}','synthetic',now(),'import'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','refuse','user','synthetic',now()); insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${attachment}','${message}',0,'file','${f.fileId}','stored')`);
+  expect(await brain.files.redact({file:f.fileId,confirm:true})).toMatchObject({ok:true});expect(await brain.files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false});
+  expect(await f.db.rows("select id from brain.work_items where kind='drive_migrate'")).toEqual([]);
+});
+
+async function publicMigrationFixture(days?:string,body?:string) {
+  const f=await fixture(days,body), sourceId=f.idGen.next(), session=f.idGen.next(), message=f.idGen.next(), attachment=f.idGen.next();
+  const source=await f.store.ensureSource({id:sourceId,kind:'drive',account:'synthetic',rootId:'brain-root'});if(!source.ok)throw Error('source missing');
+  const self=await f.store.readSelfUser();if(!self.ok||!self.user)throw Error('self missing');
+  for(const [key,value] of [['drive.account_id','synthetic'],['drive.root_folder_id','brain-root']] as const)await f.store.setSetting({userId:self.user.id,key,value,updatedAt:f.clock.now()});
+  await f.db.query(`insert into brain.sessions(id,harness,harness_session_id,user_id,machine,started_at,ingest_source,first_cwd) values ('${session}','claude-code','synthetic-public','${self.user.id}','synthetic',now(),'import','/synthetic/workspace'); insert into brain.messages(id,session_id,harness_message_id,role,body,occurred_at) values ('${message}','${session}','public','user','synthetic',now()); insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${attachment}','${message}',0,'file','${f.fileId}','stored')`);
+  const fence={sourceId,generation:source.source.generation};
+  const brain=(rootFolderId='brain-root',generation=fence.generation)=>createBrain({...f.dependencies,drive:{...f.integration,rootFolderId,sourceFence:{sourceId,generation}}});
+  const driveFactory=(s:Parameters<NonNullable<import('../src/dispatch.js').DispatchRuntime['driveFactory']>>[0]):BrainDependencies['drive']=>{const p=s as PostgresStore;return {store:p,uploads:p.driveUploads,rootFolderId:'brain-root',sourceFence:fence,files:driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:p.driveUploads,clock:f.clock})};};
+  const cli=async(id:string)=>{let stdout='',stderr='';const code=await dispatch(commands,['files','migrate-drive',id,'--json'],{env:f.env,clock:f.clock,runner:pgRunner,driveFactory,stdout:t=>{stdout+=t;},stderr:t=>{stderr+=t;}});return {code,body:JSON.parse(stdout||stderr)};};
+  return {...f,sourceId,fence,brain,cli,self:self.user,message};
+}
+
+it('공개 예약은 대문자 UUID와 동시 호출을 같은 작업으로 합치고 확정 경합을 견딘다',async()=>{
+ const f=await publicMigrationFixture(), pending=await Promise.all([f.cli(f.fileId.toUpperCase()),f.cli(f.fileId)]);
+ expect(pending.map(x=>x.code)).toEqual([0,0]);expect(pending[0]!.body.data).toEqual(pending[1]!.body.data);
+ const workId=pending[0]!.body.data.work_id;expect(await f.db.rows("select id from brain.work_items where kind='drive_migrate' and completed_at is null")).toHaveLength(1);expect(f.server.requests).toHaveLength(0);
+ const [drained,retry]=await Promise.all([f.brain().queue.drain({budgetMs:60000}),f.cli(f.fileId)]);
+ expect(drained.failed).toBe(0);expect(retry.code).toBe(0);expect(['queued','already']).toContain(retry.body.data.state);if(retry.body.data.state==='queued')expect(retry.body.data.work_id).toBe(workId);
+ expect(await f.db.rows(`select outcome from brain.work_items where id='${workId}'`)).toMatchObject([{outcome:'succeeded'}]);
+},120000);
+
+it('예약 후 루트 또는 연결 세대 변경은 새 대상으로 원격 요청을 보내지 않는다',async()=>{
+ for(const change of ['root','generation'] as const){
+  const f=await publicMigrationFixture(),queued=await f.cli(f.fileId);expect(queued.body.data.state).toBe('queued');
+  if(change==='root')await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});
+  else {expect(await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()})).toMatchObject({ok:true});expect(await f.store.connectSource({id:f.sourceId})).toMatchObject({ok:true});}
+  if(change==='generation')expect(await f.brain().files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'SOURCE_UNAVAILABLE'});
+  const current=f.brain(change==='root'?'other-root':'brain-root',f.fence.generation+(change==='generation'?2:0));
+  expect(await current.files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'SOURCE_CHANGED'});
+  await current.queue.drain({budgetMs:5000});expect(f.server.requests).toHaveLength(0);expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+  expect(await f.db.rows(`select completed_at from brain.work_items where id='${queued.body.data.work_id}'`)).toEqual([{completed_at:null}]);
+ }
+},120000);
+
+it('공개 예약의 정확한 입력 오류와 다른 루트 home 거절',async()=>{
+ const f=await publicMigrationFixture();const malformed=await f.cli('bad-id');expect(malformed.code).toBe(2);expect(malformed.body).toMatchObject({ok:false,error:{code:'INVALID_ARGUMENT'}});
+ const missing=await f.cli(f.idGen.next());expect(missing.body).toMatchObject({ok:false,error:{code:'LOCATION_REFUSED'}});
+ const queued=await f.cli(f.fileId);expect(queued.code).toBe(0);await f.brain().queue.drain({budgetMs:60000});
+ await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});
+ expect(await f.brain('other-root').files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'LOCATION_REFUSED'});
+ expect(await f.db.rows("select id from brain.work_items where kind='drive_migrate' and completed_at is null")).toEqual([]);
+},120000);
+
+it.each(['0','30'] as const)('공개 예약의 %s일 보관은 worker와 원격 검증을 거친다',async days=>{
+ const f=await publicMigrationFixture(days);const queued=await f.cli(f.fileId);expect(queued.body.data.state).toBe('queued');expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+ const brain=f.brain();await brain.queue.drain({budgetMs:60000});
+ const rows=await f.db.rows<{id:string;due_at:Date}>(`select w.id::text,r.due_at from brain.drive_retention r join brain.work_items w on w.kind='drive_local_delete' and w.target_id=r.local_location_id::text where r.local_location_id='${f.localId}'`);expect(rows).toHaveLength(1);
+ if(days==='30'){expect(rows[0]!.due_at).toEqual(new Date('2026-01-31T00:00:00Z'));expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});f.clock.set('2026-01-31T00:00:00Z');await brain.queue.drain({budgetMs:60000});}
+ expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:false});expect(await f.db.rows(`select outcome,attempts from brain.work_items where id='${rows[0]!.id}'`)).toMatchObject([{outcome:'succeeded',attempts:1}]);
+},120000);
+
+it('기본 Drive 런타임은 공개 예약을 조립하고 schema 불일치에서는 쓰지 않는다',async()=>{
+ const f=await publicMigrationFixture();const {saveDriveCredentials}=await import('../src/config/codec.js');await saveDriveCredentials(f.home,{clientId:'synthetic',clientSecret:'synthetic',refreshToken:'synthetic'});
+ const call=async()=>{let stdout='';const code=await dispatch(commands,['files','migrate-drive',f.fileId,'--json'],{env:f.env,clock:f.clock,runner:pgRunner,driveNetwork:{driveBaseUrl:f.server.baseUrl},stdout:t=>{stdout+=t;},stderr:()=>{}});return {code,body:JSON.parse(stdout)};};
+ await f.db.query("update brain.schema_migrations set version=version+1000 where owner='core' and version=(select max(version) from brain.schema_migrations where owner='core')");
+ expect((await call()).body).toMatchObject({ok:false,error:{code:'SCHEMA_MISMATCH'}});expect(await f.db.rows("select id from brain.work_items where kind='drive_migrate'")).toEqual([]);
+ await f.db.query("update brain.schema_migrations set version=version-1000 where owner='core' and version=(select max(version) from brain.schema_migrations where owner='core')");
+ expect((await call()).body).toMatchObject({ok:true,data:{state:'queued',work_id:expect.any(String)}});expect(f.server.requests).toHaveLength(0);
+ const {createDriveRuntime}=await import('../src/runtime/drive-runtime.js');const runtime=await createDriveRuntime({home:f.home,store:f.store,clock:f.clock,idGen:f.idGen,schemaVersions:EXPECTED_SCHEMA_VERSIONS,network:{driveBaseUrl:f.server.baseUrl}});if(!runtime?.drive)throw Error('runtime missing');
+ await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});
+ expect(await runtime.drive.files.put(f.bytes)).toMatchObject({ok:false});expect(f.server.requests).toHaveLength(0);
+},120000);
+
+it('확정이 파일 잠금을 기다리는 동안 재요청해도 같은 작업 또는 완료를 반환한다',async()=>{
+ const f=await publicMigrationFixture();const queued=await f.cli(f.fileId);const workId=queued.body.data.work_id;
+ let entered!:()=>void, release!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});
+ const wrapped={...f.drive,async getBounded(...args:Parameters<typeof f.drive.getBounded>){const result=await f.drive.getBounded(...args);entered();await hold;return result;}};
+ const brain=createBrain({...f.dependencies,drive:{...f.integration,files:wrapped,sourceFence:f.fence}});
+ const drain=brain.queue.drain({budgetMs:60000});await reached;
+ const locker=new pg.Client({connectionString:f.db.url});await locker.connect();await locker.query('begin');await locker.query('select id from brain.files where id=$1 for no key update',[f.fileId]);
+ const lockerPid=(await locker.query<{pid:number}>('select pg_backend_pid() as pid')).rows[0]!.pid;
+ try {
+  release();let workerPid=0;
+  for(let i=0;i<400;i++){const rows=await f.db.rows<{pid:number}>(`select pid from pg_stat_activity where usename='brain_app' and wait_event_type='Lock' and ${lockerPid}=any(pg_blocking_pids(pid))`);if(rows.length===1){workerPid=rows[0]!.pid;break;}await new Promise(r=>setTimeout(r,10));}
+  expect(workerPid).toBeGreaterThan(0);
+  const probe=new pg.Client({connectionString:f.db.url});await probe.connect();
+  try{await probe.query('begin');await expect(probe.query('select id from brain.work_items where id=$1 for update nowait',[workId])).rejects.toMatchObject({code:'55P03'});}finally{await probe.query('rollback');await probe.end();}
+  const retry=f.cli(f.fileId);let requestPid=0;
+  for(let i=0;i<400;i++){const rows=await f.db.rows<{pid:number}>(`select pid from pg_stat_activity where usename='brain_app' and wait_event_type='Lock' and ${workerPid}=any(pg_blocking_pids(pid))`);if(rows.length){requestPid=rows[0]!.pid;break;}await new Promise(r=>setTimeout(r,10));}
+  expect(requestPid).toBeGreaterThan(0);expect(requestPid).not.toBe(workerPid);await locker.query('commit');
+  const [done,again]=await Promise.all([drain,retry]);expect(done.failed).toBe(0);expect(again.code).toBe(0);expect(['already','queued']).toContain(again.body.data.state);if(again.body.data.state==='queued')expect(again.body.data.work_id).toBe(workId);
+  expect(await f.db.rows(`select outcome from brain.work_items where id='${workId}'`)).toEqual([{outcome:'succeeded'}]);
+  expect(await f.db.rows(`select r.root_folder_id from brain.files f join brain.drive_location_roots r on r.location_id=f.home_location_id where f.id='${f.fileId}'`)).toEqual([{root_folder_id:'brain-root'}]);
+ } finally {release();await locker.query('rollback').catch(()=>{});await locker.end();}
+},120000);
+
+it('공개 이전 중 가리기는 교착 없이 의도와 원격 정리 재시도를 보존한다',async()=>{
+ const f=await publicMigrationFixture();const queued=await f.cli(f.fileId);expect(queued.code).toBe(0);
+ const barrier=f.server.holdNextUpload(),brain=f.brain(),drain=brain.queue.drain({budgetMs:60000});
+ try {
+  await barrier.entered;expect(await brain.files.redact({file:f.fileId,confirm:true})).toMatchObject({ok:true});barrier.release();await drain;
+  expect(await f.db.rows(`select file_id from brain.drive_migration_intents where file_id='${f.fileId}'`)).toHaveLength(1);
+  expect(await brain.files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'LOCATION_REFUSED'});
+  expect(await f.db.rows(`select kind from brain.work_items where kind in ('drive_migrate','blob_delete') and target_id in ('${f.fileId}','${f.localId}')`)).not.toEqual([]);
+ } finally {barrier.release();await drain.catch(()=>undefined);}
+},120000);
+
+it('현재 설정과 다른 기존 의도 및 미검증 Drive home은 접수하지 않는다',async()=>{
+ const f=await publicMigrationFixture();f.server.checksum='wrong';expect(await f.migrate()).toMatchObject({ok:false});
+ await f.db.query(`update brain.work_items set completed_at=now(),outcome='cancelled' where kind='drive_migrate' and target_id='${f.fileId}'`);
+ await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});
+ expect(await f.brain('other-root').files.migrateDrive({fileId:f.fileId})).toMatchObject({ok:false,code:'LOCATION_REFUSED'});
+ const file=f.idGen.next(),location=f.idGen.next(),attachment=f.idGen.next(),hash='c'.repeat(64);
+ await f.db.query(`insert into brain.files(id,content_hash,size_bytes,first_seen_at) values ('${file}','sha256:${hash}',1,now()); insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at) values ('${location}','${file}','drive','${hash}','brain',now()); insert into brain.drive_location_roots(location_id,root_folder_id,content_hash) values ('${location}','other-root','sha256:${hash}'); update brain.files set home_location_id='${location}' where id='${file}'; insert into brain.message_attachments(id,message_id,ordinal,source_kind,file_id,status) values ('${attachment}','${f.message}',1,'file','${file}','stored')`);
+ const mapping={rootFolderId:'other-root',contentHash:`sha256:${hash}`,remoteId:'synthetic-verified-control'};const submissionId=f.idGen.next();
+ expect(await f.store.driveUploads.save({...mapping,state:'reserved',at:f.clock.now()})).toMatchObject({ok:true});
+ expect(await f.store.driveUploads.start({...mapping,submissionId})).toMatchObject({ok:true,claimed:true});
+ expect(await f.store.driveUploads.save({...mapping,state:'uploaded',at:f.clock.now(),submissionId})).toMatchObject({ok:true,upload:{state:'uploaded'}});
+ expect(await f.db.rows(`select verified_at from brain.file_locations where id='${location}'`)).toEqual([{verified_at:null}]);
+ expect(await f.brain('other-root').files.migrateDrive({fileId:file})).toMatchObject({ok:false,code:'LOCATION_REFUSED'});
+ expect(await f.db.rows("select id from brain.work_items where kind='drive_migrate' and completed_at is null")).toEqual([]);
+},120000);
+
+it('공개 실패 재시도는 닫힌 이전의 루트 결속을 보존한다',async()=>{
+ const f=await publicMigrationFixture();const queued=await f.cli(f.fileId);const original=queued.body.data.work_id;
+ await f.db.query(`update brain.work_items set attempts=9 where id='${original}'`);
+ await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});
+ await f.brain('other-root').queue.drain({budgetMs:5000});
+ expect(await f.db.rows(`select outcome from brain.work_items where id='${original}'`)).toEqual([{outcome:'failed'}]);
+ const sessionTarget='claude-code:synthetic-other';
+ expect(await f.store.recordFailure({id:f.idGen.next(),targetKind:'session',targetId:sessionTarget,stage:'session_identity',fingerprint:'synthetic-session-failure',harness:null,sessionId:null,code:'TRANSCRIPT_UNREADABLE',message:'synthetic',occurredAt:f.clock.now()})).toMatchObject({ok:true});
+ const factory=(s:Parameters<NonNullable<import('../src/dispatch.js').DispatchRuntime['driveFactory']>>[0]):BrainDependencies['drive']=>{const p=s as PostgresStore;return {store:p,uploads:p.driveUploads,rootFolderId:'other-root',sourceFence:f.fence,files:driveFileStore({rootFolderId:'other-root',baseUrl:f.server.baseUrl,uploads:p.driveUploads,clock:f.clock})};};
+ let stdout='';const code=await dispatch(commands,['failures','retry','--target-kind','file','--json'],{env:f.env,clock:f.clock,runner:pgRunner,driveFactory:factory,stdout:t=>{stdout+=t;},stderr:()=>{}});expect(code).toBe(0);expect(JSON.parse(stdout).data.added).toBe(1);
+ expect(await f.db.rows(`select id from brain.work_items where target_kind='session' and target_id='${sessionTarget}'`)).toEqual([]);
+ const rows=await f.db.rows<{serialization_key:string}>(`select serialization_key from brain.work_items where kind='drive_migrate' and target_id='${f.fileId}' order by created_at`);expect(rows).toHaveLength(2);expect(rows[1]!.serialization_key).toEqual(rows[0]!.serialization_key);expect(rows[0]!.serialization_key).toMatch(/^drive-migrate:v2:/);expect(f.server.requests).toHaveLength(0);
+},120000);
+
+it('제출 뒤 가림과 재연결은 같은 루트의 원격 사본만 복구해 삭제한다',async()=>{
+ const f=await publicMigrationFixture();expect((await f.cli(f.fileId)).code).toBe(0);const barrier=f.server.holdNextUpload(),old=f.brain(),first=old.queue.drain({budgetMs:60000});
+ try {
+  await barrier.entered;expect(await old.files.redact({file:f.fileId,confirm:true})).toMatchObject({ok:true});barrier.release();await first;
+  const intent=await f.store.readDriveIntent(f.fileId);if(!intent.ok||!intent.intent)throw Error('intent missing');const remoteId=intent.intent.locationId;
+  expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'submitting'}});expect(f.server.files.size).toBe(1);
+  await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()});const reconnected=await f.store.connectSource({id:f.sourceId});if(!reconnected.ok)throw Error('reconnect failed');
+  const newBrain=f.brain('brain-root',reconnected.source.generation);f.clock.set('2026-01-02T00:00:00Z');await newBrain.queue.drain({budgetMs:60000});f.clock.set('2026-01-03T00:00:00Z');await newBrain.queue.drain({budgetMs:60000});
+  expect(f.server.files.size).toBe(0);expect(await f.store.readFileLocation(remoteId)).toMatchObject({ok:true,location:{deletedAt:expect.any(Date)}});
+  expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'uploaded',deletedAt:expect.any(Date)}});
+ } finally {barrier.release();await first.catch(()=>undefined);}
+},120000);
+
+it('로컬 읽기가 청구 만료를 넘으면 Drive 위치와 이전 의도를 만들지 않는다',async()=>{
+ const f=await publicMigrationFixture();expect((await f.cli(f.fileId)).code).toBe(0);
+ const local={...f.local,async get(...args:Parameters<typeof f.local.get>){const value=await f.local.get(...args);f.clock.set('2026-01-01T01:00:00Z');return value;}};
+ const brain=createBrain({...f.dependencies,files:local,drive:{...f.integration,sourceFence:f.fence}});await brain.queue.drain({budgetMs:5000});
+ expect(await f.db.rows(`select id from brain.file_locations where file_id='${f.fileId}' and store_kind='drive'`)).toEqual([]);expect(await f.db.rows(`select file_id from brain.drive_migration_intents where file_id='${f.fileId}'`)).toEqual([]);expect(f.server.requests).toHaveLength(0);
+},120000);
+
+it.each(['root','account'] as const)('마지막 원격 검증 뒤 %s 설정이 바뀌면 home 확정을 거절한다',async which=>{
+ const f=await publicMigrationFixture();expect((await f.cli(f.fileId)).code).toBe(0);
+ let entered!:()=>void,release!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});
+ const drive={...f.drive,async getBounded(...args:Parameters<typeof f.drive.getBounded>){const result=await f.drive.getBounded(...args);entered();await hold;return result;}};
+ const brain=createBrain({...f.dependencies,drive:{...f.integration,files:drive,sourceFence:f.fence}});const drain=brain.queue.drain({budgetMs:60000});
+ try {await reached;await f.store.setSetting({userId:f.self.id,key:which==='root'?'drive.root_folder_id':'drive.account_id',value:'other',updatedAt:f.clock.now()});release();await drain;
+  expect(await f.db.rows(`select home_location_id::text from brain.files where id='${f.fileId}'`)).toEqual([{home_location_id:f.localId}]);expect(await f.db.rows('select * from brain.drive_retention')).toEqual([]);expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});
+ }finally{release();await drain.catch(()=>undefined);}
+},120000);
+
+it('공개 이전 취소 뒤 동일 결속 재승인은 기존 resumable 제출을 이어간다',async()=>{
+ const f=await publicMigrationFixture(undefined,'z'.repeat(11*1024*1024));const first=await f.cli(f.fileId);const firstId=first.body.data.work_id;
+ let brain!:ReturnType<typeof createBrain>;brain=createBrain({...f.dependencies,drive:{...f.integration,sourceFence:f.fence},onWorkProgress:async event=>{if(event.message==='upload_chunk 1')await brain.queue.cancel({id:firstId});}});
+ await brain.queue.drain({budgetMs:60000});expect(await f.db.rows(`select outcome from brain.work_items where id='${firstId}'`)).toMatchObject([{outcome:'cancelled'}]);
+ const old=await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash});if(!old.ok||!old.upload)throw Error('resumable missing');expect(old.upload.state).toBe('submitting');expect(old.upload.sessionUri).toBeTruthy();
+ const second=await f.cli(f.fileId);expect(second.body.data).toMatchObject({state:'queued',work_id:expect.any(String)});expect(second.body.data.work_id).not.toBe(firstId);
+ await f.brain().queue.drain({budgetMs:60000});const done=await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash});expect(done).toMatchObject({ok:true,upload:{state:'uploaded',remoteId:old.upload.remoteId,submissionId:old.upload.submissionId}});expect(f.server.files.size).toBe(1);
+},120000);
+
+it('로컬 읽기 중 루트 변경은 이전 의도를 남기지 않고 새 루트 명시 승인을 허용한다',async()=>{
+ const f=await publicMigrationFixture();const first=await f.cli(f.fileId),firstId=first.body.data.work_id;
+ let entered!:()=>void,release!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});
+ const local={...f.local,async get(...args:Parameters<typeof f.local.get>){const result=await f.local.get(...args);entered();await hold;return result;}};
+ const old=createBrain({...f.dependencies,files:local,drive:{...f.integration,sourceFence:f.fence}});const drain=old.queue.drain({budgetMs:60000});
+ try{await reached;await f.store.setSetting({userId:f.self.id,key:'drive.root_folder_id',value:'other-root',updatedAt:f.clock.now()});release();await drain;
+  expect(await f.db.rows(`select file_id from brain.drive_migration_intents where file_id='${f.fileId}'`)).toEqual([]);expect(await f.db.rows(`select id from brain.file_locations where file_id='${f.fileId}' and store_kind='drive'`)).toEqual([]);expect(f.server.requests).toHaveLength(0);
+  expect(await old.queue.cancel({id:firstId})).toMatchObject({ok:true});
+  const drive=driveFileStore({rootFolderId:'other-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock});const next=createBrain({...f.dependencies,drive:{...f.integration,rootFolderId:'other-root',files:drive,sourceFence:f.fence}});
+  const queued=await next.files.migrateDrive({fileId:f.fileId});expect(queued).toMatchObject({ok:true,state:'queued'});if(!queued.ok||queued.state!=='queued')throw Error('request failed');
+  await next.queue.drain({budgetMs:60000});expect(await f.db.rows(`select outcome from brain.work_items where id='${queued.workId}'`)).toEqual([{outcome:'succeeded'}]);expect(await f.db.rows(`select r.root_folder_id from brain.files f join brain.drive_location_roots r on r.location_id=f.home_location_id where f.id='${f.fileId}'`)).toEqual([{root_folder_id:'other-root'}]);expect([...f.server.files.values()][0]?.parents).toEqual(['other-root']);
+ }finally{release();await drain.catch(()=>undefined);}
+},120000);
+
+it.each(['multipart','resumable'] as const)('실제 %s 전송의 401 뒤 PG 설정 잠금이 변경된 승인을 거절한다',async mode=>{
+ const f=await publicMigrationFixture(undefined,mode==='resumable'?'q'.repeat(6*1024*1024):undefined);expect((await f.cli(f.fileId)).code).toBe(0);
+ let entered!:()=>void,release!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{release=r;});let transferAttempts=0;
+ const auth={async token(){return {ok:true as const,accessToken:'synthetic'};},async retryAfter401(){entered();await hold;return {ok:true as const,accessToken:'synthetic-new'};}};
+ const transport:typeof fetch=async(input,init)=>{const url=String(input),method=init?.method??'GET';const target=mode==='multipart'?method==='POST'&&url.includes('uploadType=multipart'):method==='PUT'&&url.includes('upload_id=');if(target){transferAttempts++;if(transferAttempts===1)return new Response('',{status:401});}return fetch(input,init);};
+ const drive=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,auth,fetch:transport});const brain=createBrain({...f.dependencies,drive:{...f.integration,files:drive,sourceFence:f.fence}});const drain=brain.queue.drain({budgetMs:60000});
+ const locker=new pg.Client({connectionString:f.db.url});await locker.connect();
+ try{await reached;await locker.query('begin');await locker.query("update brain.settings set value='other-root' where key='drive.root_folder_id'");release();
+  let waiting=false;for(let i=0;i<200;i++){const rows=await f.db.rows<{n:number}>("select count(*)::int as n from pg_stat_activity where wait_event_type='Lock' and query like '%brain.settings%' and query not like '%pg_stat_activity%'");if(rows[0]!.n>0){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}expect(waiting).toBe(true);await locker.query('commit');await drain;
+  expect(transferAttempts).toBe(1);expect(f.server.files.size).toBe(0);expect(await f.local.exists(f.put.location)).toEqual({ok:true,exists:true});expect(await f.db.rows(`select home_location_id::text from brain.files where id='${f.fileId}'`)).toEqual([{home_location_id:f.localId}]);
+ }finally{release();await locker.query('rollback').catch(()=>{});await locker.end();await drain.catch(()=>undefined);}
+},120000);
+
+it('가림 제출 확인 직후 중단돼도 같은 루트에서 삭제만 재예약한다',async()=>{
+ const f=await publicMigrationFixture();expect((await f.cli(f.fileId)).code).toBe(0);f.server.loseNextUploadResponse=true;await f.brain().queue.drain({budgetMs:60000});
+ expect(f.server.files.size).toBe(1);expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'submitting'}});
+ expect(await f.brain().files.redact({file:f.fileId,confirm:true})).toMatchObject({ok:true});const intent=await f.store.readDriveIntent(f.fileId);if(!intent.ok||!intent.intent)throw Error('intent missing');const locationId=intent.intent.locationId;
+ await f.db.query(`update brain.work_items set completed_at='2026-01-01Z',outcome='failed' where kind='blob_delete' and target_id='${locationId}' and completed_at is null`);
+ await f.store.disconnectSource({id:f.sourceId,now:f.clock.now()});const source=await f.store.connectSource({id:f.sourceId});if(!source.ok)throw Error('reconnect failed');f.clock.set('2026-01-02T00:00:00Z');
+ const claimed=await f.store.claimWork({now:f.clock.now(),claimedBy:'recovery',kinds:['drive_migrate']});if(!claimed.ok||!claimed.item)throw Error('migration claim missing');
+ const {driveMigrationHandler}=await import('second_brain');const drive=driveFileStore({rootFolderId:'brain-root',baseUrl:f.server.baseUrl,uploads:f.store.driveUploads,clock:f.clock,deleteSourceFence:{sourceId:f.sourceId,generation:source.source.generation,account:'synthetic'}});
+ const base={store:f.store,uploads:f.store.driveUploads,local:f.local,drive,settings:f.settings,rootFolderId:'brain-root',sourceFence:{sourceId:f.sourceId,generation:source.source.generation},clock:f.clock,idGen:f.idGen};
+ const interrupted={...f.store,async ensureDriveRedaction(){return {ok:false as const,code:'DB_LOCKED' as const,message:'synthetic crash boundary'};}};
+ const before=f.server.requests.length;expect(await driveMigrationHandler({...base,store:interrupted})(claimed.item)).toMatchObject({ok:false});
+ expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{state:'uploaded'}});expect(await f.db.rows(`select id from brain.work_items where kind='blob_delete' and target_id='${locationId}' and completed_at is null`)).toEqual([]);
+ expect(await driveMigrationHandler(base)(claimed.item)).toEqual({ok:true});expect(await f.db.rows(`select id from brain.work_items where kind='blob_delete' and target_id='${locationId}' and completed_at is null`)).toHaveLength(1);
+ const cleanup=createBrain({...f.dependencies,drive:{...f.integration,files:drive,sourceFence:base.sourceFence}});await cleanup.queue.drain({budgetMs:60000});
+ expect(f.server.requests.slice(before).filter(r=>r.method==='POST'||r.method==='PUT')).toEqual([]);expect(f.server.files.size).toBe(0);expect(await f.store.readFileLocation(locationId)).toMatchObject({ok:true,location:{deletedAt:expect.any(Date)}});expect(await f.store.driveUploads.read({rootFolderId:'brain-root',contentHash:f.put.contentHash})).toMatchObject({ok:true,upload:{deletedAt:expect.any(Date)}});
+},120000);

@@ -41,12 +41,13 @@ import type { FileLocation } from '../domain/file.js';
 export interface DriveCandidate { fileId: string; contentHash: string; sizeBytes: number; homeId: string; home: FileLocation; redacted: boolean }
 export type DriveStoreFailure = { ok: false; code: 'DB_UNAVAILABLE' | 'DB_LOCKED'; message: string };
 export interface DriveMigrationStore {
+  requestDriveMigration(input:{fileId:string;rootFolderId:string;sourceFence:{sourceId:string;generation:number};workId:string;at:Date}):Promise<{ok:true;state:'queued';workId:string}|{ok:true;state:'already'}|{ok:false;code:string;message:string}>;
   /** Extend only the same live migration claim and connected source generation. */
-  renewDriveMigration(input:{workId:string;fileId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date;nowAtLock?:()=>Date;sourceFence?:{sourceId:string;generation:number}}):Promise<{ok:true;renewed:boolean}|DriveStoreFailure>;
+  renewDriveMigration(input:{workId:string;fileId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date;nowAtLock?:()=>Date;rootFolderId?:string;sourceFence?:{sourceId:string;generation:number}}):Promise<{ok:true;renewed:boolean}|DriveStoreFailure>;
   /** Serializes external local deletion against disconnect across processes. */
   withDriveLocalDelete<T>(input:{workId:string;localLocationId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date;nowAtBarrier?:()=>Date;sourceFence?:{sourceId:string;generation:number}}, run:()=>Promise<T>):Promise<{ok:true;value:T}|DriveStoreFailure>;
   readDriveCandidate(fileId: string): Promise<{ok: true; candidate: DriveCandidate | null} | DriveStoreFailure>;
-  beginDriveMigration(input: {fileId:string; expectedHomeId:string; contentHash:string; rootFolderId:string; locationId:string; locator:string; workId:string; at:Date}): Promise<{ok:true; state:'ready'|'changed'|'redacted'; locationId?:string} | DriveStoreFailure>;
+  beginDriveMigration(input: {fileId:string; expectedHomeId:string; contentHash:string; rootFolderId:string; locationId:string; locator:string; workId:string; at:Date; sourceFence?:{sourceId:string;generation:number}; migrationClaim?:{workId:string;claimedBy:string;claimedAt:Date;attempts:number;now:Date;nowAtLock?:()=>Date}}): Promise<{ok:true; state:'ready'|'changed'|'redacted'; locationId?:string} | DriveStoreFailure>;
   ensureDriveRedaction(input:{fileId:string; rootFolderId:string; workId:string; at:Date}): Promise<{ok:true; queued:boolean} | DriveStoreFailure>;
   readDriveLocatorRoot(locator:string): Promise<{ok:true; rootFolderId:string|null} | DriveStoreFailure>;
   readDriveLocationRoot(locationId:string): Promise<{ok:true; rootFolderId:string|null} | DriveStoreFailure>;

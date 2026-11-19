@@ -1,6 +1,6 @@
 import type { DriveBarrier } from './drive-barrier.js';
 import { sql, type Kysely } from 'kysely';
-import { type DriveMigrationStore, type DriveUpload, type DriveUploadStore, isDriveBrainLocator, workKindPolicy, type DriveDeleteFence } from '@second-brain/core';
+import { type DriveMigrationStore, type DriveUpload, type DriveUploadStore, isDriveBrainLocator, isBrainLocator, driveMigrationKey, workKindPolicy, type DriveDeleteFence } from '@second-brain/core';
 import { databaseFailure, type PgConnect, type PgSchema } from './connect.js';
 import { withWrite } from './write.js';
 import { ensureWork } from './work.js';
@@ -10,6 +10,11 @@ type UploadRow = {root_folder_id:string; content_hash:string; remote_id:string; 
 const upload = (r:UploadRow):DriveUpload => ({rootFolderId:r.root_folder_id,contentHash:r.content_hash,remoteId:r.remote_id,state:r.state,createdAt:new Date(r.created_at),submissionId:r.submission_id,sessionUri:r.session_uri,confirmedOffset:Number(r.confirmed_offset),deletedAt:r.deleted_at===null?null:new Date(r.deleted_at),deleteIntentAt:r.delete_intent_at===null?null:new Date(r.delete_intent_at),deleteSubmittedAt:r.delete_submitted_at===null?null:new Date(r.delete_submitted_at)});
 const bad = (message:string) => ({ok:false as const,code:'DB_UNAVAILABLE' as const,message});
 class MigrationClaimExpired extends Error {}
+async function lockMigrationBinding(db:Kysely<PgSchema>,f:{sourceId:string;generation:number},root:string):Promise<boolean>{
+ const source=await sql`select id from brain.sources where id::text=${f.sourceId} and kind='drive' and connected and generation=${f.generation} for share`.execute(db);if(!source.rows.length)return false;
+ const binding=await sql`select 1 from brain.sources s join brain.settings a on a.key='drive.account_id' and a.value=s.account join brain.settings r on r.user_id=a.user_id and r.key='drive.root_folder_id' and r.value=${root} join brain.users u on u.id=a.user_id and u.is_self=1 where s.id::text=${f.sourceId} for share of a,r`.execute(db);
+ return binding.rows.length===1;
+}
 async function deleteFenceValid(db:Kysely<PgSchema>,f:DriveDeleteFence|undefined,root:string,hash:string):Promise<boolean>{
  if(!f)return true;
  const source=await sql`select id from brain.sources where id::text=${f.sourceId} and kind='drive' and connected and generation=${f.generation} and account=${f.account} for share`.execute(db);if(!source.rows.length)return false;
@@ -70,7 +75,7 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
     async confirmRedacted(input) {
       const c=connect();if(!c.ok)return {ok:false,message:c.message};let expired=false;
       const r=await withWrite(c.connection,async db=>{
-        if(input.sourceFence){const f=input.sourceFence;const source=await sql`select 1 from brain.sources where id::text=${f.sourceId} and kind='drive' and connected and generation=${f.generation} for share`.execute(db);if(!source.rows.length)return null;}
+        if(input.sourceFence){const f=input.sourceFence;const source=await sql`select 1 from brain.sources where id::text=${f.sourceId} and kind='drive' and connected and generation=${f.generation} for share`.execute(db);if(!source.rows.length)return null;const binding=await sql`select 1 from brain.sources s join brain.settings a on a.key='drive.account_id' and a.value=s.account join brain.settings r on r.user_id=a.user_id and r.key='drive.root_folder_id' and r.value=${input.rootFolderId} join brain.users u on u.id=a.user_id and u.is_self=1 where s.id::text=${f.sourceId} for share of a,r`.execute(db);if(!binding.rows.length)return null;}
         if(input.claim){const claim=input.claim;const owned=await sql`select 1 from brain.work_items where id::text=${claim.workId} and kind='drive_migrate' and target_kind='file' and target_id=${input.fileId} and completed_at is null and cancel_requested_at is null and claimed_by=${claim.claimedBy} and claimed_at=${claim.claimedAt.toISOString()}::timestamptz and attempts=${claim.attempts} for update`.execute(db);if(!owned.rows.length)return null;}
         const check=async()=>{const claim=input.claim;if(!claim)return;const now=claim.nowAtLock?.()??claim.now;const valid=await sql`select 1 from brain.work_items where id::text=${claim.workId} and claimed_by=${claim.claimedBy} and claimed_at=${claim.claimedAt.toISOString()}::timestamptz and attempts=${claim.attempts} and completed_at is null and cancel_requested_at is null and claim_expires_at>${now.toISOString()}::timestamptz`.execute(db);if(!valid.rows.length){expired=true;throw new MigrationClaimExpired();}};
         const file=(await sql<{redacted:boolean;hash:string}>`select redacted_at is not null as redacted,content_hash as hash from brain.files where id::text=${input.fileId} for no key update`.execute(db)).rows[0];
@@ -113,7 +118,7 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
     async renewDriveMigration(input) {
       const c=connect();if(!c.ok)return bad(c.message);
       const result=await withWrite(c.connection,async db=>{
-        if(input.sourceFence){const f=input.sourceFence;const valid=await sql`select id from brain.sources where id::text=${f.sourceId} and kind='drive' and connected and generation=${f.generation} for share`.execute(db);if(!valid.rows.length)return false;}
+        if(input.sourceFence&&(!input.rootFolderId||!await lockMigrationBinding(db,input.sourceFence,input.rootFolderId)))return false;
         const locked=await sql`select id from brain.work_items where id::text=${input.workId} for update`.execute(db);if(!locked.rows.length)return false;
         const checkedAt=input.nowAtLock?.()??input.now;const now=checkedAt.toISOString(),expiry=new Date(checkedAt.getTime()+workKindPolicy('drive_migrate').claimForMs).toISOString();
         const updated=await sql`update brain.work_items set claim_expires_at=greatest(claim_expires_at,${expiry}::timestamptz) where id::text=${input.workId} and kind='drive_migrate' and target_kind='file' and target_id=${input.fileId} and claimed_by=${input.claimedBy} and claimed_at=${input.claimedAt.toISOString()}::timestamptz and attempts=${input.attempts} and completed_at is null and cancel_requested_at is null and claim_expires_at>${now}::timestamptz returning id`.execute(db);return updated.rows.length===1;
@@ -134,6 +139,40 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
       });
       return result.ok?result.value:result;
     },
+    async requestDriveMigration(input) {
+      const c=connect(); if(!c.ok)return bad(c.message);
+      try {
+        const result=await withWrite(c.connection,async db=>{
+          const source=await sql`select id from brain.sources where id::text=${input.sourceFence.sourceId} and kind='drive' and connected and generation=${input.sourceFence.generation} for share`.execute(db);
+          if(!source.rows.length)return {ok:false as const,code:'SOURCE_UNAVAILABLE',message:'연결된 Drive가 없습니다'};
+          const binding=await sql`select 1 from brain.sources s join brain.settings a on a.key='drive.account_id' and a.value=s.account join brain.settings r on r.user_id=a.user_id and r.key='drive.root_folder_id' and r.value=${input.rootFolderId} join brain.users u on u.id=a.user_id and u.is_self=1 where s.id::text=${input.sourceFence.sourceId} for share of a,r`.execute(db);
+          if(!binding.rows.length)return {ok:false as const,code:'SOURCE_UNAVAILABLE',message:'Drive 연결 설정이 변경되었습니다'};
+          const key=driveMigrationKey(input.fileId,input.rootFolderId,input.sourceFence);
+          // Lock the open target before its file, including concurrent insertions.
+          await sql`savepoint drive_request`.execute(db);
+          const work=await ensureWork(db,{id:input.workId,kind:'drive_migrate',targetKind:'file',targetId:input.fileId,serializationKey:key,createdAt:input.at,nextAttemptAt:input.at});
+          const rollback=async<T>(value:T):Promise<T>=>{await sql`rollback to savepoint drive_request`.execute(db);await sql`release savepoint drive_request`.execute(db);return value;};
+          if(work.row.serialization_key!==key || work.row.cancel_requested_at!==null)return rollback({ok:false as const,code:'SOURCE_CHANGED',message:'기존 이전 작업의 연결 또는 취소 상태를 확인해야 합니다'});
+          const row=(await sql<{hash:string;home_id:string;store_kind:string;ownership:string;locator:string;deleted:boolean;redacted:boolean;attachment:boolean;verified:boolean;root:string|null;uploaded:boolean}>`
+            select f.content_hash as hash,l.id::text as home_id,l.store_kind,l.ownership,l.locator,l.deleted_at is not null as deleted,f.redacted_at is not null as redacted,
+              exists(select 1 from brain.message_attachments a where a.file_id=f.id and a.status='stored') as attachment,
+              l.verified_at is not null as verified,r.root_folder_id as root,
+              exists(select 1 from brain.drive_uploads u where u.root_folder_id=${input.rootFolderId} and u.content_hash=f.content_hash and u.state='uploaded' and u.deleted_at is null and u.delete_intent_at is null) as uploaded
+            from brain.files f join brain.file_locations l on l.id=f.home_location_id and l.file_id=f.id
+            left join brain.drive_location_roots r on r.location_id=l.id and r.content_hash=f.content_hash
+            where f.id::text=${input.fileId} for no key update of f`.execute(db)).rows[0];
+          const refused={ok:false as const,code:'LOCATION_REFUSED',message:'이전할 수 있는 첨부 원본이 아닙니다'};
+          if(!row || !row.attachment || row.redacted || row.deleted || row.ownership!=='brain')return rollback(refused);
+          if(row.store_kind==='drive')return rollback(row.root===input.rootFolderId && row.verified && row.uploaded && isDriveBrainLocator(row.locator) && row.hash===`sha256:${row.locator.slice(0,64)}` ? {ok:true as const,state:'already' as const} : refused);
+          if(row.store_kind!=='local' || !isBrainLocator(row.locator) || row.hash!==`sha256:${row.locator.slice(6,70)}`)return rollback(refused);
+          const intent=(await sql<{root:string}>`select root_folder_id as root from brain.drive_migration_intents where file_id::text=${input.fileId}`.execute(db)).rows[0];
+          if(intent && intent.root!==input.rootFolderId)return rollback(refused);
+          await sql`release savepoint drive_request`.execute(db);
+          return {ok:true as const,state:'queued' as const,workId:work.row.id};
+        });
+        return result.ok?result.value:result;
+      } catch(error) {return databaseFailure(error);}
+    },
     async readDriveCandidate(fileId) {
       const c=connect(); if (!c.ok) return bad(c.message);
       try {
@@ -148,11 +187,15 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
       try {
         if (!isDriveBrainLocator(input.locator) || input.contentHash !== `sha256:${input.locator.slice(0,64)}`) return bad('이전 위치가 올바르지 않습니다');
         const r=await withWrite(c.connection,async db=>{
+          await sql`savepoint drive_begin`.execute(db);
+          if(input.sourceFence&&!await lockMigrationBinding(db,input.sourceFence,input.rootFolderId))return {state:'changed' as const};
+          if(input.migrationClaim){const claim=input.migrationClaim;const owned=await sql`select id from brain.work_items where id::text=${claim.workId} and kind='drive_migrate' and target_kind='file' and target_id=${input.fileId} and claimed_by=${claim.claimedBy} and claimed_at=${claim.claimedAt.toISOString()}::timestamptz and attempts=${claim.attempts} and completed_at is null and cancel_requested_at is null for update`.execute(db);if(!owned.rows.length)return {state:'changed' as const};}
+          else await ensureWork(db,{id:input.workId,kind:'drive_migrate',targetKind:'file',targetId:input.fileId,createdAt:input.at,nextAttemptAt:input.at});
           const f=(await sql<{home:string|null;hash:string;redacted:boolean}>`select home_location_id::text as home,content_hash as hash,(redacted_at is not null) as redacted from brain.files where id::text=${input.fileId} for no key update`.execute(db)).rows[0];
-          if (!f || f.home !== input.expectedHomeId || f.hash !== input.contentHash) return {state:'changed' as const};
-          if (f.redacted) return {state:'redacted' as const};
+          if(input.migrationClaim){const claim=input.migrationClaim;const now=claim.nowAtLock?.()??claim.now;const valid=await sql`select 1 from brain.work_items where id::text=${claim.workId} and claim_expires_at>${now.toISOString()}::timestamptz`.execute(db);if(!valid.rows.length){await sql`rollback to savepoint drive_begin`.execute(db);return {state:'changed' as const};}}
+          if (!f || f.home !== input.expectedHomeId || f.hash !== input.contentHash || f.redacted) {await sql`rollback to savepoint drive_begin`.execute(db);return {state:f?.redacted?'redacted' as const:'changed' as const};}
           const local=(await sql`select id from brain.file_locations where id::text=${input.expectedHomeId} and file_id::text=${input.fileId} and store_kind='local' and ownership='brain' and deleted_at is null`.execute(db)).rows[0];
-          if (!local) return {state:'changed' as const};
+          if (!local) {await sql`rollback to savepoint drive_begin`.execute(db);return {state:'changed' as const};}
           await sql`insert into brain.file_locations(id,file_id,store_kind,locator,ownership,first_seen_at)
             values (${input.locationId}::uuid,${input.fileId}::uuid,'drive',${input.locator},'brain',${input.at.toISOString()}) on conflict(file_id,store_kind,locator) do nothing`.execute(db);
           const loc=(await sql<{id:string;ownership:string;deleted_at:string|null}>`select id,ownership,deleted_at from brain.file_locations where file_id=${input.fileId}::uuid and store_kind='drive' and locator=${input.locator} for update`.execute(db)).rows[0];
@@ -165,7 +208,6 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
           const intent=(await sql<{root_folder_id:string;content_hash:string;expected_home_id:string;location_id:string;locator:string}>`select root_folder_id,content_hash,expected_home_id,location_id,locator from brain.drive_migration_intents where file_id=${input.fileId}::uuid`.execute(db)).rows[0];
           if (!intent || intent.root_folder_id !== input.rootFolderId || intent.content_hash !== input.contentHash || intent.location_id !== loc.id || intent.locator !== input.locator) throw new Error('이전 의도가 충돌합니다');
           if (intent.expected_home_id !== input.expectedHomeId) await sql`update brain.drive_migration_intents set expected_home_id=${input.expectedHomeId}::uuid,state='active' where file_id=${input.fileId}::uuid`.execute(db);
-          await ensureWork(db,{id:input.workId,kind:'drive_migrate',targetKind:'file',targetId:input.fileId,createdAt:input.at,nextAttemptAt:input.at});
           return {state:'ready' as const,locationId:loc.id};
         });
         return r.ok ? {ok:true,...r.value} : r;
@@ -212,6 +254,7 @@ export function postgresDriveStore(connect:PgConnect, barrier:DriveBarrier): Dri
         const r=await withWrite(c.connection,async db=>{
           if(!await lockDriveRetention(db))return {state:'locked' as const};
           if(input.sourceFence){const active=await sql`select id from brain.sources where id::text=${input.sourceFence.sourceId} and generation=${input.sourceFence.generation} and connected for share`.execute(db);if(!active.rows.length)return {state:'changed' as const};}
+          if(input.sourceFence){const binding=await sql`select 1 from brain.sources s join brain.settings a on a.key='drive.account_id' and a.value=s.account join brain.settings r on r.user_id=a.user_id and r.key='drive.root_folder_id' and r.value=${input.rootFolderId} join brain.users u on u.id=a.user_id and u.is_self=1 where s.id::text=${input.sourceFence.sourceId} for share of a,r`.execute(db);if(!binding.rows.length)return {state:'changed' as const};}
           if(input.migrationClaim){const claim=input.migrationClaim;const owned=await sql`select id from brain.work_items where id::text=${claim.workId} and kind='drive_migrate' and target_kind='file' and target_id=${input.fileId} and claimed_by=${claim.claimedBy} and claimed_at=${claim.claimedAt.toISOString()}::timestamptz and attempts=${claim.attempts} and completed_at is null and cancel_requested_at is null for update`.execute(db);if(!owned.rows.length)return {state:'changed' as const};}
           const checkClaim=async()=>{const claim=input.migrationClaim;if(!claim)return;const now=claim.nowAtLock?.()??claim.now;const valid=await sql`select id from brain.work_items where id::text=${claim.workId} and claimed_by=${claim.claimedBy} and claimed_at=${claim.claimedAt.toISOString()}::timestamptz and attempts=${claim.attempts} and completed_at is null and cancel_requested_at is null and claim_expires_at>${now.toISOString()}::timestamptz`.execute(db);if(!valid.rows.length){claimExpired=true;throw new MigrationClaimExpired();}};
           await checkClaim();

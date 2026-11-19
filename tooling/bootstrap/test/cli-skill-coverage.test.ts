@@ -159,3 +159,8 @@ it('Codex 연결과 진단 안내는 실제 공개 명령과 상태를 덮는다
   expect(status).toContain('`brain failures retry --target-kind session --json`');
   expect(status).toContain('`brain queue drain --json`');
 });
+
+it('첨부 Drive 이전 공개 명령은 배포 스킬에 포함된다', () => {
+  expect(names).toContain('files migrate-drive');
+  expect(mentions(body('plugin/skills/brain-files/SKILL.md'), 'files migrate-drive')).toBe(true);
+});

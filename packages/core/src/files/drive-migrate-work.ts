@@ -1,4 +1,5 @@
 import { workProgress, type WorkProgressSink } from '../queue/progress.js';
+import { sha256Hex } from '../domain/sha256.js';
 import { contentHashOfBytes, driveBrainLocator } from '../domain/file.js';
 import type { Clock } from '../ports/clock.js';
 import type { FileStore } from '../ports/file-store.js';
@@ -10,6 +11,9 @@ import type { WorkHandler } from '../queue/drain.js';
 
 export const DRIVE_LOCAL_DELETE_KIND = 'drive_local_delete';
 export const DRIVE_MIGRATE_KIND = 'drive_migrate';
+export function driveMigrationKey(fileId:string,rootFolderId:string,sourceFence:{sourceId:string;generation:number}):string {
+  return `drive-migrate:v2:${sourceFence.generation}:`+sha256Hex(JSON.stringify([fileId.toLowerCase(),rootFolderId,sourceFence.sourceId.toLowerCase()]));
+}
 export interface DriveMigrationDependencies {
   store: DriveMigrationStore & Partial<Pick<WorkStore,'resolveFailures'|'getWork'>>;
   uploads: DriveUploadStore;
@@ -49,7 +53,7 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
     if (mapping.upload?.state === 'submitting') {
       const pending=mapping.upload;
       if (!pending.submissionId) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'제출 식별을 확인할 수 없습니다',retryable:true};
-      const observed=await deps.drive.getBounded({storeKind:'drive',ownership:'brain',locator:intent.locator},c.sizeBytes);
+      const observed=await deps.drive.getBounded({storeKind:'drive',ownership:'brain',locator:intent.locator},c.sizeBytes,continueUpload?{continueRead:continueUpload}:undefined);
       if(!observed.ok || observed.bytes.length!==c.sizeBytes || contentHashOfBytes(observed.bytes)!==c.contentHash) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'가린 원격 사본을 확인하지 못했습니다',retryable:true};
       const confirmed=await deps.uploads.confirmRedacted({fileId,rootFolderId:intent.rootFolderId,contentHash:c.contentHash,remoteId:pending.remoteId,submissionId:pending.submissionId,at:deps.clock.now(),...(deps.sourceFence?{sourceFence:deps.sourceFence}:{}),...(migrationClaim?{claim:{...migrationClaim,now:deps.clock.now(),nowAtLock:()=>deps.clock.now()}}:{})});
       if(!confirmed.ok||confirmed.upload?.state!=='uploaded') return {ok:false as const,code:'FILES_UNAVAILABLE',message:'가린 원격 사본의 정리를 예약할 수 없습니다',retryable:true};
@@ -69,7 +73,7 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
     if (root.rootFolderId !== deps.rootFolderId) return {ok:false as const,code:'LOCATION_REFUSED',message:'Drive home의 루트가 다릅니다'};
     const mapping=await deps.uploads.read({rootFolderId:deps.rootFolderId,contentHash:c.contentHash});
     if (!mapping.ok || !mapping.upload || mapping.upload.state !== 'uploaded') return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive home의 매핑이 없습니다'};
-    const read=await deps.drive.getBounded(c.home,c.sizeBytes);
+    const read=await deps.drive.getBounded(c.home,c.sizeBytes,continueUpload?{continueRead:continueUpload}:undefined);
     if (!read.ok) return driveFailure(read);
     if (read.bytes.length !== c.sizeBytes || contentHashOfBytes(read.bytes) !== c.contentHash) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive home을 확인할 수 없습니다'};
     return {ok:true as const,state:'already' as const};
@@ -79,7 +83,7 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
   const source=await deps.local.get(c.home); if (!source.ok) return source;
   if (source.bytes.length !== c.sizeBytes || contentHashOfBytes(source.bytes) !== c.contentHash) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'로컬 원본 해시가 다릅니다'};
   const locator=driveBrainLocator(c.contentHash.slice(7),source.bytes);
-  const intent=await deps.store.beginDriveMigration({fileId:c.fileId,expectedHomeId:c.homeId,contentHash:c.contentHash,rootFolderId:deps.rootFolderId,locationId:deps.idGen.next(),locator,workId:deps.idGen.next(),at:deps.clock.now()});
+  const intent=await deps.store.beginDriveMigration({fileId:c.fileId,expectedHomeId:c.homeId,contentHash:c.contentHash,rootFolderId:deps.rootFolderId,locationId:deps.idGen.next(),locator,workId:deps.idGen.next(),at:deps.clock.now(),...(deps.sourceFence?{sourceFence:deps.sourceFence}:{}),...(migrationClaim?{migrationClaim:{...migrationClaim,nowAtLock:()=>deps.clock.now()}}: {})});
   if (!intent.ok) return intent;
   if (intent.state === 'redacted') return {ok:true as const,state:'redacted' as const};
   if (intent.state !== 'ready' || !intent.locationId) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'이전 home이 바뀌어 다시 확인해야 합니다',retryable:true};
@@ -88,7 +92,7 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
   if (put.location.storeKind !== 'drive' || put.location.ownership !== 'brain' || put.contentHash !== c.contentHash || put.sizeBytes !== c.sizeBytes || put.location.locator !== locator) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 업로드 결과가 다릅니다'};
   // Adapter validates checksum priority; the independent read also binds bytes to
   // the content hash before the database publishes the location.
-  const read=await deps.drive.getBounded(put.location,c.sizeBytes);
+  const read=await deps.drive.getBounded(put.location,c.sizeBytes,continueUpload?{continueRead:continueUpload}:undefined);
   if (!read.ok) return driveFailure(read);
   if (contentHashOfBytes(read.bytes) !== c.contentHash || read.bytes.length !== c.sizeBytes) return {ok:false as const,code:'FILES_UNAVAILABLE',message:'Drive 원본 검증에 실패했습니다'};
   const mapping=await deps.uploads.read({rootFolderId:deps.rootFolderId,contentHash:c.contentHash});
@@ -104,15 +108,31 @@ export async function migrateFileToDrive(deps: DriveMigrationDependencies, fileI
 /** Replay the persisted intent after a crash, including redaction recovery. */
 export function driveMigrationHandler(deps: DriveMigrationDependencies):WorkHandler {
   return async item => {
+    const changed=item.serializationKey != null && (!deps.sourceFence || item.serializationKey !== driveMigrationKey(item.targetId,deps.rootFolderId,deps.sourceFence));
     let renewalFailure:{ok:false;code:'DB_UNAVAILABLE'|'DB_LOCKED';message:string}|undefined;
     const continueUpload=async()=>{
       if(!item.claimedBy||!item.claimedAt||item.cancelRequestedAt!==null)return false;
-      const renewed=await deps.store.renewDriveMigration({workId:item.id,fileId:item.targetId,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts,now:deps.clock.now(),nowAtLock:()=>deps.clock.now(),...(deps.sourceFence?{sourceFence:deps.sourceFence}:{})});
+      const renewed=await deps.store.renewDriveMigration({workId:item.id,fileId:item.targetId,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts,now:deps.clock.now(),nowAtLock:()=>deps.clock.now(),rootFolderId:deps.rootFolderId,...(deps.sourceFence?{sourceFence:deps.sourceFence}:{})});
       if(!renewed.ok){renewalFailure={ok:false,code:renewed.code,message:'Drive 작업을 완료하지 못했습니다'};return false;}
       return renewed.renewed;
     };
     const migrationClaim=item.claimedBy&&item.claimedAt?{workId:item.id,claimedBy:item.claimedBy,claimedAt:item.claimedAt,attempts:item.attempts,now:deps.clock.now()}:undefined;
-    const result=await migrateFileToDrive(deps,item.targetId,continueUpload,migrationClaim);
+    if(migrationClaim&&!await continueUpload())return renewalFailure??{ok:false,code:'CLAIM_LOST',message:'Drive 작업의 연결 또는 청구가 변경되었습니다',retryable:true};
+    if(changed){
+      const refused={ok:false as const,code:'SOURCE_CHANGED',message:'이전 요청의 Drive 연결이 변경되어 작업을 보류합니다',retryable:true};
+      if(!deps.sourceFence||!migrationClaim)return refused;
+      const match=/^drive-migrate:v2:([1-9][0-9]*):[0-9a-f]{64}$/.exec(item.serializationKey??'');
+      const generation=match?Number(match[1]):NaN;
+      if(!Number.isSafeInteger(generation)||generation>=deps.sourceFence.generation||item.serializationKey!==driveMigrationKey(item.targetId,deps.rootFolderId,{sourceId:deps.sourceFence.sourceId,generation}))return refused;
+      const candidate=await deps.store.readDriveCandidate(item.targetId);if(!candidate.ok)return candidate;
+      if(!candidate.candidate?.redacted)return refused;
+      const intent=await deps.store.readDriveIntent(item.targetId);if(!intent.ok)return intent;
+      if(!intent.intent||!intent.intent.redacted||intent.intent.rootFolderId!==deps.rootFolderId||intent.intent.contentHash!==candidate.candidate.contentHash)return refused;
+      const root=await deps.store.readDriveLocationRoot(intent.intent.locationId);if(!root.ok)return root;if(root.rootFolderId!==deps.rootFolderId)return refused;
+      const mapping=await deps.uploads.read({rootFolderId:deps.rootFolderId,contentHash:intent.intent.contentHash});
+      if(!mapping.ok||!mapping.upload||!['submitting','uploaded'].includes(mapping.upload.state)||!mapping.upload.submissionId)return refused;
+    }
+    const result=await migrateFileToDrive(deps,item.targetId,migrationClaim?continueUpload:undefined,migrationClaim);
     if(renewalFailure)return renewalFailure;
     if (!result.ok) return {...result,retryable:'retryable' in result ? result.retryable : result.code!=='AUTH_REQUIRED'&&result.code!=='AUTH_LOGIN_REQUIRED'};
     if (deps.store.resolveFailures) {

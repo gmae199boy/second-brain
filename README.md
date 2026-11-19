@@ -411,6 +411,14 @@ brain messages redact <message> --detected --yes --json
 `--detected`를 권장합니다.** 다른 연결이 오래된 WAL 읽기를 잡고 있으면
 가리기는 커밋되지만 디스크의 WAL 정리는 그 읽기가 끝난 뒤에야 가능합니다.
 
+사용자가 요청한 첨부 한 건은 연결된 Drive로 이전을 예약할 수 있습니다.
+
+```sh
+brain files migrate-drive <file-id> --json
+```
+
+이 명령은 전송 일감만 예약합니다. worker가 원격 사본을 검증한 뒤 home을 전환하며, 보관 기한이 지나면 로컬 사본이 삭제될 수 있습니다. 사용자 요청 없이 첨부를 전송하지 않습니다.
+
 메시지를 가려도 그 메시지에 붙은 첨부 파일은 그대로 남습니다. 그래서 가리지 않은
 첨부가 있으면 `messages redact`는 exit 0으로 성공하면서 `warnings`에
 `ATTACHMENT_NOT_REDACTED`를 담고 `data.unredacted_attachments`로 몇 건인지

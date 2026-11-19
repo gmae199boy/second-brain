@@ -110,6 +110,15 @@ export async function retryFailures(
   const seen = new Set<string>();
 
   for (const failure of read.failures) {
+    if (failure.stage === 'drive_migrate' && failure.targetKind === 'file') {
+      const target=JSON.stringify([failure.stage,failure.targetKind,failure.targetId]);
+      if(seen.has(target))continue;
+      const retried=await store.retryExtensionFailure({failureId:failure.id,id:idGen.next(),now:clock.now()});
+      if(!retried.ok)return retried;
+      if(retried.state==='created'||retried.state==='open'){seen.add(target);if(retried.state==='created')added++;else alreadyOpen++;}
+      else pendingSkipped.set(target,failure.targetKind);
+      continue;
+    }
     let kind = failure.stage === FILE_IMPORT_KIND && failure.targetKind === 'file_request'
       ? FILE_IMPORT_KIND
       : Object.hasOwn(FAILURE_RETRY_STAGES, failure.stage)

@@ -28,6 +28,7 @@ async function fixture(days?:string) {
   };
   const commit=vi.fn<DriveMigrationStore['commitDriveMigration']>(async()=>({ok:true,state:'committed',locationId:'drive-id'}));
   const store:DriveMigrationStore={
+    async requestDriveMigration(){throw Error('not used by handler');},
     async renewDriveMigration(){return {ok:true,renewed:true};},
     async withDriveLocalDelete(_input,run) { return {ok:true,value:await run()}; },
     async readDriveCandidate() {return {ok:true,candidate:{fileId:'file',contentHash:hash,sizeBytes:bytes.length,homeId:'local-id',home:initial.location,redacted:false}};},

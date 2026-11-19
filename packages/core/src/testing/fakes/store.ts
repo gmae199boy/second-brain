@@ -844,6 +844,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): MemoryStore {
     async retryExtensionFailure(input) {
       const failure = failures.find(f => f.id === input.failureId && f.resolvedAt === null);
       if (!failure) return { ok: true, state: 'skipped' };
+      if(failure.stage==='drive_migrate'&&failure.targetKind==='file'){
+        const originals=workItems.filter(item=>item.kind===failure.stage&&item.targetKind===failure.targetKind&&item.targetId===failure.targetId&&item.outcome==='failed'&&item.completedAt?.getTime()===failure.occurredAt.getTime()&&item.lastError===failure.message);
+        if(originals.length!==1)return {ok:true,state:'skipped'};
+        const original=originals[0]!;
+        const queued=addWork({id:input.id,kind:original.kind,targetKind:original.targetKind,targetId:original.targetId,serializationKey:original.serializationKey,createdAt:input.now,nextAttemptAt:input.now});
+        if(!queued.ok)return queued;
+        return {ok:true,state:queued.item.serializationKey===original.serializationKey&&queued.item.cancelRequestedAt===null?(queued.created?'created':'open'):'skipped'};
+      }
       if (![...extensionWorkKinds.values()].some(kinds => kinds.includes(failure.stage))) return { ok: true, state: 'unregistered' };
       if (failure.fingerprint !== failureFingerprint({ stage: failure.stage, input: `${failure.targetKind}:${failure.targetId}`, code: failure.code })) return { ok: true, state: 'skipped' };
       const originals = workItems.filter(item => item.kind === failure.stage && item.targetKind === failure.targetKind && item.targetId === failure.targetId && item.outcome === 'failed' && item.completedAt?.getTime() === failure.occurredAt.getTime() && item.lastError === failure.message && workAttempts.some(a => a.workItemId === item.id && a.finishedAt?.getTime() === failure.occurredAt.getTime() && ['failed','died','stalled'].includes(a.outcome ?? '') && (a.errorCode === failure.code || a.errorCode === null)));
