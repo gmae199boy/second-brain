@@ -781,3 +781,11 @@ built/deferred[]/추가 operator_actions 없음이며 사용자 done은 아니�
 ## 23.6 — 이 Mac의 Codex 수집 운영 검증 및 에픽 수락 (2026-11-19)
 
 [운영 검증 계획](../tickets/epic-codex-capture/tickets/story-codex-mac-operational-verification-plan.md)의 설치 커밋은 `b4e088c0`이다. 비교 가능한 실제 세션 2,637개와 DB의 ID 집합이 일치했다. 명시 초기 수집 뒤 데몬이 새 세션 8개를 자동 수집했다. 재수집·증분·태그·검색·읽기·가림을 실제 표본으로 검증했다. 한 파일의 메타 ID가 모호한 파일 5개는 원본을 보존하고 경고로 표시한다. 통합 회귀의 최초 실패, 영향 파일 재검증과 자원 정리는 계획에 기록했다. 운영 설치에 대한 배포 플러그인의 `PLUGIN_BEHIND`와 이전부터 있던 Garmin 패키지 충돌 경고가 남았다.
+
+## 17.8 — 대화 검색 안내 보완 수락 (2026-11-19)
+
+[17.8 계획](../tickets/epic-search-and-health-query/tickets/story-recall-literal-scope-plan.md)의 티켓 커밋 `b9ae5a61`을 main `cf6e72a3`에 병합하고 이 Mac에 공식 설치했다. 대화 검색의 연속 구절, 사용자가 지정한 프로젝트·워크트리 범위, 결과와 생략 안내 및 출처 이어 읽기를 명확히 했다. 제품의 기본 순위와 건강 조회 계약은 유지했다.
+
+- 직접 TypeScript 시험 3파일 17건, 중앙 전체 TypeScript 278파일 5,782건과 Python 12파일 29작업 55건이 모두 통과했다. 중앙 전체 명령은 공용 잠금 아래 순차로 각 1회 실행했고 전용 DB와 잠금을 정리했다. 증거는 로컬 `.brain-automation/tickets/17.8/integration-verification/`과 `.brain-automation/tickets/17.8/worktree-checkpoint-archive/`에 보존했다.
+- 독립 리뷰 네 건과 수정 후 합성 행동 3건을 확인했다. 마지막 행동 확인 자료는 확보했으며 Orca 완료 영수증은 `worker_identity_changed`를 반환했다. 공식 설치의 첫 시도는 `DB_LOCKED`였고 공식 설치를 재시도해 설치 커밋과 스킬 해시를 확인했다.
+- 17.7은 수락 미달 상태다. 최초 2/10과 구절 보정 후 4/10을 보존한다. 17.8 공식 설치본의 별도 고정 맹검에서 대화 기대 출처는 상위 5에 0/6, 건강은 2/2였다. 보고서 한 건은 출처와 원문이 일치했으나 답의 근거를 확정할 기록이 없어 확인 2/10, 상한 3/10이다. 첫 문항의 재질의 순서 편차는 실패 건이므로 제외해도 7/10 미달 판정은 같다.
