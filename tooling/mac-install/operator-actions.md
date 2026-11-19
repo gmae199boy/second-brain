@@ -13,6 +13,7 @@ unset BRAIN_DATABASE_URL
 export SECOND_BRAIN_HOME="$BRAIN_VERIFY_ROOT/brain-home"
 export CLAUDE_CONFIG_DIR="$BRAIN_VERIFY_ROOT/claude-config"
 export SECOND_BRAIN_TEST_EXTENSIONS="$BRAIN_VERIFY_ROOT/fixtures"
+export SECOND_BRAIN_TEST_CATALOG=1
 export SECOND_BRAIN_REPO="$(node -e 'console.log(require("node:url").pathToFileURL(process.cwd()).href)')"
 export CLAUDE_PLUGIN_ROOT="$BRAIN_VERIFY_ROOT/plugin"
 export SECOND_BRAIN_LAUNCHCTL="$(pwd)/apps/cli/test/fixtures/fake-launchctl.sh"
@@ -57,3 +58,5 @@ kill -TERM "$(cat "$BRAIN_VERIFY_ROOT/daemon.pid")"
 rm "$BRAIN_VERIFY_ROOT/daemon.pid"
 node tooling/mac-install/run.mjs cleanup "$BRAIN_VERIFY_ROOT"
 ```
+
+하네스의 제품 패키지 검증 회귀 시험은 빌드된 CLI dist를 전제로 하며 dist가 없으면 해당 사례만 건너뛴다. 기존 하네스 실행에 빌드를 강제하지 않는다.

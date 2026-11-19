@@ -3,7 +3,7 @@ title: '이 Mac의 플러그인 배포와 격리 설치본 검증'
 type: 'chore'
 ticket: '10'
 created: '2026-10-31'
-status: blocked
+status: built
 baseline_revision: 'cdbdcdf8d737fe56d6bdd41e36e7d34417a49961'
 route: 'full'
 route_source: 'pinned'
@@ -16,9 +16,6 @@ followup_review_recommended: true
 context: []
 warnings: [oversized]
 deferred: []
-operator_actions: ["13.11 뒤 격리 실제 에이전트 세션의 brain-install 발견·카탈로그→선택→이름 설치·testext 로그인 재개·연결·예약 결과 및 세션 원본을 확보한다. 기존 tooling/mac-install/operator-actions.md의 소유 자원 정리 절차를 따른다."]
-blocked_at: "2026-11-16"
-blocked_reason: "13.11 카탈로그 구현 뒤 실제 새 에이전트 세션의 brain-install 발견→카탈로그→선택→이름 설치→testext 시험 로그인 재개→연결·예약 완료와 세션 원본 증거가 필요함. 직접 CLI·운영 Garmin 설치 성공은 이 조건의 대체 증거가 아님."
 ---
 
 <intent-contract>
@@ -175,4 +172,13 @@ Orca 정리:
 - 13.10은 13.11 뒤에 수행한다. 목표는 배포 스킬을 실제 새 세션이 발견해 카탈로그 → 사용자 선택 → 이름 설치 → 시험 로그인 재개 → 연결·예약 완료를 실제 상태와 세션 원본으로 입증하는 것이다. 기존 나머지 격리·보존·정리 수락조건은 유지한다. 13.11 자체가 built여도 이 계획은 blocked를 유지한다.
 - Given 13.11 배포 후보와 격리 Brain 홈·DB·Label, When 새 실제 에이전트 세션이 brain-install을 발견하고 위 경로를 실행하면, Then catalog 출력·사용자 선택·이름 install 호출·재개·최종 상태 및 소유 자원 정리와 세션 원본이 기록된다. 단순 SKILL 파일을 프롬프트에 붙이거나 직접 CLI를 실행한 증거로 대체하지 않는다.
 - Claude 세션이 권한 심사로 막히면 Codex 세션도 인정한다. 동일 core 배포 스킬의 실제 발견·목록 선택·CLI 호출·재개를 검증하는 것이 사용자 목표이기 때문이다. 사용한 에이전트와 판단 근거를 기록하며 Codex 증거를 Claude 고유 경로의 성공으로 주장하지 않는다. 이전 Claude 거부 이력은 보존하고 실행 승인 심사를 우회하지 않는다.
-- 이번 재정의는 실제 세션 실행이 아니다. 운영 설치본·daemon·DB는 변경하지 않았으며 미충족 조건은 위 blocked_reason과 operator_actions에 남는다.
+- 이 재정의 당시에는 실제 세션을 실행하지 않았다. 운영 설치본·daemon·DB 변경 없이 미충족 조건을 당시 blocked_reason과 operator_actions에 남겼다.
+
+## 2026-11-19 실제 격리 Codex 검증
+
+- 중앙 기준 `f55a883e55d1e803a7fd8df532ef353e5a1d4655`에서 공식 설치기로 격리 앱을 설치하고 배포 ref `c321bf0275d14dfb3bd0146fad1f59b9d87d3ccc`로 갱신했다. 공식 Codex 연결 절차에서 스킬 16개를 등록했고 `brain-install` SHA-256 `e6ee267525931fdeae33add8d9810c37e0aaa0af18dda20160767df23b6290ad`를 배포 출처와 대조했다.
+- 첫 Codex 실행은 스킬 본문과 합성 요청의 수신처에 대한 구체적 승인 근거 부족으로 시작 전에 거부됐다. 이후 사용자가 공식 스킬과 합성 testext 시험 프롬프트를 OpenAI Codex 서비스로 전송하는 데 명시적으로 동의해 정상 승인 경로에서 재시도했다. 과거 Claude 승인 거부는 그대로 기록하며 이 수락은 티켓이 허용한 Codex 경로의 결과다.
+- 새 Codex 세션 `01a1f24f-b737-7662-b06a-cb7003c1de52`가 등록된 스킬을 열어 guide와 카탈로그를 조회했다. testext 0.1.0은 로그인 필요·미설치였고, 첫 응답 뒤 전달한 합성 사용자 선택으로 이름 설치를 호출했다. 첫 설치의 `EXTENSION_LOGIN_REQUIRED`와 상태 재조회에서 시험 로그인 대기를 확인했다. 운영자 fixture 입력 후 첫 재개는 감독자의 합성 로그인 실행을 큐에 넣었고, 격리 DB에서 해당 일감의 성공을 확인했다.
+- 같은 세션에서 로그인 성공을 읽은 뒤 연결 검사 자식 프로세스 시작 실패(`PROCESS_START_FAILED`)를 보고했다. 연결 검사에 필요한 격리 설치 명령 한 건이 Codex 정상 도구 승인으로 실행된 뒤, 이름 설치 재개와 최종 상태·공용 예약 조회가 모두 exit 0이었다. 최종 상태는 설치·활성·`installed`·`connected`였고, 환경 준비 1단계는 건너뛰고 나머지 7단계는 성공했다. 공개 예약에서 동일 ID의 활성 `testext.sync` 1건을 대조했다.
+- `node --test tooling/mac-install/run.test.mjs` 2건, `node --check` 2건과 `git diff --check`가 통과했다. 빈 doctor는 Python·uv 실행·탐색과 extensions 폴더 없이 통과했다. 재설치·활성 전환·갱신 보존은 앞선 독립 결과를 수락 증거로 유지한다. 이 실행의 foreground 데몬과 격리 홈·Label을 정리했고 Docker 소유 컨테이너·볼륨은 각 0개를 확인하고 공용 잠금을 반환했다. 전체 회귀는 중앙 통합 단계에 남겼다.
+- 세션 원본 SHA-256은 `da85320ac1e670b5b05cfc7efbfec1d13c4501d2ab2bcfbf6b875d484fc58bf7`다. 세션 원본과 CLI 원본·소유권 영수증·정리 결과는 로컬 보호 경로의 증거와 티켓 결과 보고서에서 대조할 수 있다.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 실제 설치 검증의 소유 자원과 증거를 분리한다.
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, openSync, closeSync, symlinkSync, lstatSync, readdirSync, readlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, openSync, closeSync, symlinkSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,37 +14,64 @@ const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const write = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
 const receiptName = 'ownership.json';
 
-function prepare() {
+export function prepare(hooks = {}) {
   const newRef = git('rev-parse', `${readFileSync(join(repo, 'plugin/app-ref'), 'utf8').trim()}^{commit}`);
   // 후보 직전 커밋에도 확장 기능이 있으므로 설치 후 후보 갱신을 검증할 수 있다.
   const baseline = git('rev-parse', `${newRef}^1^{commit}`);
   execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', baseline, newRef]);
   if (baseline === newRef) throw new Error('배포 ref 또는 갱신 기준이 예상과 다릅니다.');
-  const root = mkdtempSync(join(tmpdir(), 'brain-mac-install-'));
-  const home = join(root, 'brain-home');
-  const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0, 12)}`;
-  for (const name of ['brain-home', 'claude-config', 'launch-agents', 'evidence', 'fixtures']) mkdirSync(join(root, name), { recursive: true, mode: 0o700 });
-  cpSync(join(repo, 'plugin'), join(root, 'plugin'), { recursive: true });
-  cpSync(join(repo, 'apps/cli/test/fixtures/extensions/testext'), join(root, 'fixtures/testext'), { recursive: true });
-  const fixture = join(root, 'fixtures/testext');
-  const manifestPath = join(fixture, 'manifest.json');
-  const manifest = json(manifestPath);
-  manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
-  manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
-  manifest.default_schedules = [{ kind: 'testext.sync', target_kind: 'account', target_id: 'default', local_time: '09:00' }];
-  manifest.error_codes = ['LOGIN_REQUIRED'];
-  manifest.settings = [{ key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth'] }, { key: 'testext.limit', type: 'number', required: [] }];
-  write(manifestPath, manifest);
-  writeFileSync(join(fixture, 'bin/login.mjs'), `import { existsSync, mkdirSync } from 'node:fs';
-const dir = JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.tokenstore'];
-mkdirSync(dir, { recursive: true });
-if (!existsSync(dir + '/ready')) console.log(JSON.stringify({ abi: 1, type: 'error', code: 'LOGIN_REQUIRED', retryable: false, message: '시험 로그인 미완료' }));
-else console.log(JSON.stringify({ abi: 1, type: 'result' }));
-`);
-  const suffix = createHash('sha256').update(home).digest('hex').slice(0, 12);
-  const receipt = { format: 1, id: randomUUID(), root, home, label, project: `second-brain-${suffix}`, volume: `second-brain-pg-${suffix}`, baseline, candidate: newRef, phase: 'prepared' };
-  write(join(root, receiptName), receipt);
-  console.log(JSON.stringify({ root, baseline, candidate: newRef, label, phase: receipt.phase }, null, 2));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'brain-mac-install-'));
+  let identity;
+  try {
+    identity = lstatSync(root);
+    if (!identity.isDirectory() || identity.isSymbolicLink()) throw new Error('준비 디렉터리가 실제 디렉터리가 아닙니다.');
+    hooks.afterCreate?.(root);
+    const home = join(root, 'brain-home');
+    const label = `io.github.gmae199boy.second-brain.daemon.${createHash('sha256').update(home).digest('hex').slice(0, 12)}`;
+    for (const name of ['brain-home', 'claude-config', 'launch-agents', 'evidence', 'fixtures']) mkdirSync(join(root, name), { recursive: true, mode: 0o700 });
+    cpSync(join(repo, 'plugin'), join(root, 'plugin'), { recursive: true });
+    const fixture = join(root, 'fixtures/catalog/testext');
+    cpSync(join(repo, 'apps/cli/test/fixtures/extensions/catalog/testext'), fixture, { recursive: true });
+    const manifestPath = join(fixture, 'manifest.json');
+    const manifest = json(manifestPath);
+    manifest.auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'bin/login.mjs' };
+    manifest.login_required = true;
+    manifest.files = [...manifest.files, 'bin/login.mjs'].sort();
+    manifest.work = [{ kind: 'testext.sync', execution: 'supervised', runtime: 'node', entry: 'bin/check.mjs' }];
+    manifest.default_schedules = [{ kind: 'testext.sync', target_kind: 'account', target_id: 'default', local_time: '09:00' }];
+    manifest.error_codes = ['LOGIN_REQUIRED'];
+    manifest.settings = [{ key: 'testext.tokenstore', type: 'string', machine: 'tokenstore', required: ['auth'] }, { key: 'testext.limit', type: 'number', required: [] }];
+    write(manifestPath, manifest);
+    writeFileSync(join(fixture, 'bin/login.mjs'), `import { existsSync, mkdirSync } from 'node:fs';
+  const dir = JSON.parse(process.env.BRAIN_SETTINGS_SNAPSHOT).values['testext.tokenstore'];
+  mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir + '/ready')) console.log(JSON.stringify({ abi: 1, type: 'error', code: 'LOGIN_REQUIRED', retryable: false, message: '시험 로그인 미완료' }));
+  else console.log(JSON.stringify({ abi: 1, type: 'result' }));
+  `);
+    const digest = createHash('sha256');
+    for (const file of manifest.files) {
+      const name = Buffer.from(file);
+      const bytes = readFileSync(join(fixture, file));
+      digest.update(`f${name.length}:`).update(name).update(`:${bytes.length}:`).update(bytes);
+    }
+    writeFileSync(join(fixture, 'digest'), `${digest.digest('hex')}\n`);
+    const suffix = createHash('sha256').update(home).digest('hex').slice(0, 12);
+    const receipt = { format: 1, id: randomUUID(), root, home, label, project: `second-brain-${suffix}`, volume: `second-brain-pg-${suffix}`, baseline, candidate: newRef, phase: 'prepared' };
+    write(join(root, receiptName), receipt);
+    hooks.afterReceipt?.(root);
+    console.log(JSON.stringify({ root, baseline, candidate: newRef, label, phase: receipt.phase }, null, 2));
+  } catch (error) {
+    try {
+      // 단일 prepare 실행 중 다른 프로세스가 이 루트를 동시에 바꾸지 않는다고 가정한다.
+      const current = lstatSync(root);
+      if (!identity || !current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino) throw new Error('준비 디렉터리의 소유 신원이 달라 정리하지 않았습니다.');
+      if (existsSync(join(root, receiptName))) throw new Error('영수증이 있어 준비 디렉터리를 보존합니다.');
+      rmSync(root, { recursive: true });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `준비 실패: ${error.message}; 정리 실패: ${cleanupError.message}`);
+    }
+    throw error;
+  }
 }
 
 function owned(rootArg) {
@@ -66,7 +93,7 @@ function setup(rootArg) {
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
     SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
-  delete env.BRAIN_DATABASE_URL; delete env.SECOND_BRAIN_TEST_EXTENSIONS;
+  delete env.BRAIN_DATABASE_URL; delete env.SECOND_BRAIN_TEST_EXTENSIONS; delete env.SECOND_BRAIN_TEST_CATALOG;
   const result = spawnSync('sh', [join(plugin, 'bin/session-start.sh')], { env, cwd: root, encoding: 'utf8', timeout: 900000, maxBuffer: 16 * 1024 * 1024 });
   writeFileSync(join(root, 'evidence/bootstrap.txt'), result.stdout + result.stderr, { mode: 0o600 });
   if (result.error || result.status !== 0) throw new Error(`bootstrap 실행 실패: ${result.error?.message ?? result.status}. 영수증과 기록을 보존합니다.`);
@@ -99,13 +126,27 @@ function doctor(rootArg) {
   console.log('빈 확장 doctor와 Python·uv 미탐색을 확인했습니다.');
 }
 
+function requireCatalog(root) {
+  try {
+    for (const path of ['fixtures', 'fixtures/catalog', 'fixtures/catalog/testext', 'fixtures/catalog/testext/bin']) {
+      if (!lstatSync(join(root, path)).isDirectory()) throw new Error('catalog directory');
+    }
+    for (const path of ['manifest.json', 'digest', 'bin/login.mjs']) {
+      if (!lstatSync(join(root, 'fixtures/catalog/testext', path)).isFile()) throw new Error('catalog file');
+    }
+  } catch {
+    throw new Error('새 카탈로그 형식이 필요합니다. 기존 영수증과 증거를 보존하고 prepare로 다시 준비하세요.');
+  }
+}
+
 async function verify(rootArg) {
   const receipt = owned(rootArg), { root, home } = receipt;
   if (receipt.phase !== 'installed') throw new Error('설치 완료 상태가 필요합니다.');
+  requireCatalog(root);
   const plugin = join(root, 'plugin'), evidence = join(root, 'evidence');
   const env = { ...process.env, SECOND_BRAIN_HOME: home, SECOND_BRAIN_REPO: pathToFileURL(repo).href,
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
-    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'),
+    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_TEST_CATALOG: '1',
     SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
   delete env.BRAIN_DATABASE_URL;
@@ -203,7 +244,8 @@ function upgrade(rootArg) {
   const plugin = join(root, 'plugin');
   const env = { ...process.env, SECOND_BRAIN_HOME: home, SECOND_BRAIN_REPO: pathToFileURL(repo).href,
     CLAUDE_CONFIG_DIR: join(root, 'claude-config'), CLAUDE_PLUGIN_ROOT: plugin,
-    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
+    SECOND_BRAIN_TEST_EXTENSIONS: join(root, 'fixtures'), SECOND_BRAIN_TEST_CATALOG: '1',
+    SECOND_BRAIN_LAUNCHCTL: join(repo, 'apps/cli/test/fixtures/fake-launchctl.sh'),
     SECOND_BRAIN_LAUNCH_AGENTS: join(root, 'launch-agents'), FAKE_LAUNCHCTL_DIR: join(root, 'launchctl') };
   delete env.BRAIN_DATABASE_URL;
   const cli = () => {
@@ -287,4 +329,6 @@ async function main() {
   else if (command === 'cleanup') cleanup(arg);
   else throw new Error('사용법: node tooling/mac-install/run.mjs [prepare | setup|doctor|verify|upgrade|cleanup <소유 디렉터리>]');
 }
-try { await main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+if (import.meta.main) {
+  try { await main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+}
