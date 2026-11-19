@@ -9,7 +9,7 @@ import { createIsolatedTestDatabase, type TestDatabase } from '@second-brain/tes
 import { installPostgres } from '../../../apps/cli/dist/install/postgres.js';
 import { database, clock } from './fixture.js';
 import { CORE_SCHEMA_VERSION, runMigrations, postgresStore } from '../src/index.js';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { digestPackageFiles, readPackageObservation } from '../../../apps/cli/src/runtime/extension-package.js';
 
 const homes: string[] = [], databases: TestDatabase[] = [];
@@ -154,6 +154,7 @@ async function cliForWorld(k: Awaited<ReturnType<typeof world>>) {
   await writeFile(join(k.home,'config.toml'), 'schema_version=1\n[store]\nurl_env="BRAIN_DATABASE_URL"\n');
   await writeFile(join(k.home,'.env'), `BRAIN_POSTGRES_PASSWORD=${JSON.stringify(adminPassword)}\nBRAIN_APP_PASSWORD="brain-test-app"\nBRAIN_EXT_GARMIN_PASSWORD="${'a'.repeat(48)}"\nBRAIN_EXT_OLDEXT_PASSWORD="${'a'.repeat(48)}"\n`);
   const env: NodeJS.ProcessEnv = {...withoutHarnessFolders(process.env),HOME:k.home,SECOND_BRAIN_HOME:k.home,BRAIN_DATABASE_URL:k.db.appUrl,BRAIN_POSTGRES_PASSWORD:adminPassword,BRAIN_APP_PASSWORD:'brain-test-app',SECOND_BRAIN_TEST_EXTENSIONS:join(k.home,'source-extensions')};
+  for (const key of Object.keys(env)) if (key.startsWith('PYTHON')) delete env[key];
   delete env.SECOND_BRAIN_INSTALL_LOCK_OWNER; delete env.SECOND_BRAIN_STAGED_APP; delete env.SECOND_BRAIN_PREVIOUS_APP_HEAD;
   const cli = fileURLToPath(new URL('../../../apps/cli/dist/bin.js',import.meta.url));
   const run = (args:string[], timeoutMs = 60000) => new Promise<{code:number|null;stdout:string;stderr:string;body:any}>((resolve,reject) => {
@@ -169,6 +170,23 @@ async function cliForWorld(k: Awaited<ReturnType<typeof world>>) {
     child.once('error',reject); child.once('close',code => {if(code!==0) reject(Error(stderr)); else {try {resolve(JSON.parse(stdout));} catch(error) {reject(error);}}});
   });
   return {...k,env,run,tty};
+}
+
+async function syntheticGarminAuth(cli: Awaited<ReturnType<typeof cliForWorld>>) {
+  const originalUv = execFileSync('which', ['uv'], {encoding:'utf8',env:cli.env}).trim();
+  const bin = join(cli.home,'synthetic-garmin-bin'); await mkdir(bin,{recursive:true});
+  const stub = await readFile(new URL('../../../apps/cli/python-test/fixtures/garmin-official-auth/sitecustomize.py',import.meta.url),'utf8');
+  const wrapper = `#!/usr/bin/env python3
+import glob, os, pathlib, subprocess, sys
+result = subprocess.run([${JSON.stringify(originalUv)}, *sys.argv[1:]])
+if result.returncode == 0 and len(sys.argv) > 1 and sys.argv[1] == 'sync':
+    sites = glob.glob(os.path.join(os.environ.get('UV_PROJECT_ENVIRONMENT', ''), 'lib', 'python*', 'site-packages'))
+    if len(sites) != 1: sys.exit(97)
+    pathlib.Path(sites[0], 'sitecustomize.py').write_text(${JSON.stringify(stub)})
+sys.exit(result.returncode)
+`;
+  await writeFile(join(bin,'uv'),wrapper,{mode:0o700});
+  cli.env.PATH = `${bin}:${cli.env.PATH ?? ''}`;
 }
 
 async function syntheticPackage(k: Awaited<ReturnType<typeof cliWorld>>, mode: 'valid' | 'incompatible' | 'digest' | 'checksum' | 'older' | 'different' = 'valid') {
@@ -448,6 +466,14 @@ async function preserved(k: Awaited<ReturnType<typeof realLegacyWorld>>, name:'g
 
 it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 교체해 이력과 사용자를 보존한다', async name => {
   const k = await realLegacyWorld(name), before = await preserved(k,name);
+  const tokenstore = join(k.dir,'tokenstore');
+  const token = JSON.stringify({di_token:'synthetic-token',di_refresh_token:'synthetic-refresh',di_client_id:'synthetic-client'});
+  const binding = JSON.stringify({version:1,user_id:k.ids.user,connection_id:randomUUID(),external_identity:'synthetic-profile',token_sha256:createHash('sha256').update(token).digest('hex')});
+  if (name === 'garmin') {
+    await mkdir(tokenstore,{mode:0o700});
+    await writeFile(join(tokenstore,'garmin_tokens.json'),token,{mode:0o600});
+    await writeFile(join(tokenstore,'brain-account-binding.json'),binding,{mode:0o600});
+  }
   const durableBefore = await preserved(k,name,false);
   const raw = await k.db.rows(`select encode(body_raw,'hex') as bytes,body_encoding from ${name}.raw_payloads where dataset='synthetic'`);
   expect(raw).toEqual([{bytes:'0001ff',body_encoding:'utf-8'}]);
@@ -460,6 +486,7 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   const gates = await k.db.rows('select name,owner from brain.extension_quiesce'); expect(gates).toHaveLength(1);
   expect(await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`)).toEqual(history);
   const cli = await cliForWorld(k);
+  if (name === 'garmin') await syntheticGarminAuth(cli);
   const target = name === 'garmin' ? join(k.home,'plugins/garmin/package') : await syntheticPackage(cli);
   if (name === 'garmin') { await mkdir(join(k.home,'plugins/garmin'),{recursive:true}); await cp(fileURLToPath(new URL('../../../plugins/garmin/package',import.meta.url)),target,{recursive:true}); }
   const beforeRejected = {gate:await k.db.rows('select * from brain.extension_quiesce'),progress:await k.db.rows('select * from brain.extension_install_progress'),manifest:await readFile(join(k.dir,'manifest.json'),'utf8')};
@@ -474,6 +501,17 @@ it.each(['garmin','oldext'] as const)('실제 CLI setup 이후 %s 패키지를 �
   // 합성 home에는 실행 중인 데몬이 없어 연결 확인 뒤 예약 단계에서 멈춘다.
   if (name === 'garmin') expect(result.body?.error?.code,result.stdout+result.stderr).toBe('EXTENSION_SCHEDULER_UNAVAILABLE');
   else expect(result.code,result.stdout+result.stderr).toBe(0);
+  if (name === 'garmin') {
+    expect(await readFile(join(tokenstore,'garmin_tokens.json'),'utf8')).toBe(token);
+    expect(await readFile(join(tokenstore,'brain-account-binding.json'),'utf8')).toBe(binding);
+    const audit = (await readFile(join(k.dir,'synthetic-auth-audit.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+    expect(audit).toEqual(expect.arrayContaining([{event:'network-guard-confirmed'},{event:'native-guard-confirmed'},{event:'probe',mode:'success',inline:true},{event:'refresh-probe-start'},{event:'refresh-probe-suppressed'}]));
+    expect(audit).not.toContainEqual({event:'refresh-attempted'});
+    expect(audit.filter(event=>event.event === 'probe')).toHaveLength(1);
+    const invocations = audit.filter(event=>event.event === 'argv');
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0].argv).not.toContain('--terminal');
+  }
   const after = await k.db.rows(`select owner,version,name,checksum from brain.schema_migrations where owner='${name}' order by version`);
   expect(after.slice(0,8)).toEqual(history);
   expect(after.map(row=>row.version)).toEqual(Array.from({length:name==='garmin'?22:9},(_,i)=>i+1));

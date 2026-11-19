@@ -64,7 +64,13 @@ if os.path.basename(sys.argv[0]) == 'auth.py':
                     raise garminconnect.GarminConnectConnectionError('HTTP 503 synthetic-private-error')
                 if mode == 'invalid' or payload.get('di_token') != 'synthetic-token':
                     raise garminconnect.GarminConnectAuthenticationError('synthetic-private-error')
-                self.refreshed = 'synthetic-refreshed-token'
+                record('refresh-probe-start')
+                self.client._refresh_session()
+                record('refresh-probe-suppressed')
+
+            def _refresh_session(self):
+                record('refresh-attempted')
+                raise RuntimeError('synthetic refresh forbidden')
 
             def resume_login(self, unused, code):
                 if code != 'synthetic-mfa':

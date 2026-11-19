@@ -944,6 +944,13 @@ stderr에 줄이 있다는 것은 실패 신호가 아닙니다. 경고 줄과 `
 | `EXTENSION_CANCEL_UNCONFIRMED` | 1 | 확장 인증 자식의 종료를 확인하지 못했습니다 |
 | `EXTENSION_INSTALL_CANCELLED` | 1 | 확장 설치가 취소되었습니다 |
 | `EXTENSION_SCHEDULER_UNAVAILABLE` | 1 | 예약 감독자가 준비되지 않았습니다 |
+| `LOGIN_REQUIRED` | 1 | 터미널 로그인이 필요합니다 |
+| `AUTH_CANCELLED` | 1 | 확장 로그인이 취소되었습니다 |
+| `TOKEN_VERIFY_PENDING` | 1 | 저장된 토큰 확인을 기다립니다 |
+| `GARMIN_BOUND_LOGIN_REFUSED` | 1 | 결합된 Garmin 계정의 로그인을 중단했습니다 |
+| `GARMIN_ACCESS_TOKEN_UNCONFIRMED` | 1 | 저장된 Garmin 액세스 토큰을 확인하지 못했습니다 |
+| `GARMIN_BINDING_RECOVERY_REQUIRED` | 1 | 기존 Garmin 계정 결합의 인증 복구가 필요합니다 |
+| `AUTH_UNAVAILABLE` | 1 | 확장 인증을 확인할 수 없습니다 |
 | `EXTENSION_LOGIN_REQUIRED` | 1 | 확장 인증이 완료되지 않았습니다 |
 | `EXTENSION_AUTH_FAILED` | 1 | 확장 인증에 실패했습니다 |
 | `EXTENSION_CHECK_FAILED` | 1 | 확장 설치 뒤 연결 확인에 실패했습니다 |
