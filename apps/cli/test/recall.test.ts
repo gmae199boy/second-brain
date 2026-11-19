@@ -160,6 +160,45 @@ it('실제 CLI가 6개 이상에서 다섯 조각을 돌려주고 긴 출력의 
   } finally { await store.close(); await db.drop(); }
 });
 
+it('별도 합성 질문을 근접 옵션 유무로 검색하고 반환 원문을 확인한다', async () => {
+  const { postgresStore } = await import('second_brain/postgres');
+  const { sampleEnsureSessionInput, sampleCheckoutInput, sampleIngestBatch, sequenceIdGen, memorySpool } = await import('second_brain/testing');
+  const { conversationChunkHandler, CONVERSATION_CHUNK_KIND, drainQueue } = await import('second_brain');
+  const home = await homes.create('brain-recall-literal-'); const db = await pgHome(home);
+  const store = postgresStore({ databaseUrl: db.appUrl });
+  const clock = { now: () => new Date('2026-10-30T00:00:00Z') }; const ids = sequenceIdGen({ timestampMs: clock.now().getTime(), start: 1500 });
+  const project = ids.next(), worktree = ids.next();
+  const question = '우체통 도색 날짜를 언제 정했지?', literal = '우체통 도색';
+  const body = '우체통 도색 날짜는 수요일로 정했다.'; const at = new Date('2026-02-01T12:00:00Z');
+  const messageId = ids.next(); const key = { harness: 'demo', harnessSessionId: 'literal-inside' };
+  try {
+    expect(question).toContain(literal);
+    for (const [sessionKey, checkout, id, text] of [
+      [key, sampleCheckoutInput({ projectId: project, worktreeId: worktree, worktreePath: '/fixture/literal' }), messageId, body],
+      [{ harness: 'demo', harnessSessionId: 'literal-outside' }, null, ids.next(), '우체통 도색 준비를 기록했다.'],
+    ] as const) {
+      expect((await store.ensureSession(sampleEnsureSessionInput({ id: ids.next(), key: sessionKey, checkout }))).ok).toBe(true);
+      const batch = sampleIngestBatch(); batch.key = sessionKey; batch.messages = [batch.messages[0]!]; batch.toolNotes = []; batch.attachments = [];
+      batch.messages[0]!.id = id; batch.messages[0]!.harnessMessageId = sessionKey.harnessSessionId; batch.messages[0]!.occurredAt = at; batch.messages[0]!.body = text;
+      expect((await store.ingest(batch)).ok).toBe(true);
+    }
+    await drainQueue({ store, clock, idGen: ids, spool: memorySpool() }, { budgetMs: 1000, handlers: { [CONVERSATION_CHUNK_KIND]: conversationChunkHandler({ store, clock, idGen: ids }) } });
+    const env = { ...db.env, SECOND_BRAIN_HOME: home };
+    for (const scope of [[], ['--project', project], ['--worktree', worktree]]) {
+      const found = await runPgCommand(['recall', 'chunks', literal, ...scope, '--json'], env);
+      expect(found.code).toBe(0); const json = JSON.parse(found.stdout); expect(json.ok).toBe(true);
+      const source = json.data.find((row: { session: string }) => row.session === 'demo:literal-inside');
+      expect(source).toBeTruthy();
+      expect(json.data.some((row: { session: string }) => row.session === 'demo:literal-outside')).toBe(true);
+      expect(Date.parse(source.from_at)).toBe(at.getTime()); expect(Date.parse(source.to_at)).toBe(at.getTime());
+      const read = await runPgCommand(['recall', 'expand', source.session, '--from', source.from_at, '--to', source.to_at, '--before', '0', '--after', '0', '--json'], env);
+      expect(read.code).toBe(0); const expanded = JSON.parse(read.stdout); expect(expanded.ok).toBe(true);
+      expect(expanded.data).toHaveLength(1); expect(expanded.data[0]).toMatchObject({ id: messageId, body });
+      expect(Date.parse(expanded.data[0].occurred_at)).toBe(at.getTime());
+    }
+  } finally { await store.close(); await db.drop(); }
+});
+
 it('실제 CLI가 근접도와 관련도에 따라 기본 다섯 건을 정렬한다', async () => {
   const { postgresStore } = await import('second_brain/postgres');
   const { sampleEnsureSessionInput, sampleCheckoutInput, sequenceIdGen } = await import('second_brain/testing');
