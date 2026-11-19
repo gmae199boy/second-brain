@@ -1078,3 +1078,41 @@ it('카탈로그 SDK는 설치 registry와 결합하고 읽기 실패를 감추�
   deps.extensions.packages.catalog = async () => { throw Error('digest'); };
   expect(await catalogExtensions(deps)).toMatchObject({ ok: false, code: 'EXTENSION_INVALID' });
 });
+
+it('opt-in token checks ignore stale work and retry unavailable credentials without enqueueing', async () => {
+  const auth = { kind: 'testext.login', execution: 'supervised', runtime: 'node', entry: 'login.mjs', probe_on_install: true };
+  const { deps, fake } = setup({ text: JSON.stringify({ ...manifest, auth, error_codes: ['LOGIN_REQUIRED', 'AUTH_UNAVAILABLE'] }) });
+  let installed = false;
+  deps.extensions.packages.inspect = async () => ({ digest: 'a'.repeat(64), installedDigest: installed ? 'a'.repeat(64) : null, sameBase: true, installedDir: '/installed/testext' });
+  deps.extensions.packages.place = async () => { installed = true; return '/installed/testext'; };
+  let answer = 'LOGIN_REQUIRED';
+  deps.extensions.launcher = { async start(spec) {
+    const result = await fake.start(spec);
+    if (result.ok) {
+      const child = fake.processes.at(-1)!;
+      child.write(answer === 'OK' ? '{"abi":1,"type":"result"}\n' : JSON.stringify({ abi: 1, type: 'error', code: answer, retryable: answer === 'AUTH_UNAVAILABLE' }) + '\n');
+      child.exit(answer === 'OK' ? 0 : 1);
+    }
+    return result;
+  } };
+  let queueCalls = 0;
+  const add = deps.store.addWork.bind(deps.store), cancel = deps.store.requestWorkCancel.bind(deps.store);
+  deps.store.addWork = async input => { queueCalls++; return add(input); };
+  deps.store.requestWorkCancel = async input => { queueCalls++; return cancel(input); };
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_LOGIN_REQUIRED' });
+  const prior = await deps.store.getExtensionInstallProgress('testext');
+  if (!prior.ok || !prior.journal) throw Error('missing journal');
+  prior.journal.progress.authWorkId = '019a0000-0000-7000-8000-000000000099';
+  await deps.store.writeExtensionInstallProgress({ expectedRevision: prior.journal.revision, progress: prior.journal.progress });
+  answer = 'AUTH_UNAVAILABLE';
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'AUTH_UNAVAILABLE' });
+  answer = 'LOGIN_REQUIRED';
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_LOGIN_REQUIRED' });
+  expect(queueCalls).toBe(0);
+  expect(fake.specs.every(spec => spec.args[0] === '/installed/testext/login.mjs')).toBe(true);
+  answer = 'OK';
+  expect((await installExtension(deps, { name: 'testext' })).ok).toBe(true);
+  answer = 'LOGIN_REQUIRED';
+  expect(await installExtension(deps, { name: 'testext' })).toMatchObject({ ok: false, code: 'EXTENSION_LOGIN_REQUIRED' });
+  expect(queueCalls).toBe(0);
+});

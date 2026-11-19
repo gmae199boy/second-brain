@@ -69,7 +69,7 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     const collectAt=new Date(`${day}T02:00:00.000Z`), reportAt=new Date(`${day}T02:30:00.000Z`);
     const prior1=new Date(collectAt.getTime()-86400000).toISOString().slice(0,10), prior2=new Date(collectAt.getTime()-2*86400000).toISOString().slice(0,10);
     let time=reportAt.getTime()+1000; diagnosticClock = () => time; const clock={now:()=>new Date(time)};
-    const tokenstore=join(ext,'tokenstore'), token=Buffer.from('synthetic-token');
+    const tokenstore=join(ext,'tokenstore'), token=Buffer.from(JSON.stringify({di_token:'synthetic-token',di_refresh_token:'synthetic-refresh',di_client_id:'synthetic-client'}));
     await mkdir(tokenstore,{recursive:true,mode:0o700}); await chmod(tokenstore,0o700);
     await writeFile(join(tokenstore,'garmin_tokens.json'),token,{mode:0o600});
     await writeFile(join(tokenstore,'brain-account-binding.json'),JSON.stringify({version:1,user_id:self,connection_id:account,external_identity:'12345',token_sha256:createHash('sha256').update(token).digest('hex')}),{mode:0o600});
@@ -373,6 +373,9 @@ it.each(scenarios)('report $day: package → cron recovers $interruption interru
     await writeFile(join(ext,'src/collect_runtime.py'),originalCollectRuntime);
     await writeFile(datesPath,originalDates);
     await unlink(join(ext,'src/supervised_fake_network.py'));
+    expect(await readFile(join(tokenstore,'garmin_tokens.json'))).toEqual(token);
+    const binding=JSON.parse(await readFile(join(tokenstore,'brain-account-binding.json'),'utf8'));
+    expect(binding.token_sha256).toBe(createHash('sha256').update(token).digest('hex'));
     const reinstall=await world.runDirect(['ext','install','--package',pkg,'--json']);
     expect(reinstall.code,reinstall.stdout+reinstall.stderr).toBe(0);
     expect(await world.db.rows("select id,schedule_key,cron_expr,enabled,removed_at from brain.schedules where extension='garmin' order by schedule_key")).toEqual(scheduleRows);

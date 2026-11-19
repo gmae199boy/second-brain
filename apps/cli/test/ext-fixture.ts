@@ -1,6 +1,6 @@
-import { spawn, type SpawnOptions, type ChildProcessByStdio } from 'node:child_process';
+import { spawn, execFileSync, type SpawnOptions, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { appendFile, readFile, writeFile, unlink } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempHomes } from './temp-home.js';
@@ -27,8 +27,36 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
   await db.query(`alter database "${databaseName}" owner to brain_owner`);
   const password = decodeURIComponent(new URL(db.url).password);
   await appendFile(join(home, '.env'), `BRAIN_POSTGRES_PASSWORD=${password}\n`);
-  const env = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fileURLToPath(new URL('./fixtures/extensions/', import.meta.url)), BRAIN_DATABASE_URL: db.appUrl };
+  const env: NodeJS.ProcessEnv & { SECOND_BRAIN_HOME: string; SECOND_BRAIN_TEST_EXTENSIONS: string; BRAIN_DATABASE_URL: string } = { ...withoutHarnessFolders(process.env), SECOND_BRAIN_HOME: home, SECOND_BRAIN_TEST_EXTENSIONS: fileURLToPath(new URL('./fixtures/extensions/', import.meta.url)), BRAIN_DATABASE_URL: db.appUrl };
+  // Never let an inherited Python startup hook shadow the owned venv guard.
+  for (const key of Object.keys(env)) if (key.startsWith('PYTHON')) delete env[key];
+  let syntheticUvReady = false;
+  // The wrapper only modifies the test-owned venv after uv installs it. The
+  // sitecustomize fixture intercepts Garmin auth.py only; other workers keep
+  // their real libraries and ordinary extension supervision.
+  async function ensureSyntheticGarmin() {
+    if (syntheticUvReady) return;
+    const originalUv = execFileSync('which', ['uv'], { encoding: 'utf8', env }).trim();
+    const bin = join(home, 'synthetic-garmin-bin');
+    await mkdir(bin, { recursive: true });
+    const stub = await readFile(fileURLToPath(new URL('../python-test/fixtures/garmin-official-auth/sitecustomize.py', import.meta.url)), 'utf8');
+    const wrapper = `#!/usr/bin/env python3
+import glob, os, pathlib, subprocess, sys
+result = subprocess.run([${JSON.stringify(originalUv)}, *sys.argv[1:]])
+if result.returncode == 0 and len(sys.argv) > 1 and sys.argv[1] == 'sync':
+    root = os.environ.get('UV_PROJECT_ENVIRONMENT', '')
+    sites = glob.glob(os.path.join(root, 'lib', 'python*', 'site-packages'))
+    if len(sites) != 1:
+        sys.exit(97)
+    pathlib.Path(sites[0], 'sitecustomize.py').write_text(${JSON.stringify(stub)})
+sys.exit(result.returncode)
+`;
+    await writeFile(join(bin, 'uv'), wrapper, { mode: 0o700 });
+    env.PATH = `${bin}:${env.PATH ?? ''}`;
+    syntheticUvReady = true;
+  }
   async function runRaw(args: readonly string[]) {
+    if (args[0] === 'ext' && args[1] === 'install' && (args[2] === 'garmin' || (args[2] === '--package' && args[3]?.endsWith('/plugins/garmin/package')))) await ensureSyntheticGarmin();
     return new Promise<{ code: number | null; stdout: string; stderr: string; body: any }>((resolve, reject) => {
       const command = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
       const child = options.spawn ? options.spawn(process.execPath, [command, ...args], { env }) : spawn(process.execPath, [command, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -66,32 +94,9 @@ export async function extHome(options: { realGarminAuth?: boolean; self?: boolea
       const garminInstall = args[0] === 'ext' && args[1] === 'install' && (args[2] === 'garmin' || (args[2] === '--package' && args[3]?.endsWith('/plugins/garmin/package')));
       if (garminInstall && result.body?.error?.code === 'EXTENSION_SCHEDULER_UNAVAILABLE' && !options.realGarminAuth) return withScheduler(args);
       if (options.realGarminAuth || !garminInstall || result.body?.error?.code !== 'EXTENSION_LOGIN_REQUIRED') return result;
-      const directory = join(home, 'extensions/garmin'), manifestPath = join(directory, 'manifest.json');
-      const original = await readFile(manifestPath, 'utf8');
-      const manifest = JSON.parse(original);
-      manifest.auth.entry = 'fake_auth_fixture.py';
-      await writeFile(join(directory, 'fake_auth_fixture.py'), "import json\nprint(json.dumps({'abi': 1, 'type': 'result', 'summary': 'fixture'}))\n");
-      await writeFile(manifestPath, JSON.stringify(manifest));
-      const { startDaemonSupervisor } = await import('../src/daemon/supervisor.js');
-      const { readConfig } = await import('../src/config/codec.js');
-      const { systemClock } = await import('../src/runtime/clock.js');
-      const { uuidV7IdGen } = await import('../src/runtime/id-gen.js');
-      const controller = new AbortController();
-      const daemon = startDaemonSupervisor({ home, env, clock: systemClock, idGen: uuidV7IdGen(), signal: controller.signal, supervisor: { pollMs: 25 } }, await readConfig(home), { async write() {} });
-      try {
-        const id = result.body.data.install.auth_work_id;
-        const deadline = Date.now() + 20000;
-        while (Date.now() < deadline) {
-          const outcome = (await db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome;
-          if (outcome === 'succeeded') break;
-          if (outcome === 'failed') throw new Error('fake auth failed');
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        if ((await db.rows(`select outcome from brain.work_items where id='${id}'`))[0]?.outcome !== 'succeeded') throw new Error('fake auth timed out');
-      } finally {
-        controller.abort(); await daemon.stop();
-        await writeFile(manifestPath, original); await unlink(join(directory, 'fake_auth_fixture.py'));
-      }
+      const tokenstore = join(home, 'extensions/garmin/tokenstore');
+      await mkdir(tokenstore, { recursive: true, mode: 0o700 });
+      await writeFile(join(tokenstore, 'garmin_tokens.json'), JSON.stringify({ di_token: 'synthetic-token', di_refresh_token: 'synthetic-refresh', di_client_id: 'synthetic-client' }), { mode: 0o600 });
       const retry = await runRaw(args);
       if (retry.body?.error?.code !== 'EXTENSION_SCHEDULER_UNAVAILABLE') return retry;
       return withScheduler(args);

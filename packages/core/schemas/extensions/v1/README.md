@@ -5,3 +5,5 @@
 `work`와 `auth` 명령은 supervised ABI를 사용한다. `default_schedules`와 `raw_views`는 후속 설치 및 공개 view 단계를 위한 선언이다. 각 설정의 `required`는 필요한 단계를 나열하며, 비밀 설정 값은 환경 변수 이름이다. `machine: "tokenstore"`는 내용이 아닌 확장의 로컬 tokenstore 경로를 제공한다. Runtime은 전체 설정이나 환경을 자식에게 전달하지 않는다.
 
 수동 실행을 허용할 work에는 `manual` 별칭을 선언한다. `public_report`는 `counts`와 `checks`의 고정 라벨 배열을 선언하며 값은 각각 음이 아닌 안전 정수와 boolean만 허용한다. `required_settings`는 해당 일감에서 필요한 선언된 설정 키 목록이다. 별칭과 보고 라벨의 관계 및 설정 참조는 코덱에서 검증한다.
+
+`auth.probe_on_install: true`는 인증 엔트리를 무인으로 실행해 기존 자격 증명을 확인하고 성공 시 설치를 계속한다. 엔트리는 무인 호출에서 입력을 요청하지 않아야 하며 재인증이 필요하면 `LOGIN_REQUIRED`를 반환해야 한다. 이 선택 선언이 없는 확장은 기존 감독 일감 계약을 유지한다. 이 선택 선언의 설치는 인증 일감을 생성하거나 취소하지 않고 현재 무인 확인 결과만 사용한다. 일시 오류는 다음 설치에서 다시 확인한다. 터미널 로그인은 `--terminal`로 실행하며 성공 직후 `TOKEN_VERIFY_PENDING`으로 저장 토큰의 확인을 기다린다.

@@ -71,16 +71,22 @@ describe('Garmin marketplace package', () => {
     expect(read(calls).split('\n')).toEqual(['ext', 'install', 'garmin', '--json', '']);
   });
 
-  it('설치 스킬은 이름 설치와 실제 인증 미지원 상태를 안내한다', () => {
+  it('설치 스킬은 지원 확인과 터미널 로그인 및 이름 재개를 안내한다', () => {
     const skill = read(join(plugin, 'skills/brain-garmin-install/SKILL.md'));
-    expect(skill).toContain('`brain ext install garmin --json`');
-    expect(skill).toContain('터미널 인증 실행 항목이 없어');
-    expect(skill).toContain('인증을 실행할 수 없다');
-    expect(skill).toContain('로그인 필요를 명시한 상태가 있을 때만 인증 미완료로 보고한다');
-    expect(skill).toContain('인증 상태는 별도 근거가 없으면 미확인으로 둔다');
+    expect(skill).toContain('`brain guide schema ext --json`');
+    expect(skill).toContain('`brain ext login garmin`');
+    expect(skill).toContain('`brain ext install garmin --json`을 같은 이름으로 한 번 재개한다');
+    expect(skill).toContain('실패·취소 또는 응답이 없으면 재개하지 않고');
     expect(skill).toContain('기존 connected와 login skipped는 그 상태대로 보고한다');
+    expect(skill).toContain('`login_required`는 패키지 메타데이터이지 현재 로그인 상태가 아니다');
+    expect(skill).toContain('수집 계정 준비 또는 예약 발화의 증거가 아니다');
+    for (const code of ['LOGIN_REQUIRED', 'AUTH_CANCELLED', 'AUTH_UNAVAILABLE', 'EXTENSION_AUTH_FAILED', 'EXTENSION_CHECK_FAILED', 'EXTENSION_SCHEDULER_UNAVAILABLE', 'EXTENSION_INVALID', 'EXTENSION_NOT_INSTALLED']) expect(skill).toContain(code);
+    for (const code of ['TOKEN_VERIFY_PENDING', 'GARMIN_BINDING_RECOVERY_REQUIRED']) expect(skill).toContain(code);
+    expect(skill).toContain('모든 설치 명령의 성공·실패·취소·인증 대기 뒤에는');
+    for (const state of ['`login`', '`connection`', '`schedule`', '`install.stages`']) expect(skill).toContain(state);
+    expect(skill).not.toContain('터미널 인증 실행 항목이 없어');
     expect(skill).not.toContain('--package');
-    expect(json(join(pack, 'manifest.json')).auth).toBeUndefined();
+    expect(json(join(pack, 'manifest.json')).auth).toMatchObject({kind:'garmin.auth', runtime:'python', entry:'src/auth.py', probe_on_install:true});
   });
 
   it('registers the marketplace hook and pins an earlier ref with independent versioning', () => {

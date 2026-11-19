@@ -47,6 +47,7 @@ import json
 import logging
 import os
 import random
+import secrets
 import re
 import stat
 import tempfile
@@ -485,11 +486,11 @@ def _block_reason(domain_error: errors.DomainError) -> errors.RunStatus | None:
 
 
 def _record_block(
-    tokenstore: Path, cfg: config.Config, reason: errors.RunStatus
+    tokenstore: Path, cfg: config.Config, reason: errors.RunStatus, *, dir_fd=None
 ) -> None:
     """오늘 날짜로 `block.json`을 쓴다. 쓰기 실패는 errno만 로그에 남기고 삼킨다."""
     try:
-        _write_block(tokenstore, dates.today(cfg), reason)
+        _write_block(tokenstore, dates.today(cfg), reason, dir_fd=dir_fd)
     except OSError as write_error:
         # 차단 기록에 실패해도 Garmin 실패 자체는 호출자에게 알린다.
         logger.error(
@@ -532,9 +533,9 @@ def _configured_client(cfg: config.Config) -> garminconnect.Garmin:
     return client
 
 
-def _refuse_if_blocked(tokenstore: Path, cfg: config.Config) -> None:
+def _refuse_if_blocked(tokenstore: Path, cfg: config.Config, *, dir_fd=None) -> None:
     """`block.json`이 오늘 날짜면 `SessionBlocked`, 깨졌으면 `BlockFileInvalid`다."""
-    reason = _blocked_on(tokenstore, dates.today(cfg))
+    reason = _blocked_on(tokenstore, dates.today(cfg), dir_fd=dir_fd)
     if reason is not None:
         logger.info("Garmin 당일 차단 중이라 로그인하지 않는다: reason=%s", reason)
         raise SessionBlocked(reason)
@@ -593,7 +594,7 @@ def _login(client: garminconnect.Garmin, tokenstore: Path, cfg: config.Config) -
     _run_login_step(lambda: client.login(str(tokenstore)), tokenstore, cfg)
 
 
-def interactive_login(cfg: config.Config, prompts: LoginPrompts) -> None:
+def interactive_login(cfg: config.Config, prompts: LoginPrompts, *, save_tokens=None, tokenstore_fd=None) -> None:
     """자격 증명(과 MFA 코드)으로 새로 로그인해 tokenstore에 토큰을 쓴다.
 
     tokenstore 폴더는 호출자가 미리 만든다. 프롬프트는 세션 락을 놓은 동안에만 부르고, 네트워크와
@@ -602,16 +603,17 @@ def interactive_login(cfg: config.Config, prompts: LoginPrompts) -> None:
     던진 예외다. 기존 토큰 파일은 읽지 않는다(`Garmin.login(tokenstore)`를 쓰지 않는다).
     """
     tokenstore = cfg.tokenstore
-    _refuse_if_blocked(tokenstore, cfg)
+    save = save_tokens if save_tokens is not None else _dump_tokens
+    _refuse_if_blocked(tokenstore, cfg, dir_fd=tokenstore_fd)
     email, password = prompts.credentials()
-    with _session_lock(tokenstore, cfg.lock_wait_seconds):
-        _refuse_if_blocked(tokenstore, cfg)
+    with _session_lock(tokenstore, cfg.lock_wait_seconds, dir_fd=tokenstore_fd):
+        _refuse_if_blocked(tokenstore, cfg, dir_fd=tokenstore_fd)
         client = _configured_client(cfg)
         mfa_status, _ = _run_login_step(
             lambda: client.client.login(email, password, return_on_mfa=True),
             tokenstore,
             cfg,
-            " step=credentials",
+            " step=credentials", dir_fd=tokenstore_fd,
         )
         if mfa_status != "needs_mfa":
             logger.info("Garmin 자격 증명 로그인: stage=%s mfa=False", _LOGIN_STAGE)
@@ -619,21 +621,21 @@ def interactive_login(cfg: config.Config, prompts: LoginPrompts) -> None:
                 client._load_profile_and_settings,
                 tokenstore,
                 cfg,
-                " step=profile mfa=False",
+                " step=profile mfa=False", dir_fd=tokenstore_fd,
             )
-            _dump_tokens(client, tokenstore, mfa=False, attempts=0)
+            save(client, tokenstore, mfa=False, attempts=0)
             return
     logger.info("Garmin 자격 증명 로그인: stage=%s mfa=True", _LOGIN_STAGE)
     for attempt in range(1, MFA_MAX_ATTEMPTS + 1):
         code = prompts.mfa_code()
-        with _session_lock(tokenstore, cfg.lock_wait_seconds):
-            _refuse_if_blocked(tokenstore, cfg)
+        with _session_lock(tokenstore, cfg.lock_wait_seconds, dir_fd=tokenstore_fd):
+            _refuse_if_blocked(tokenstore, cfg, dir_fd=tokenstore_fd)
             try:
                 _run_login_step(
                     functools.partial(client.resume_login, None, code),
                     tokenstore,
                     cfg,
-                    f" step=mfa mfa=True attempt={attempt}",
+                    f" step=mfa mfa=True attempt={attempt}", dir_fd=tokenstore_fd,
                 )
             except errors.AuthFailed:
                 # 틀린 코드면 라이브러리가 MFA 대기 상태를 유지한다. 대기가 풀린 뒤의 실패(MFA는
@@ -646,7 +648,7 @@ def interactive_login(cfg: config.Config, prompts: LoginPrompts) -> None:
                     attempt,
                 )
                 continue
-            _dump_tokens(client, tokenstore, mfa=True, attempts=attempt)
+            save(client, tokenstore, mfa=True, attempts=attempt)
             return
 
 
@@ -669,7 +671,7 @@ def _dump_tokens(
 
 
 def _run_login_step[T](
-    call: Callable[[], T], tokenstore: Path, cfg: config.Config, context: str = ""
+    call: Callable[[], T], tokenstore: Path, cfg: config.Config, context: str = "", *, dir_fd=None
 ) -> T:
     """로그인 단계 호출 하나. 라이브러리 예외·`OSError`는 도메인 오류로 바꿔 던진다.
 
@@ -693,7 +695,7 @@ def _run_login_step[T](
     )
     reason = _block_reason(domain_error)
     if reason is not None:
-        _record_block(tokenstore, cfg, reason)
+        _record_block(tokenstore, cfg, reason, dir_fd=dir_fd)
     raise domain_error from None
 
 
@@ -781,19 +783,24 @@ def _first_status(error: BaseException) -> int | None:
     )
 
 
-def _blocked_on(tokenstore: Path, today: date) -> errors.RunStatus | None:
-    block = _read_block(tokenstore)
+def _blocked_on(tokenstore: Path, today: date, *, dir_fd=None) -> errors.RunStatus | None:
+    block = _read_block(tokenstore, dir_fd=dir_fd)
     if block is None:
         return None
     local_date, reason = block
     return reason if local_date == today.isoformat() else None
 
 
-def _read_block(tokenstore: Path) -> tuple[str, errors.RunStatus] | None:
+def _read_block(tokenstore: Path, *, dir_fd=None) -> tuple[str, errors.RunStatus] | None:
     """`block.json`의 (local_date, reason). 파일이 없으면 `None`, 틀리면 `BlockFileInvalid`다."""
     path = tokenstore / BLOCK_FILENAME
     try:
-        raw = path.read_bytes()
+        if dir_fd is None:
+            raw = path.read_bytes()
+        else:
+            fd = os.open(BLOCK_FILENAME, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            with os.fdopen(fd, "rb") as stream:
+                raw = stream.read()
     except (FileNotFoundError, NotADirectoryError):
         return None
     except OSError as error:
@@ -834,7 +841,7 @@ def _is_iso_date(value: str) -> bool:
     return True
 
 
-def _write_block(tokenstore: Path, day: date, reason: errors.RunStatus) -> None:
+def _write_block(tokenstore: Path, day: date, reason: errors.RunStatus, *, dir_fd=None) -> None:
     """`block.json`을 같은 폴더 임시 파일(0600) + `os.replace`로 원자적으로 쓴다.
 
     호출자가 세션 락을 쥔 채로 부른다.
@@ -844,27 +851,34 @@ def _write_block(tokenstore: Path, day: date, reason: errors.RunStatus) -> None:
         "local_date": day.isoformat(),
         "reason": reason.value,
     }
-    fd, temp_name = tempfile.mkstemp(prefix=".block.", suffix=".tmp", dir=tokenstore)
+    if dir_fd is None:
+        fd, temp_name = tempfile.mkstemp(prefix=".block.", suffix=".tmp", dir=tokenstore)
+    else:
+        temp_name = ".block." + secrets.token_hex(16) + ".tmp"
+        fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as file:
             file.write(json.dumps(payload) + "\n")
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temp_name, tokenstore / BLOCK_FILENAME)
+        if dir_fd is None:
+            os.replace(temp_name, tokenstore / BLOCK_FILENAME)
+        else:
+            os.replace(temp_name, BLOCK_FILENAME, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
+            os.unlink(temp_name, dir_fd=dir_fd)
         raise
 
 
 @contextlib.contextmanager
-def _session_lock(tokenstore: Path, wait_seconds: float) -> Iterator[None]:
+def _session_lock(tokenstore: Path, wait_seconds: float, *, dir_fd=None) -> Iterator[None]:
     """`<tokenstore>/.session.lock`(0600)에 `flock(LOCK_EX)`을 잡고, 나갈 때 푼다.
 
     `os.open`의 fd는 상속되지 않으므로 하위 프로세스가 락을 물려받지 않는다.
     """
     lock_path = tokenstore / SESSION_LOCK_FILENAME
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    fd = os.open(SESSION_LOCK_FILENAME if dir_fd is not None else lock_path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_nlink != 1:

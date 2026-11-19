@@ -162,7 +162,7 @@ class LoginBoundaryTest(unittest.TestCase):
                 def stage(*args):
                     path = cfg.tokenstore / '.brain-refresh'; path.mkdir(); return path
                 adapter = SupervisedGarmin(cfg, object())
-                with patch.object(garmin, '_session_lock', lock), patch.object(store, 'transaction', transaction), patch('collect_runtime.verify_credentials'), patch('collect_runtime._evidence', return_value=({'external_identity': '1'}, 'ref')), patch('collect_runtime.begin', side_effect=stage), patch('collect_runtime.approve'), patch.object(garmin, '_refuse_if_blocked'), patch.object(garmin, '_configured_client', return_value=client), patch.object(garmin, '_record_block', side_effect=lambda token, cfg, reason: ledger.append(('block', reason))), patch('collect_runtime.recover') as recover:
+                with patch.object(garmin, '_session_lock', lock), patch.object(store, 'transaction', transaction), patch('collect_runtime.verify_credentials'), patch('collect_runtime._evidence', return_value=({'external_identity': '1'}, 'ref')), patch('collect_runtime.begin', side_effect=stage), patch('collect_runtime.approve'), patch.object(garmin, '_refuse_if_blocked'), patch.object(garmin, '_configured_client', return_value=client), patch.object(garmin, '_record_block', side_effect=lambda token, cfg, reason, *, dir_fd=None: ledger.append(('block', reason))), patch('collect_runtime.recover') as recover:
                     with self.assertRaises(expected):
                         with adapter.open_session(): ledger.append('data')
                     self.assertEqual(recover.call_count, 2)

@@ -14,7 +14,7 @@ export const extInstallCommand: CommandSpec = {
     if (!r.ok) {
       if ('status' in r && r.status) {
         const status = await context.brain.ext.status({ name: r.status.name }); if (!status.ok) return status;
-        return { ...r, data: { ...publicExtensionData(status.status), ...('agentPathMessage' in r ? { analysis_agent: r.agentPathMessage } : {}) }, text: [...extensionProgressText(r.status.progress), ...agentText] };
+        return { ...r, data: { ...publicExtensionData(status.status), ...('agentPathMessage' in r ? { analysis_agent: r.agentPathMessage } : {}) }, text: [...extensionProgressText(r.status.progress), ...(r.code === 'EXTENSION_LOGIN_REQUIRED' && context.args[0] === 'garmin' && context.options.package === undefined && r.status.name === 'garmin' ? [`터미널에서 brain ext login ${r.status.name} 실행 후 brain ext install ${r.status.name} 명령으로 재개하세요.`] : []), ...agentText] };
       }
       return r;
     }
