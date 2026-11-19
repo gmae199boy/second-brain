@@ -14,6 +14,7 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
     harness: CODEX_HARNESS,
     async list() {
       const files = new Map<string, TranscriptListing>();
+      let excludedCount = 0;
       try {
         async function visit(directory: string, root: boolean): Promise<void> {
           let entries;
@@ -32,9 +33,9 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
               const bytes = await readFile(path);
               const id = codexSessionId(bytes.toString('utf8'));
               if (!id && bytes.toString('utf8').split('\n').slice(0, -1).every(line => line.trim() === '')) continue;
-              if (!id) throw new Error(`Codex 메타 ID를 읽을 수 없습니다: ${path}`);
               const info = await stat(path);
               if (!info.isFile()) continue;
+              if (!id) { excludedCount++; continue; }
               const fingerprint = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
               const prior = files.get(id);
               if (prior && prior.fingerprint !== fingerprint) throw new Error(`Codex 세션 ID가 서로 다른 기록에 중복됩니다: ${id}`);
@@ -47,7 +48,7 @@ export function codexTranscriptFolder(options: CodexTranscriptFolderOptions = {}
         }
         await visit(join(home, 'sessions'), true);
         await visit(join(home, 'archived_sessions'), true);
-        return { ok: true, files: [...files.values()] };
+        return { ok: true, files: [...files.values()], ...(excludedCount > 0 ? { excludedCount } : {}) };
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : String(error) };
       }

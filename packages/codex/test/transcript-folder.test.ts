@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const race = vi.hoisted(() => ({ parent: '', child: '' }));
+const race = vi.hoisted(() => ({ parent: '', child: '', readPath: '' }));
 vi.mock('node:fs/promises', async (load) => {
   const fs = await load<typeof import('node:fs/promises')>();
   return { ...fs, readdir: async (...args: Parameters<typeof fs.readdir>) => {
@@ -14,6 +14,10 @@ vi.mock('node:fs/promises', async (load) => {
       await fs.writeFile(race.child, 'replacement');
     }
     return entries;
+  }, readFile: async (...args: Parameters<typeof fs.readFile>) => {
+    const bytes = await fs.readFile(...args);
+    if (String(args[0]) === race.readPath) { race.readPath = ''; await fs.rm(String(args[0])); }
+    return bytes;
   } };
 });
 import { codexTranscriptFolder } from '../src/index.js';
@@ -39,13 +43,15 @@ describe('Codex transcript discovery', () => {
     await rm(b); await rename(a, b);
     const moved = await folder.list(); expect(moved.ok && moved.files[0]?.path).toBe(b);
   });
-  it('reports different records sharing an id and malformed metadata', async () => {
+  it('reports different records sharing an id and excludes malformed metadata', async () => {
     const { home, active, archive } = await fixture();
     await writeFile(join(active, 'a.jsonl'), content('synthetic-id'));
     await writeFile(join(archive, 'b.jsonl'), content('synthetic-id', 'two'));
     expect(await codexTranscriptFolder({ configDir: home }).list()).toMatchObject({ ok: false, message: expect.stringContaining('중복') });
     await rm(join(archive, 'b.jsonl')); await writeFile(join(archive, 'bad.jsonl'), '{}\n');
-    expect(await codexTranscriptFolder({ configDir: home }).list()).toMatchObject({ ok: false });
+    await writeFile(join(archive, 'ambiguous.jsonl'), content('first') + content('second'));
+    const result = await codexTranscriptFolder({ configDir: home }).list();
+    expect(result).toMatchObject({ ok: true, excludedCount: 2, files: [expect.objectContaining({ harnessSessionId: 'synthetic-id' })] });
   });
   it('treats absent roots as empty', async () => {
     const { home } = await fixture(); await rm(join(home, 'sessions'), { recursive: true }); await rm(join(home, 'archived_sessions'), { recursive: true });
@@ -58,8 +64,13 @@ describe('Codex transcript discovery', () => {
     await writeFile(join(active, 'valid.jsonl'), content('valid'));
     const listed = await codexTranscriptFolder({configDir:home}).list();
     expect(listed.ok && listed.files.map(file => file.harnessSessionId)).toEqual(['valid']);
+    expect(listed).not.toHaveProperty('excludedCount');
     await writeFile(join(active, 'partial.jsonl'), '{}\n');
-    expect(await codexTranscriptFolder({configDir:home}).list()).toMatchObject({ok:false});
+    expect(await codexTranscriptFolder({configDir:home}).list()).toMatchObject({ok:true, excludedCount:1});
+    await writeFile(join(active, 'partial.jsonl'), content('completed'));
+    const completed = await codexTranscriptFolder({configDir:home}).list();
+    expect(completed).toMatchObject({ok:true, files: expect.arrayContaining([expect.objectContaining({harnessSessionId:'completed'})])});
+    expect(completed).not.toHaveProperty('excludedCount');
   });
   it('does not follow external file or directory symlinks', async () => {
     const {home, active} = await fixture();
@@ -90,4 +101,15 @@ it('skips a child directory replaced by a file after enumeration', async () => {
   race.parent = root; race.child = child;
   const result = await codexTranscriptFolder({ configDir: home }).list();
   expect(result.ok && result.files.map(file => file.harnessSessionId)).toEqual(['valid']);
+});
+
+it('does not count an invalid file removed after reading', async () => {
+  const {home, active} = await fixture();
+  const path = join(active, 'removed.jsonl');
+  await writeFile(path, '{}\n');
+  await writeFile(join(active, 'valid.jsonl'), content('valid'));
+  race.readPath = path;
+  const result = await codexTranscriptFolder({configDir: home}).list();
+  expect(result).toMatchObject({ok: true, files: [expect.objectContaining({harnessSessionId: 'valid'})]});
+  expect(result).not.toHaveProperty('excludedCount');
 });

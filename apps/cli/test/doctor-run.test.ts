@@ -209,6 +209,24 @@ it.each(['json', 'text'])('reports isolated Codex discovery and uncollected coun
   }
 });
 
+it.each(['json', 'text'])('reports excluded Codex metadata safely in %s', async mode => {
+  const kit = await world();
+  const codex = join(kit.home, 'synthetic-codex');
+  await mkdir(join(codex, 'sessions'), { recursive: true });
+  const meta = (id: string) => JSON.stringify({type: 'session_meta', payload: {id}}) + '\n';
+  await writeFile(join(codex, 'sessions', 'valid.jsonl'), meta('valid-synthetic'));
+  await writeFile(join(codex, 'sessions', 'private-path.jsonl'), meta('private-id-one') + meta('private-id-two') + JSON.stringify({body: 'private-synthetic-body'}) + '\n');
+  kit.env.CODEX_HOME = codex;
+  const result = await kit.run(mode === 'json' ? ['doctor', 'run', '--json'] : ['doctor', 'run']);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain('미수집 1건'); expect(result.stdout).toContain('제외 1건');
+  for (const secret of ['private-id-one', 'private-id-two', 'private-path.jsonl', codex, 'private-synthetic-body']) expect(result.stdout).not.toContain(secret);
+  if (mode === 'json') {
+    const check = JSON.parse(result.stdout).data.checks.find((item: {id: string}) => item.id === 'codex-transcripts');
+    expect(check.status).toBe('warn'); expect(check.detail).toContain('brain queue drain');
+  }
+});
+
 it('reports a Codex ID collision without a partial zero count or exposing the ID', async () => {
   const kit = await world();
   const codex = join(kit.home, 'synthetic-codex');
@@ -222,10 +240,13 @@ it('reports a Codex ID collision without a partial zero count or exposing the ID
   expect(result.code).toBe(0);
   const checks = JSON.parse(result.stdout).data.checks;
   expect(checks).toContainEqual(expect.objectContaining({ id: 'codex-transcripts', status: 'warn', detail: expect.stringContaining('Codex 목록 확인 불가') }));
+  const detail = checks.find((item: {id: string}) => item.id === 'codex-transcripts').detail;
+  expect(detail).toContain('미수집 확인 불가'); expect(detail).toContain('제외 확인 불가');
   expect(JSON.stringify(checks)).not.toContain('private-synthetic-id');
   const text = await kit.run(['doctor', 'run']);
   expect(text.code).toBe(0);
   expect(text.stdout).toContain('Codex 목록 확인 불가');
+  expect(text.stdout).toContain('미수집 확인 불가'); expect(text.stdout).toContain('제외 확인 불가');
   expect(text.stdout).not.toContain('private-synthetic-id');
 });
 
