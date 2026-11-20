@@ -4,7 +4,7 @@ type: chore
 ticket: 8
 created: '2026-11-19'
 status: blocked
-blocked_reason: 운영 릴리스 승인, OAuth 동의, 실제 계정의 첨부 및 문서 수락 대기
+blocked_reason: 실제 Google Drive OAuth 동의와 승인된 첨부·폴더의 운영 검증 대기
 baseline_revision: '79dd6d4e3419f2767c538831b22bd50f61605a12'
 route: full
 route_source: pinned
@@ -160,4 +160,6 @@ Given 연결된 Drive와 유효한 로컬 첨부, when 동일 파일의 이전�
 
 ## Auto Run Result
 
-제품 보완, 독립 리뷰, 직접 시험, 공식 격리 설치를 완료했다. 실계정 수락 상태는 `awaiting-operator`다. 운영 릴리스, 실제 OAuth 동의, 승인된 첨부와 폴더의 검색·원문 확인·재시작·기간 검증은 위 운영자 조치로 남긴다. 실계정 단계의 성공과 실패 건수는 미측정이다.
+제품 보완, 독립 리뷰, 직접 시험, 공식 격리 설치를 완료했다. 실계정 수락 상태는 `awaiting-operator`다. 실제 OAuth 동의, 승인된 첨부와 폴더의 검색·원문 확인·재시작·기간 검증은 위 운영자 조치로 남긴다. 실계정 단계의 성공과 실패 건수는 미측정이다.
+
+2026-11-20 사용자 승인에 따라 운영자 조치 1을 완료했다. 코어 플러그인 `0.1.39`를 `203a16d4`로 공개 배포했다. 공식 이 Mac 설치의 앱·데몬·플러그인 캐시 ref가 `1a982658`로 일치했고 스키마 48과 `files migrate-drive` 명령 등록을 확인했다.
